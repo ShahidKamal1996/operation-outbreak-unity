@@ -19,6 +19,12 @@ namespace OperationOutbreak.Enemies
         [Min(0f)]
         [SerializeField] private float attackRange = 1.25f;
 
+        [Header("Local Separation")]
+        [Min(0.1f)]
+        [SerializeField] private float separationRadius = 1.1f;
+        [Min(0f)]
+        [SerializeField] private float separationStrength = 1.5f;
+
         [Header("Attack")]
         [Min(1)]
         [SerializeField] private int attackDamage = 1;
@@ -38,6 +44,8 @@ namespace OperationOutbreak.Enemies
         private PlayerHealth _playerHealth;
         private float _nextAttackTime;
         private float _groundY;
+        // Allocated once per zombie; OverlapSphereNonAlloc keeps the chase loop allocation-free.
+        private readonly Collider[] _nearbyColliders = new Collider[12];
 
         private void Awake()
         {
@@ -76,21 +84,59 @@ namespace OperationOutbreak.Enemies
             Vector3 offset = playerTarget.position - transform.position;
             offset.y = 0f;
             float distance = offset.magnitude;
+            bool inAttackRange = distance <= attackRange;
 
-            if (distance > attackRange)
+            Vector3 chaseDirection = !inAttackRange && distance > 0.001f
+                ? offset / distance
+                : Vector3.zero;
+            Vector3 separation = CalculateSeparation();
+            Vector3 movement = (chaseDirection * moveSpeed) + (separation * separationStrength);
+
+            // Separation is allowed to spread a cluster while attacking, but never lets
+            // a zombie exceed its existing authored chase speed.
+            movement = Vector3.ClampMagnitude(movement, moveSpeed);
+            if (movement.sqrMagnitude > 0.0001f)
             {
-                Vector3 direction = offset / distance;
-                transform.position += direction * (moveSpeed * Time.deltaTime);
+                transform.position += movement * Time.deltaTime;
                 transform.position = new Vector3(transform.position.x, _groundY, transform.position.z);
-                transform.rotation = Quaternion.LookRotation(direction, Vector3.up);
-                return;
+                if (!inAttackRange && chaseDirection.sqrMagnitude > 0f)
+                {
+                    transform.rotation = Quaternion.LookRotation(chaseDirection, Vector3.up);
+                }
             }
 
-            if (Time.time >= _nextAttackTime && _playerHealth != null && _playerHealth.IsAlive)
+            if (inAttackRange && Time.time >= _nextAttackTime && _playerHealth != null && _playerHealth.IsAlive)
             {
                 _playerHealth.TakeDamage(attackDamage);
                 _nextAttackTime = Time.time + attackInterval;
             }
+        }
+
+        private Vector3 CalculateSeparation()
+        {
+            int count = Physics.OverlapSphereNonAlloc(
+                transform.position, separationRadius, _nearbyColliders,
+                Physics.DefaultRaycastLayers, QueryTriggerInteraction.Ignore);
+            Vector3 separation = Vector3.zero;
+
+            for (int i = 0; i < count; i++)
+            {
+                Collider neighbourCollider = _nearbyColliders[i];
+                if (neighbourCollider == null) continue;
+                ZombieController neighbour = neighbourCollider.GetComponentInParent<ZombieController>();
+                if (neighbour == null || neighbour == this || !neighbour.IsAlive) continue;
+
+                Vector3 away = transform.position - neighbour.transform.position;
+                away.y = 0f;
+                float sqrDistance = away.sqrMagnitude;
+                if (sqrDistance > 0.0001f)
+                {
+                    // Strongest when bodies are close, fading to zero at the radius edge.
+                    separation += away.normalized * (1f - Mathf.Sqrt(sqrDistance) / separationRadius);
+                }
+            }
+
+            return separation.sqrMagnitude > 1f ? separation.normalized : separation;
         }
 
         public void TakeDamage(int amount)
@@ -130,6 +176,8 @@ namespace OperationOutbreak.Enemies
         {
             moveSpeed = Mathf.Max(0f, moveSpeed);
             attackRange = Mathf.Max(0f, attackRange);
+            separationRadius = Mathf.Max(0.1f, separationRadius);
+            separationStrength = Mathf.Max(0f, separationStrength);
             attackDamage = Mathf.Max(1, attackDamage);
             attackInterval = Mathf.Max(0.01f, attackInterval);
             maxHealth = Mathf.Max(1, maxHealth);
