@@ -63,8 +63,8 @@ namespace OperationOutbreak.Weapons
             _muzzleFlash.name = "MuzzleFlash";
             Destroy(_muzzleFlash.GetComponent<Collider>());
             _muzzleFlash.transform.SetParent(muzzlePoint, false);
-            _muzzleFlash.transform.localPosition = Vector3.zero;
-            _muzzleFlash.transform.localScale = Vector3.one * 0.18f;
+            _muzzleFlash.transform.localPosition = new Vector3(0f, 0f, 0.16f);
+            _muzzleFlash.transform.localScale = Vector3.one * 0.38f;
             _muzzleFlash.GetComponent<Renderer>().material.color = new Color(1f, .85f, .25f, 1f);
             _muzzleFlash.SetActive(false);
         }
@@ -128,7 +128,7 @@ namespace OperationOutbreak.Weapons
         private System.Collections.IEnumerator FlashMuzzle()
         {
             _muzzleFlash.SetActive(true);
-            yield return new WaitForSeconds(0.05f);
+            yield return new WaitForSeconds(0.09f);
             if (_muzzleFlash != null) _muzzleFlash.SetActive(false);
         }
 
