@@ -190,10 +190,16 @@ namespace OperationOutbreak.Enemies
         {
             Transform visual = transform.Find("Visual");
             float elapsed = 0f;
-            while (elapsed < 0.25f)
+            const float deathDuration = 0.38f;
+            while (elapsed < deathDuration)
             {
                 elapsed += Time.deltaTime;
-                if (visual != null) visual.localScale = Vector3.Lerp(_visualScale, Vector3.zero, elapsed / 0.25f);
+                if (visual != null)
+                {
+                    float progress = elapsed / deathDuration;
+                    visual.localScale = Vector3.Lerp(_visualScale, _visualScale * 0.12f, progress);
+                    visual.localRotation = Quaternion.Euler(progress * 55f, 0f, 0f);
+                }
                 yield return null;
             }
             if (deactivateOnDefeat) gameObject.SetActive(false); else Destroy(gameObject);
