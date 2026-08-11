@@ -19,6 +19,7 @@ namespace OperationOutbreak.Player
         [Header("References")]
         [SerializeField] private PlayerInputReader inputReader;
         [SerializeField] private PlayerLaneBounds laneBounds;
+        [SerializeField] private PlayerHealth playerHealth;
 
         [Header("Movement")]
         [Tooltip("Side-to-side (strafe) speed across the lane, in units per second.")]
@@ -52,11 +53,13 @@ namespace OperationOutbreak.Player
         private float _leanVelocity;
         private float _currentLean;
         private float _groundY;
+        private bool _isDead;
 
         private void Reset()
         {
             inputReader = GetComponent<PlayerInputReader>();
             laneBounds = GetComponent<PlayerLaneBounds>();
+            playerHealth = GetComponent<PlayerHealth>();
             Transform visual = transform.Find("Visual");
             visualRoot = visual != null ? visual : null;
         }
@@ -73,6 +76,11 @@ namespace OperationOutbreak.Player
                 laneBounds = GetComponent<PlayerLaneBounds>();
             }
 
+            if (playerHealth == null)
+            {
+                playerHealth = GetComponent<PlayerHealth>();
+            }
+
             if (lockFacingForward)
             {
                 transform.rotation = Quaternion.identity;
@@ -87,8 +95,30 @@ namespace OperationOutbreak.Player
             }
         }
 
+        private void OnEnable()
+        {
+            if (playerHealth != null)
+            {
+                playerHealth.Died += HandlePlayerDied;
+                _isDead = playerHealth.IsDead;
+            }
+        }
+
+        private void OnDisable()
+        {
+            if (playerHealth != null)
+            {
+                playerHealth.Died -= HandlePlayerDied;
+            }
+        }
+
         private void Update()
         {
+            if (_isDead)
+            {
+                return;
+            }
+
             float deltaTime = Time.deltaTime;
             if (deltaTime <= 0f)
             {
@@ -135,6 +165,13 @@ namespace OperationOutbreak.Player
             }
 
             ApplyStrafeLean(input.x, deltaTime);
+        }
+
+        private void HandlePlayerDied()
+        {
+            _isDead = true;
+            _velocity = Vector3.zero;
+            _smoothingVelocity = Vector3.zero;
         }
 
         private void ApplyStrafeLean(float strafeInput, float deltaTime)

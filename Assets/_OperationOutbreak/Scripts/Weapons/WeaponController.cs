@@ -1,3 +1,4 @@
+using OperationOutbreak.Player;
 using UnityEngine;
 
 namespace OperationOutbreak.Weapons
@@ -17,6 +18,9 @@ namespace OperationOutbreak.Weapons
         [Tooltip("Prototype projectile prefab launched by this weapon.")]
         [SerializeField] private Projectile projectilePrefab;
 
+        [Tooltip("Health on the owning Player. Resolved once from the parent at startup.")]
+        [SerializeField] private PlayerHealth playerHealth;
+
         [Header("Weapon Configuration")]
         [Tooltip("Automatic shots fired per second while gameplay is active.")]
         [Min(0.01f)]
@@ -35,22 +39,50 @@ namespace OperationOutbreak.Weapons
         [SerializeField] private int damage = 1;
 
         private float _nextShotTime;
+        private bool _isOwnerDead;
+
+        private void Awake()
+        {
+            if (playerHealth == null)
+            {
+                playerHealth = GetComponentInParent<PlayerHealth>();
+            }
+        }
 
         private void OnEnable()
         {
+            if (playerHealth != null)
+            {
+                playerHealth.Died += HandlePlayerDied;
+                _isOwnerDead = playerHealth.IsDead;
+            }
+
             // Fire on the first Update, then continue at the authored cadence.
             _nextShotTime = Time.time;
         }
 
+        private void OnDisable()
+        {
+            if (playerHealth != null)
+            {
+                playerHealth.Died -= HandlePlayerDied;
+            }
+        }
+
         private void Update()
         {
-            if (muzzlePoint == null || projectilePrefab == null || Time.time < _nextShotTime)
+            if (_isOwnerDead || muzzlePoint == null || projectilePrefab == null || Time.time < _nextShotTime)
             {
                 return;
             }
 
             FireForward();
             _nextShotTime = Time.time + (1f / fireRate);
+        }
+
+        private void HandlePlayerDied()
+        {
+            _isOwnerDead = true;
         }
 
         private void FireForward()

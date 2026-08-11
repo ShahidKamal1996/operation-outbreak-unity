@@ -1,3 +1,4 @@
+using System;
 using OperationOutbreak.Weapons;
 using UnityEngine;
 
@@ -16,11 +17,18 @@ namespace OperationOutbreak.Player
         [SerializeField] private bool logDamageToConsole = true;
 
         public int CurrentHealth { get; private set; }
-        public bool IsAlive => CurrentHealth > 0;
+        public bool IsAlive => !_isDead;
+        public bool IsDead => _isDead;
+
+        /// <summary>Raised once when health first reaches zero.</summary>
+        public event Action Died;
+
+        private bool _isDead;
 
         private void OnEnable()
         {
             CurrentHealth = Mathf.Max(1, maxHealth);
+            _isDead = false;
         }
 
         public void TakeDamage(int amount)
@@ -37,12 +45,22 @@ namespace OperationOutbreak.Player
             {
                 Debug.Log($"Player damaged: {CurrentHealth} / {maxHealth}", this);
 
-                if (CurrentHealth == 0)
-                {
-                    Debug.Log("Player health reached 0", this);
-                }
             }
 #endif
+
+            if (CurrentHealth == 0)
+            {
+                _isDead = true;
+
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
+                if (logDamageToConsole)
+                {
+                    Debug.Log("Player health reached 0", this);
+                    Debug.Log("Player death state activated", this);
+                }
+#endif
+                Died?.Invoke();
+            }
         }
 
 #if UNITY_EDITOR
