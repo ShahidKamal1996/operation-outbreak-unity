@@ -43,6 +43,8 @@ namespace OperationOutbreak.Weapons
         [SerializeField] private int damage = 1;
 
         private float _nextShotTime;
+        private float _baseFireRate;
+        private int _baseDamage;
         private GameObject _muzzleFlash;
         private bool _isOwnerDead;
         private ZombieController _currentTarget;
@@ -51,6 +53,9 @@ namespace OperationOutbreak.Weapons
 
         private void Awake()
         {
+            // Scene reload recreates this component, naturally restoring authored defaults.
+            _baseFireRate = fireRate;
+            _baseDamage = damage;
             if (playerHealth == null)
             {
                 playerHealth = GetComponentInParent<PlayerHealth>();
@@ -118,6 +123,20 @@ namespace OperationOutbreak.Weapons
             if (direction.sqrMagnitude <= 0.0001f) return;
             _aimDirection = direction.normalized;
             transform.rotation = Quaternion.LookRotation(_aimDirection, Vector3.up);
+        }
+
+        /// <summary>Applies a runtime-only firing-speed multiplier for the current scene run.</summary>
+        public void ApplyFireRateMultiplier(float multiplier)
+        {
+            if (multiplier <= 0f) return;
+            fireRate = Mathf.Max(0.01f, fireRate * multiplier);
+        }
+
+        /// <summary>Applies a runtime-only bonus to damage passed to newly fired projectiles.</summary>
+        public void ApplyDamageBonus(int amount)
+        {
+            if (amount <= 0) return;
+            damage = Mathf.Max(1, damage + amount);
         }
 
         private void HandlePlayerDied()
