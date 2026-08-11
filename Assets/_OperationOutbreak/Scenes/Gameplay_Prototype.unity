@@ -2455,6 +2455,10 @@ MonoBehaviour:
   m_EditorClassIdentifier:
   muzzlePoint: {fileID: 210021}
   projectilePrefab: {fileID: 300004, guid: e3a2769ec3b24effb8efaf5abd8ac674, type: 3}
+  playerHealth: {fileID: 200006}
+  enemySpawner: {fileID: 230003}
+  targetRange: 35
+  targetRefreshInterval: 0.15
   fireRate: 5
   projectileSpeed: 25
   projectileLifetime: 3
