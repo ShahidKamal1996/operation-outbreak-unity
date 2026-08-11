@@ -11,6 +11,11 @@ namespace OperationOutbreak.Upgrades
     /// approved for PlayerHealthHud and GameOverController. It is a pure visual: the text
     /// meshes carry no collider, so the label can never block the Player's passage.
     ///
+    /// Font sizes are large numbers on purpose. A TextMeshPro (3D) component viewed
+    /// through a PERSPECTIVE camera renders at fontSize * 0.1 world units per em, so a
+    /// "size 1" label is only a tenth of a unit tall. The values below are tuned so the
+    /// widest string ("FIRE RATE") fills the portrait 9:16 frame without clipping.
+    ///
     /// Orientation copies the existing camera's ROTATION only (never its position, and it
     /// never writes to the camera), so the text reads flat in the fixed 31-degree portrait
     /// view. Gate geometry, colours and placement are left exactly as approved in 1J.2A.
@@ -27,21 +32,21 @@ namespace OperationOutbreak.Upgrades
 
         [Header("Placement (local to this gate)")]
         [Tooltip("Local position of the label. Sits just above the gate top bar.")]
-        [SerializeField] private Vector3 localOffset = new Vector3(-2.9f, 4.5f, 13.5f);
+        [SerializeField] private Vector3 localOffset = new Vector3(-3.2f, 4.45f, 14.2f);
 
         [Tooltip("World width/height of the text block, in units.")]
-        [SerializeField] private Vector2 blockSize = new Vector2(6f, 1.1f);
+        [SerializeField] private Vector2 blockSize = new Vector2(9f, 2.4f);
 
         [Tooltip("Vertical gap between the two lines, in units.")]
-        [Min(0f)] [SerializeField] private float lineGap = 0.62f;
+        [Min(0f)] [SerializeField] private float lineGap = 1.3f;
 
         [Header("Style")]
         [SerializeField] private Color textColor = Color.white;
-        [Min(0.05f)] [SerializeField] private float titleFontSize = 0.9f;
-        [Min(0.05f)] [SerializeField] private float valueFontSize = 1.55f;
+        [Min(0.05f)] [SerializeField] private float titleFontSize = 8.5f;
+        [Min(0.05f)] [SerializeField] private float valueFontSize = 13f;
 
         [Tooltip("Dark outline so the text stays legible against the lane and skybox.")]
-        [Range(0f, 1f)] [SerializeField] private float outlineWidth = 0.18f;
+        [Range(0f, 1f)] [SerializeField] private float outlineWidth = 0.22f;
         [SerializeField] private Color outlineColor = new Color(0.04f, 0.05f, 0.07f, 1f);
 
         [Header("Facing")]
@@ -96,6 +101,9 @@ namespace OperationOutbreak.Upgrades
             text.fontSize = fontSize;
             text.fontStyle = FontStyles.Bold;
             text.alignment = TextAlignmentOptions.Center;
+            text.enableAutoSizing = false;
+            text.textWrappingMode = TextWrappingModes.NoWrap;
+            text.overflowMode = TextOverflowModes.Overflow;
             text.color = textColor;
 
             // Dark rim keeps the words readable over both the lane and the sky.
