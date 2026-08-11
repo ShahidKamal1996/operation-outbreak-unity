@@ -27,18 +27,22 @@ namespace OperationOutbreak.Upgrades
 
         [Header("Placement (local to this gate)")]
         [Tooltip("Local position of the label. Sits just above the gate top bar.")]
-        [SerializeField] private Vector3 localOffset = new Vector3(-3.2f, 3.85f, 13.7f);
+        [SerializeField] private Vector3 localOffset = new Vector3(-2.9f, 4.5f, 13.5f);
 
         [Tooltip("World width/height of the text block, in units.")]
-        [SerializeField] private Vector2 blockSize = new Vector2(4.2f, 0.8f);
+        [SerializeField] private Vector2 blockSize = new Vector2(6f, 1.1f);
 
         [Tooltip("Vertical gap between the two lines, in units.")]
-        [Min(0f)] [SerializeField] private float lineGap = 0.44f;
+        [Min(0f)] [SerializeField] private float lineGap = 0.62f;
 
         [Header("Style")]
         [SerializeField] private Color textColor = Color.white;
-        [Min(0.05f)] [SerializeField] private float titleFontSize = 0.62f;
-        [Min(0.05f)] [SerializeField] private float valueFontSize = 0.95f;
+        [Min(0.05f)] [SerializeField] private float titleFontSize = 0.9f;
+        [Min(0.05f)] [SerializeField] private float valueFontSize = 1.55f;
+
+        [Tooltip("Dark outline so the text stays legible against the lane and skybox.")]
+        [Range(0f, 1f)] [SerializeField] private float outlineWidth = 0.18f;
+        [SerializeField] private Color outlineColor = new Color(0.04f, 0.05f, 0.07f, 1f);
 
         [Header("Facing")]
         [Tooltip("Copy the camera's rotation so the text reads flat in the portrait view.")]
@@ -93,6 +97,13 @@ namespace OperationOutbreak.Upgrades
             text.fontStyle = FontStyles.Bold;
             text.alignment = TextAlignmentOptions.Center;
             text.color = textColor;
+
+            // Dark rim keeps the words readable over both the lane and the sky.
+            if (outlineWidth > 0f)
+            {
+                text.outlineWidth = outlineWidth;
+                text.outlineColor = outlineColor;
+            }
 
             // A prototype signpost should stay legible rather than be lit like geometry.
             MeshRenderer meshRenderer = line.GetComponent<MeshRenderer>();
