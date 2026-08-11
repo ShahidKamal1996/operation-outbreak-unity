@@ -3783,13 +3783,13 @@ MonoBehaviour:
   m_EditorClassIdentifier:
   titleText: FIRE RATE
   valueText: +25%
-  localOffset: {x: -2.9, y: 4.5, z: 13.5}
-  blockSize: {x: 6, y: 1.1}
-  lineGap: 0.62
+  localOffset: {x: -3.2, y: 4.45, z: 14.2}
+  blockSize: {x: 9, y: 2.4}
+  lineGap: 1.3
   textColor: {r: 1, g: 1, b: 1, a: 1}
-  titleFontSize: 0.9
-  valueFontSize: 1.55
-  outlineWidth: 0.18
+  titleFontSize: 8.5
+  valueFontSize: 13
+  outlineWidth: 0.22
   outlineColor: {r: 0.039215688, g: 0.050980393, b: 0.07058824, a: 1}
   matchCameraRotation: 1
   viewCamera: {fileID: 159994}
@@ -3807,13 +3807,13 @@ MonoBehaviour:
   m_EditorClassIdentifier:
   titleText: DAMAGE
   valueText: +1
-  localOffset: {x: 2.9, y: 4.5, z: 13.5}
-  blockSize: {x: 6, y: 1.1}
-  lineGap: 0.62
+  localOffset: {x: 3.2, y: 4.45, z: 14.2}
+  blockSize: {x: 9, y: 2.4}
+  lineGap: 1.3
   textColor: {r: 1, g: 1, b: 1, a: 1}
-  titleFontSize: 0.9
-  valueFontSize: 1.55
-  outlineWidth: 0.18
+  titleFontSize: 8.5
+  valueFontSize: 13
+  outlineWidth: 0.22
   outlineColor: {r: 0.039215688, g: 0.050980393, b: 0.07058824, a: 1}
   matchCameraRotation: 1
   viewCamera: {fileID: 159994}
