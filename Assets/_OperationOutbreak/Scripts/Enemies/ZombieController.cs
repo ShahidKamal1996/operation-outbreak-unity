@@ -49,11 +49,17 @@ namespace OperationOutbreak.Enemies
             ResolvePlayerHealth();
         }
 
-        /// <summary>Called once by EnemySpawner with the actual Player transform.</summary>
-        public void SetTarget(Transform target)
+        /// <summary>Called once by EnemySpawner with the actual Player root and its health component.</summary>
+        public void SetTarget(Transform target, PlayerHealth health)
         {
             playerTarget = target;
-            ResolvePlayerHealth();
+            _playerHealth = health;
+
+            // Retain a small fallback only for manual scene testing of the prefab.
+            if (_playerHealth == null)
+            {
+                ResolvePlayerHealth();
+            }
         }
 
         private void Update()

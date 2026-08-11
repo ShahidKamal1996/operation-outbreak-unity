@@ -1556,6 +1556,7 @@ MonoBehaviour:
   m_Name:
   m_EditorClassIdentifier:
   maxHealth: 10
+  logDamageToConsole: 1
 --- !u!1 &200010
 GameObject:
   m_ObjectHideFlags: 0
@@ -3040,6 +3041,7 @@ MonoBehaviour:
   m_EditorClassIdentifier:
   zombiePrefab: {fileID: 100003, guid: 6e94c31e0da44829a9c5f12a381e79b7, type: 3}
   playerTarget: {fileID: 200002}
+  playerHealth: {fileID: 200006}
   spawnPosition: {x: 0, y: 1, z: 15}
 --- !u!1660057539 &9223372036854775807
 SceneRoots:

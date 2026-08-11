@@ -11,6 +11,10 @@ namespace OperationOutbreak.Player
         [Min(1)]
         [SerializeField] private int maxHealth = 10;
 
+        [Header("Debug Verification")]
+        [Tooltip("Logs only confirmed damage events in the Editor or a development build. No HUD is created.")]
+        [SerializeField] private bool logDamageToConsole = true;
+
         public int CurrentHealth { get; private set; }
         public bool IsAlive => CurrentHealth > 0;
 
@@ -27,6 +31,18 @@ namespace OperationOutbreak.Player
             }
 
             CurrentHealth = Mathf.Max(0, CurrentHealth - amount);
+
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
+            if (logDamageToConsole)
+            {
+                Debug.Log($"Player damaged: {CurrentHealth} / {maxHealth}", this);
+
+                if (CurrentHealth == 0)
+                {
+                    Debug.Log("Player health reached 0", this);
+                }
+            }
+#endif
         }
 
 #if UNITY_EDITOR
