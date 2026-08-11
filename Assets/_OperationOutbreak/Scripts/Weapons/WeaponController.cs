@@ -1,3 +1,4 @@
+using OperationOutbreak.Enemies;
 using OperationOutbreak.Player;
 using UnityEngine;
 
@@ -20,6 +21,9 @@ namespace OperationOutbreak.Weapons
 
         [Tooltip("Health on the owning Player. Resolved once from the parent at startup.")]
         [SerializeField] private PlayerHealth playerHealth;
+        [SerializeField] private EnemySpawner enemySpawner;
+        [Min(1f)] [SerializeField] private float targetRange = 35f;
+        [Min(0.05f)] [SerializeField] private float targetRefreshInterval = 0.15f;
 
         [Header("Weapon Configuration")]
         [Tooltip("Automatic shots fired per second while gameplay is active.")]
@@ -40,6 +44,9 @@ namespace OperationOutbreak.Weapons
 
         private float _nextShotTime;
         private bool _isOwnerDead;
+        private ZombieController _currentTarget;
+        private Vector3 _aimDirection = Vector3.forward;
+        private float _nextTargetRefreshTime;
 
         private void Awake()
         {
@@ -71,13 +78,33 @@ namespace OperationOutbreak.Weapons
 
         private void Update()
         {
-            if (_isOwnerDead || muzzlePoint == null || projectilePrefab == null || Time.time < _nextShotTime)
+            if (_isOwnerDead || muzzlePoint == null || projectilePrefab == null) return;
+            RefreshTarget();
+            if (_currentTarget == null || Time.time < _nextShotTime)
             {
                 return;
             }
 
+            AimAtTarget();
             FireForward();
             _nextShotTime = Time.time + (1f / fireRate);
+        }
+
+        private void RefreshTarget()
+        {
+            if (enemySpawner == null || Time.time < _nextTargetRefreshTime) return;
+            _currentTarget = enemySpawner.AcquireTarget(transform.root, targetRange, _currentTarget);
+            _nextTargetRefreshTime = Time.time + targetRefreshInterval;
+        }
+
+        private void AimAtTarget()
+        {
+            if (_currentTarget == null) return;
+            Vector3 direction = _currentTarget.transform.position - muzzlePoint.position;
+            direction.y = 0f;
+            if (direction.sqrMagnitude <= 0.0001f) return;
+            _aimDirection = direction.normalized;
+            transform.rotation = Quaternion.LookRotation(_aimDirection, Vector3.up);
         }
 
         private void HandlePlayerDied()
@@ -95,7 +122,7 @@ namespace OperationOutbreak.Weapons
                 Quaternion.identity);
 
             projectile.Initialize(
-                Vector3.forward,
+                _aimDirection,
                 projectileSpeed,
                 projectileLifetime,
                 damage);

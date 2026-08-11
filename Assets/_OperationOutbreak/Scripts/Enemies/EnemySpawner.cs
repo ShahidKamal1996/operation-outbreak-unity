@@ -81,6 +81,30 @@ namespace OperationOutbreak.Enemies
             if (index == 0) return leftSpawnPosition;
             return index == 1 ? centreSpawnPosition : rightSpawnPosition;
         }
+        /// <summary>Returns the retained target when valid, otherwise closest living zombie generally ahead.</summary>
+        public ZombieController AcquireTarget(Transform origin, float range, ZombieController retained)
+        {
+            if (origin == null || range <= 0f) return null;
+            if (IsValidTarget(retained, origin, range)) return retained;
+            ZombieController best = null;
+            float bestDistance = float.MaxValue;
+            foreach (ZombieController zombie in _activeEnemies)
+            {
+                if (!IsValidTarget(zombie, origin, range)) continue;
+                float distance = (zombie.transform.position - origin.position).sqrMagnitude;
+                if (distance < bestDistance) { bestDistance = distance; best = zombie; }
+            }
+            return best;
+        }
+        private static bool IsValidTarget(ZombieController zombie, Transform origin, float range)
+        {
+            if (zombie == null || !zombie.isActiveAndEnabled || !zombie.IsAlive) return false;
+            Vector3 toZombie = zombie.transform.position - origin.position;
+            toZombie.y = 0f;
+            if (toZombie.sqrMagnitude > range * range) return false;
+            return Vector3.Dot(origin.forward, toZombie.normalized) >= -0.15f;
+        }
+
         private void HandleEnemyDied(ZombieController zombie)
         {
             if (zombie != null) zombie.Died -= HandleEnemyDied;
