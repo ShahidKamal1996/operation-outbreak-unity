@@ -1,3 +1,4 @@
+using OperationOutbreak.Feedback;
 using UnityEngine;
 
 namespace OperationOutbreak.Weapons
@@ -68,6 +69,7 @@ namespace OperationOutbreak.Weapons
                 if (damageable != null && damageable.IsAlive)
                 {
                     damageable.TakeDamage(_damage);
+                    CombatFeedback.SpawnHitSpark(hit.point);
                     Despawn();
                     return;
                 }
