@@ -3190,6 +3190,7 @@ GameObject:
   serializedVersion: 6
   m_Component:
   - component: {fileID: 300102}
+  - component: {fileID: 300103}
   m_Layer: 0
   m_Name: LeftGate
   m_TagString: Untagged
@@ -3213,6 +3214,7 @@ Transform:
   - {fileID: 300111}
   - {fileID: 300121}
   - {fileID: 300131}
+  - {fileID: 300141}
   m_Father: {fileID: 300002}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!1 &300201
@@ -3224,6 +3226,7 @@ GameObject:
   serializedVersion: 6
   m_Component:
   - component: {fileID: 300202}
+  - component: {fileID: 300203}
   m_Layer: 0
   m_Name: RightGate
   m_TagString: Untagged
@@ -3247,6 +3250,7 @@ Transform:
   - {fileID: 300211}
   - {fileID: 300221}
   - {fileID: 300231}
+  - {fileID: 300241}
   m_Father: {fileID: 300002}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!1 &300110
@@ -3765,6 +3769,186 @@ MeshRenderer:
   m_SortingOrder: 0
   m_MaskInteraction: 0
   m_AdditionalVertexStreams: {fileID: 0}
+--- !u!114 &300103
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 300101}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 6fe25d5c38cd408ba35d1251661aed31, type: 3}
+  m_Name:
+  m_EditorClassIdentifier:
+  titleText: FIRE RATE
+  valueText: +25%
+  localOffset: {x: -3.2, y: 3.85, z: 13.7}
+  blockSize: {x: 4.2, y: 0.8}
+  lineGap: 0.44
+  textColor: {r: 1, g: 1, b: 1, a: 1}
+  titleFontSize: 0.62
+  valueFontSize: 0.95
+  matchCameraRotation: 1
+  viewCamera: {fileID: 159994}
+--- !u!114 &300203
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 300201}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 6fe25d5c38cd408ba35d1251661aed31, type: 3}
+  m_Name:
+  m_EditorClassIdentifier:
+  titleText: DAMAGE
+  valueText: +1
+  localOffset: {x: 3.2, y: 3.85, z: 13.7}
+  blockSize: {x: 4.2, y: 0.8}
+  lineGap: 0.44
+  textColor: {r: 1, g: 1, b: 1, a: 1}
+  titleFontSize: 0.62
+  valueFontSize: 0.95
+  matchCameraRotation: 1
+  viewCamera: {fileID: 159994}
+--- !u!1 &300140
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 300141}
+  - component: {fileID: 300142}
+  - component: {fileID: 300143}
+  m_Layer: 0
+  m_Name: LeftGate_Trigger
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!4 &300141
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 300140}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: -3.2, y: 1.5, z: 14}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 300102}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!65 &300142
+BoxCollider:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 300140}
+  m_Material: {fileID: 0}
+  m_IncludeLayers:
+    serializedVersion: 2
+    m_Bits: 0
+  m_ExcludeLayers:
+    serializedVersion: 2
+    m_Bits: 0
+  m_LayerOverridePriority: 0
+  m_IsTrigger: 1
+  m_ProvidesContacts: 0
+  m_Enabled: 1
+  serializedVersion: 3
+  m_Size: {x: 2.7, y: 3, z: 0.6}
+  m_Center: {x: 0, y: 0, z: 0}
+--- !u!114 &300143
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 300140}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 5baec776df8e4e83b5ca8329150ef413, type: 3}
+  m_Name:
+  m_EditorClassIdentifier:
+  upgradeLabel: FIRE RATE +25%
+  player: {fileID: 200005}
+--- !u!1 &300240
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 300241}
+  - component: {fileID: 300242}
+  - component: {fileID: 300243}
+  m_Layer: 0
+  m_Name: RightGate_Trigger
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!4 &300241
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 300240}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: 3.2, y: 1.5, z: 14}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 300202}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!65 &300242
+BoxCollider:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 300240}
+  m_Material: {fileID: 0}
+  m_IncludeLayers:
+    serializedVersion: 2
+    m_Bits: 0
+  m_ExcludeLayers:
+    serializedVersion: 2
+    m_Bits: 0
+  m_LayerOverridePriority: 0
+  m_IsTrigger: 1
+  m_ProvidesContacts: 0
+  m_Enabled: 1
+  serializedVersion: 3
+  m_Size: {x: 2.7, y: 3, z: 0.6}
+  m_Center: {x: 0, y: 0, z: 0}
+--- !u!114 &300243
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 300240}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 5baec776df8e4e83b5ca8329150ef413, type: 3}
+  m_Name:
+  m_EditorClassIdentifier:
+  upgradeLabel: DAMAGE +1
+  player: {fileID: 200005}
 --- !u!1660057539 &9223372036854775807
 SceneRoots:
   m_ObjectHideFlags: 0
