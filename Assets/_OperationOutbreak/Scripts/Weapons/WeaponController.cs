@@ -43,6 +43,7 @@ namespace OperationOutbreak.Weapons
         [SerializeField] private int damage = 1;
 
         private float _nextShotTime;
+        private GameObject _muzzleFlash;
         private bool _isOwnerDead;
         private ZombieController _currentTarget;
         private Vector3 _aimDirection = Vector3.forward;
@@ -54,6 +55,18 @@ namespace OperationOutbreak.Weapons
             {
                 playerHealth = GetComponentInParent<PlayerHealth>();
             }
+        }
+
+        private void Start()
+        {
+            _muzzleFlash = GameObject.CreatePrimitive(PrimitiveType.Sphere);
+            _muzzleFlash.name = "MuzzleFlash";
+            Destroy(_muzzleFlash.GetComponent<Collider>());
+            _muzzleFlash.transform.SetParent(muzzlePoint, false);
+            _muzzleFlash.transform.localPosition = Vector3.zero;
+            _muzzleFlash.transform.localScale = Vector3.one * 0.18f;
+            _muzzleFlash.GetComponent<Renderer>().material.color = new Color(1f, .85f, .25f, 1f);
+            _muzzleFlash.SetActive(false);
         }
 
         private void OnEnable()
@@ -112,6 +125,13 @@ namespace OperationOutbreak.Weapons
             _isOwnerDead = true;
         }
 
+        private System.Collections.IEnumerator FlashMuzzle()
+        {
+            _muzzleFlash.SetActive(true);
+            yield return new WaitForSeconds(0.05f);
+            if (_muzzleFlash != null) _muzzleFlash.SetActive(false);
+        }
+
         private void FireForward()
         {
             // World +Z is intentional for this milestone. Muzzle/player rotation is not
@@ -121,6 +141,7 @@ namespace OperationOutbreak.Weapons
                 muzzlePoint.position,
                 Quaternion.identity);
 
+            if (_muzzleFlash != null) StartCoroutine(FlashMuzzle());
             projectile.Initialize(
                 _aimDirection,
                 projectileSpeed,

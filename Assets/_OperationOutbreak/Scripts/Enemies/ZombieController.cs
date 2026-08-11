@@ -44,12 +44,20 @@ namespace OperationOutbreak.Enemies
         private PlayerHealth _playerHealth;
         private float _nextAttackTime;
         private float _groundY;
+        private bool _isDying;
+        private Renderer[] _renderers;
+        private MaterialPropertyBlock _propertyBlock;
+        private Vector3 _visualScale;
         // Allocated once per zombie; OverlapSphereNonAlloc keeps the chase loop allocation-free.
         private readonly Collider[] _nearbyColliders = new Collider[12];
 
         private void Awake()
         {
             _groundY = transform.position.y;
+            _renderers = GetComponentsInChildren<Renderer>();
+            _propertyBlock = new MaterialPropertyBlock();
+            Transform visual = transform.Find("Visual");
+            _visualScale = visual != null ? visual.localScale : Vector3.one;
             ResolvePlayerHealth();
         }
 
@@ -76,7 +84,7 @@ namespace OperationOutbreak.Enemies
 
         private void Update()
         {
-            if (!IsAlive || playerTarget == null)
+            if (_isDying || !IsAlive || playerTarget == null)
             {
                 return;
             }
@@ -147,6 +155,7 @@ namespace OperationOutbreak.Enemies
             }
 
             CurrentHealth = Mathf.Max(0, CurrentHealth - amount);
+            if (CurrentHealth > 0) StartCoroutine(HitFlash());
             if (CurrentHealth == 0)
             {
                 if (!_deathNotified)
@@ -155,15 +164,39 @@ namespace OperationOutbreak.Enemies
                     Died?.Invoke(this);
                 }
 
-                if (deactivateOnDefeat)
-                {
-                    gameObject.SetActive(false);
-                }
-                else
-                {
-                    Destroy(gameObject);
-                }
+                _isDying = true;
+                StartCoroutine(DeathFeedback());
             }
+        }
+
+        private System.Collections.IEnumerator HitFlash()
+        {
+            SetFlashColor(Color.white);
+            yield return new WaitForSeconds(0.1f);
+            SetFlashColor(Color.clear);
+        }
+
+        private void SetFlashColor(Color color)
+        {
+            foreach (Renderer renderer in _renderers)
+            {
+                renderer.GetPropertyBlock(_propertyBlock);
+                _propertyBlock.SetColor("_BaseColor", color == Color.clear ? renderer.sharedMaterial.color : color);
+                renderer.SetPropertyBlock(_propertyBlock);
+            }
+        }
+
+        private System.Collections.IEnumerator DeathFeedback()
+        {
+            Transform visual = transform.Find("Visual");
+            float elapsed = 0f;
+            while (elapsed < 0.25f)
+            {
+                elapsed += Time.deltaTime;
+                if (visual != null) visual.localScale = Vector3.Lerp(_visualScale, Vector3.zero, elapsed / 0.25f);
+                yield return null;
+            }
+            if (deactivateOnDefeat) gameObject.SetActive(false); else Destroy(gameObject);
         }
 
         private void ResolvePlayerHealth()
