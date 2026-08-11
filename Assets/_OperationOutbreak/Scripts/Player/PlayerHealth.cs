@@ -17,11 +17,15 @@ namespace OperationOutbreak.Player
         [SerializeField] private bool logDamageToConsole = true;
 
         public int CurrentHealth { get; private set; }
+        public int MaxHealth => maxHealth;
         public bool IsAlive => !_isDead;
         public bool IsDead => _isDead;
 
         /// <summary>Raised once when health first reaches zero.</summary>
         public event Action Died;
+
+        /// <summary>Raised after a confirmed health value change.</summary>
+        public event Action<int, int> HealthChanged;
 
         private bool _isDead;
 
@@ -29,6 +33,7 @@ namespace OperationOutbreak.Player
         {
             CurrentHealth = Mathf.Max(1, maxHealth);
             _isDead = false;
+            HealthChanged?.Invoke(CurrentHealth, maxHealth);
         }
 
         public void TakeDamage(int amount)
@@ -39,6 +44,7 @@ namespace OperationOutbreak.Player
             }
 
             CurrentHealth = Mathf.Max(0, CurrentHealth - amount);
+            HealthChanged?.Invoke(CurrentHealth, maxHealth);
 
 #if UNITY_EDITOR || DEVELOPMENT_BUILD
             if (logDamageToConsole)
