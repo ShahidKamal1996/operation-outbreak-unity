@@ -19,6 +19,8 @@ namespace OperationOutbreak.UI
         [SerializeField] private Vector2 panelSize = new Vector2(300f, 118f);
         [SerializeField] private Vector2 padding = new Vector2(36f, 36f);
 
+        private static Sprite _fillSprite;
+
         private Image _fillImage;
         private TMP_Text _healthText;
         private bool _isBuilt;
@@ -103,6 +105,10 @@ namespace OperationOutbreak.UI
             fill.offsetMin = new Vector2(3f, 3f);
             fill.offsetMax = new Vector2(-3f, -3f);
             _fillImage = fill.gameObject.AddComponent<Image>();
+            // A runtime-created Image has no source sprite by default. In that state Unity
+            // uses its simple-mesh fallback and ignores Image.fillAmount. Supply a sprite so
+            // the Filled image path is used for the green health fill.
+            _fillImage.sprite = GetFillSprite();
             _fillImage.type = Image.Type.Filled;
             _fillImage.fillMethod = Image.FillMethod.Horizontal;
             _fillImage.fillOrigin = (int)Image.OriginHorizontal.Left;
@@ -116,6 +122,20 @@ namespace OperationOutbreak.UI
             healthTextRect.sizeDelta = new Vector2(-36f, 34f);
             healthTextRect.anchoredPosition = new Vector2(0f, 12f);
             _healthText.alignment = TextAlignmentOptions.Center;
+        }
+
+        private static Sprite GetFillSprite()
+        {
+            if (_fillSprite == null)
+            {
+                _fillSprite = Sprite.Create(
+                    Texture2D.whiteTexture,
+                    new Rect(0f, 0f, 1f, 1f),
+                    new Vector2(0.5f, 0.5f),
+                    1f);
+            }
+
+            return _fillSprite;
         }
 
         private static RectTransform CreateRect(string objectName, Transform parent)
