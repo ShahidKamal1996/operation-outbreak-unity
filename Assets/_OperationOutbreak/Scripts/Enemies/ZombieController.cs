@@ -1,3 +1,4 @@
+using System;
 using OperationOutbreak.Player;
 using OperationOutbreak.Weapons;
 using UnityEngine;
@@ -31,6 +32,8 @@ namespace OperationOutbreak.Enemies
 
         public int CurrentHealth { get; private set; }
         public bool IsAlive => CurrentHealth > 0;
+        public event Action<ZombieController> Died;
+        private bool _deathNotified;
 
         private PlayerHealth _playerHealth;
         private float _nextAttackTime;
@@ -45,6 +48,7 @@ namespace OperationOutbreak.Enemies
         private void OnEnable()
         {
             CurrentHealth = Mathf.Max(1, maxHealth);
+            _deathNotified = false;
             _nextAttackTime = Time.time;
             ResolvePlayerHealth();
         }
@@ -99,6 +103,12 @@ namespace OperationOutbreak.Enemies
             CurrentHealth = Mathf.Max(0, CurrentHealth - amount);
             if (CurrentHealth == 0)
             {
+                if (!_deathNotified)
+                {
+                    _deathNotified = true;
+                    Died?.Invoke(this);
+                }
+
                 if (deactivateOnDefeat)
                 {
                     gameObject.SetActive(false);
