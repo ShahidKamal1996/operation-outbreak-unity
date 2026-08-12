@@ -45,6 +45,7 @@ namespace OperationOutbreak.Enemies
         private float _nextAttackTime;
         private float _groundY;
         private bool _isDying;
+        private bool _combatSuspended;
         private Renderer[] _renderers;
         private MaterialPropertyBlock _propertyBlock;
         private Vector3 _visualScale;
@@ -82,9 +83,19 @@ namespace OperationOutbreak.Enemies
             }
         }
 
+        /// <summary>
+        /// Milestone 1K - stops this zombie chasing and attacking after victory.
+        /// The zombie is left in the scene untouched; only its behaviour halts, so no
+        /// death feedback is triggered and nothing is destroyed.
+        /// </summary>
+        public void SuspendCombat()
+        {
+            _combatSuspended = true;
+        }
+
         private void Update()
         {
-            if (_isDying || !IsAlive || playerTarget == null)
+            if (_combatSuspended || _isDying || !IsAlive || playerTarget == null)
             {
                 return;
             }

@@ -54,6 +54,7 @@ namespace OperationOutbreak.Player
         private float _currentLean;
         private float _groundY;
         private bool _isDead;
+        private bool _movementSuspended;
 
         private void Reset()
         {
@@ -112,9 +113,21 @@ namespace OperationOutbreak.Player
             }
         }
 
+        /// <summary>
+        /// Milestone 1K - safely stops movement after victory without disabling or
+        /// destroying the Player. Velocity is zeroed so the prototype comes to rest
+        /// instead of drifting, and the object stays in the scene for the camera.
+        /// </summary>
+        public void SuspendMovement()
+        {
+            _movementSuspended = true;
+            _velocity = Vector3.zero;
+            _smoothingVelocity = Vector3.zero;
+        }
+
         private void Update()
         {
-            if (_isDead)
+            if (_movementSuspended || _isDead)
             {
                 return;
             }

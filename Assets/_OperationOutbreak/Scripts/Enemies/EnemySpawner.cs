@@ -1,3 +1,4 @@
+using System;
 using System.Collections;
 using System.Collections.Generic;
 using OperationOutbreak.Player;
@@ -31,6 +32,17 @@ namespace OperationOutbreak.Enemies
         private bool _cancelled;
         private bool _encounterComplete;
 
+        /// <summary>
+        /// Milestone 1K - raised exactly once when the final wave has been cleared.
+        /// This reuses the single existing completion point below; no second
+        /// wave-completion system exists. Never raised when the encounter was
+        /// cancelled by player death, which keeps victory and Game Over exclusive.
+        /// </summary>
+        public event Action EncounterCompleted;
+
+        /// <summary>True once the final wave has been cleared during this scene run.</summary>
+        public bool IsEncounterComplete => _encounterComplete;
+
         private void OnEnable()
         {
             if (playerHealth != null) playerHealth.Died += CancelEncounter;
@@ -61,6 +73,10 @@ namespace OperationOutbreak.Enemies
             {
                 _encounterComplete = true;
                 Debug.Log("Encounter complete", this);
+
+                // Last statement of the encounter: listeners may safely stop this
+                // coroutine while handling the event.
+                EncounterCompleted?.Invoke();
             }
         }
         private IEnumerator SpawnWave(int count, int waveIndex)
@@ -110,6 +126,25 @@ namespace OperationOutbreak.Enemies
             if (zombie != null) zombie.Died -= HandleEnemyDied;
             _activeEnemies.Remove(zombie);
         }
+        /// <summary>
+        /// Milestone 1K - halts all remaining combat activity after victory: no further
+        /// waves are scheduled and any zombie still present stops chasing and attacking.
+        /// Runtime state only; a scene reload starts a fresh encounter.
+        /// </summary>
+        public void StopEncounter()
+        {
+            _cancelled = true;
+            StopAllCoroutines();
+
+            foreach (ZombieController zombie in _activeEnemies)
+            {
+                if (zombie != null)
+                {
+                    zombie.SuspendCombat();
+                }
+            }
+        }
+
         private void CancelEncounter()
         {
             if (_cancelled) return;

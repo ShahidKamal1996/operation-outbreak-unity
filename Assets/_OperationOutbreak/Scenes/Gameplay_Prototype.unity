@@ -3114,6 +3114,7 @@ GameObject:
   m_Component:
   - component: {fileID: 250002}
   - component: {fileID: 250003}
+  - component: {fileID: 250004}
   m_Layer: 5
   m_Name: GameOverFlow
   m_TagString: Untagged
@@ -3149,6 +3150,23 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   playerHealth: {fileID: 200006}
+  missionComplete: {fileID: 250004}
+--- !u!114 &250004
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 250001}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 5f9031ecadef4ab9bce807cb3eeb024d, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  enemySpawner: {fileID: 230003}
+  playerHealth: {fileID: 200006}
+  playerController: {fileID: 200005}
+  weapon: {fileID: 210003}
 --- !u!1 &300001
 GameObject:
   m_ObjectHideFlags: 0
