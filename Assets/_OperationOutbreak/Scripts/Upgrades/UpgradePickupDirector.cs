@@ -38,9 +38,6 @@ namespace OperationOutbreak.Upgrades
             [Tooltip("The upgrade awarded by this opportunity.")]
             public UpgradeDefinition upgrade = new UpgradeDefinition();
 
-            [Tooltip("Where this pickup appears, in world space. Clamped into the playable lane.")]
-            public Vector3 spawnPosition = new Vector3(0f, 0f, 8f);
-
             [Tooltip("Seconds to wait after the PREVIOUS opportunity resolved before this one appears.")]
             [Min(0f)] public float delayBeforeSpawn = 2f;
 
@@ -74,6 +71,19 @@ namespace OperationOutbreak.Upgrades
         [Tooltip("How close the player must get to collect. Forgiving for touch input.")]
         [Min(0.1f)] [SerializeField] private float collectRadius = 1.25f;
 
+        [Header("Random Placement")]
+        [Tooltip("Keeps pickups away from the left/right and forward/back limits of the lane.")]
+        [Min(0f)] [SerializeField] private float edgeMargin = 0.6f;
+
+        [Tooltip("A pickup never spawns closer than this to the player.")]
+        [Min(0f)] [SerializeField] private float minimumDistanceFromPlayer = 3f;
+
+        [Tooltip("A pickup never spawns this close to where the previous one appeared.")]
+        [Min(0f)] [SerializeField] private float minimumDistanceFromPreviousPickup = 4f;
+
+        [Tooltip("How many random points to try before falling back to a safe deterministic one.")]
+        [Range(1, 64)] [SerializeField] private int maxPlacementAttempts = 24;
+
         [Header("Sequence")]
         [Tooltip("Seconds before the FIRST opportunity appears, so the run starts with combat.")]
         [Min(0f)] [SerializeField] private float initialDelay = 3f;
@@ -87,6 +97,12 @@ namespace OperationOutbreak.Upgrades
 
         private UpgradeApplier _applier;
         private UpgradePickup _active;
+
+        // Shuffled per run. Holds indices into "opportunities" - a permutation, so every
+        // configured upgrade is offered exactly once and none can repeat.
+        private readonly List<int> _runOrder = new List<int>();
+        private Vector3 _previousSpawn;
+        private bool _hasPreviousSpawn;
         private int _nextIndex;
         private float _timer;
         private bool _waiting;
@@ -124,6 +140,10 @@ namespace OperationOutbreak.Upgrades
             _waiting = true;
             _sequenceFinished = false;
             _halted = false;
+            _hasPreviousSpawn = false;
+            _previousSpawn = Vector3.zero;
+
+            BuildShuffledRunOrder();
 
             if (playerHealth != null)
             {
@@ -166,8 +186,7 @@ namespace OperationOutbreak.Upgrades
                         shape = UpgradePickupShape.Capsule,
                         tint = new Color(1f, 0.62f, 0.14f, 1f)
                     },
-                    spawnPosition = new Vector3(-2.2f, 0f, 7f),
-                    delayBeforeSpawn = 3f,
+                    delayBeforeSpawn = 2f,
                     lifetime = 5f
                 },
                 new UpgradeOpportunity
@@ -179,7 +198,6 @@ namespace OperationOutbreak.Upgrades
                         shape = UpgradePickupShape.Cube,
                         tint = new Color(0.95f, 0.25f, 0.28f, 1f)
                     },
-                    spawnPosition = new Vector3(2.4f, 0f, 11f),
                     delayBeforeSpawn = 2f,
                     lifetime = 5f
                 },
@@ -192,7 +210,6 @@ namespace OperationOutbreak.Upgrades
                         shape = UpgradePickupShape.Sphere,
                         tint = new Color(0.24f, 0.85f, 0.38f, 1f)
                     },
-                    spawnPosition = new Vector3(-2.6f, 0f, 4.5f),
                     delayBeforeSpawn = 2f,
                     lifetime = 5f
                 },
@@ -205,11 +222,174 @@ namespace OperationOutbreak.Upgrades
                         shape = UpgradePickupShape.Cylinder,
                         tint = new Color(0.28f, 0.66f, 1f, 1f)
                     },
-                    spawnPosition = new Vector3(2.6f, 0f, 13f),
                     delayBeforeSpawn = 2f,
                     lifetime = 5f
                 }
             };
+        }
+
+        /// <summary>
+        /// Fisher-Yates shuffle of a runtime index list. The serialized "opportunities"
+        /// list is never reordered or written to, so the asset/scene config is untouched
+        /// and nothing persists between runs. A permutation guarantees each upgrade is
+        /// offered exactly once with no duplicates.
+        /// </summary>
+        private void BuildShuffledRunOrder()
+        {
+            _runOrder.Clear();
+
+            if (opportunities == null)
+            {
+                return;
+            }
+
+            for (int i = 0; i < opportunities.Count; i++)
+            {
+                if (opportunities[i] != null && opportunities[i].upgrade != null)
+                {
+                    _runOrder.Add(i);
+                }
+            }
+
+            for (int i = _runOrder.Count - 1; i > 0; i--)
+            {
+                int j = Random.Range(0, i + 1);
+                (_runOrder[i], _runOrder[j]) = (_runOrder[j], _runOrder[i]);
+            }
+
+            if (verboseLogging && _runOrder.Count > 0)
+            {
+                string order = string.Empty;
+                for (int i = 0; i < _runOrder.Count; i++)
+                {
+                    order += (i > 0 ? " -> " : string.Empty)
+                        + opportunities[_runOrder[i]].upgrade.displayName;
+                }
+
+                Debug.Log($"Upgrade order for this run: {order}", this);
+            }
+        }
+
+        /// <summary>
+        /// Picks a fresh random point inside the approved playable rectangle. Upgrade type
+        /// and position are independent - this is called per spawn and knows nothing about
+        /// which upgrade is being placed. PlayerLaneBounds stays the single source of truth;
+        /// no second set of world bounds is introduced here.
+        /// </summary>
+        private Vector3 GenerateSpawnPosition()
+        {
+            float minX, maxX, minZ, maxZ;
+
+            if (laneBounds != null)
+            {
+                minX = laneBounds.MinX;
+                maxX = laneBounds.MaxX;
+                minZ = laneBounds.MinZ;
+                maxZ = laneBounds.MaxZ;
+            }
+            else
+            {
+                // Defensive only: without bounds, hug the player's own position.
+                Vector3 fallbackCentre = playerController != null
+                    ? playerController.transform.position
+                    : Vector3.zero;
+                minX = fallbackCentre.x - 1f;
+                maxX = fallbackCentre.x + 1f;
+                minZ = fallbackCentre.z + 2f;
+                maxZ = fallbackCentre.z + 4f;
+            }
+
+            // Inset so a pickup never sits on the boundary line itself. If the lane is
+            // narrower than two margins, collapse to the centre rather than inverting.
+            minX = ShrinkMin(minX, maxX, edgeMargin);
+            maxX = ShrinkMax(minX, maxX, edgeMargin);
+            minZ = ShrinkMin(minZ, maxZ, edgeMargin);
+            maxZ = ShrinkMax(minZ, maxZ, edgeMargin);
+
+            Vector3 player = playerController != null
+                ? playerController.transform.position
+                : Vector3.zero;
+
+            float playerSqr = minimumDistanceFromPlayer * minimumDistanceFromPlayer;
+            float previousSqr = minimumDistanceFromPreviousPickup * minimumDistanceFromPreviousPickup;
+
+            Vector3 best = Vector3.zero;
+            float bestScore = float.NegativeInfinity;
+
+            for (int attempt = 0; attempt < maxPlacementAttempts; attempt++)
+            {
+                Vector3 candidate = new Vector3(
+                    Random.Range(minX, maxX),
+                    0f,
+                    Random.Range(minZ, maxZ));
+
+                float playerDistSqr = HorizontalSqrDistance(candidate, player);
+                float previousDistSqr = _hasPreviousSpawn
+                    ? HorizontalSqrDistance(candidate, _previousSpawn)
+                    : float.MaxValue;
+
+                if (playerDistSqr >= playerSqr && previousDistSqr >= previousSqr)
+                {
+                    return candidate;
+                }
+
+                // Track the least-bad candidate so a cramped lane still degrades gracefully.
+                float score = Mathf.Min(
+                    playerDistSqr - playerSqr,
+                    previousDistSqr == float.MaxValue ? 0f : previousDistSqr - previousSqr);
+
+                if (score > bestScore)
+                {
+                    bestScore = score;
+                    best = candidate;
+                }
+            }
+
+            // Deterministic safe fallback: the in-bounds corner furthest from the player.
+            // Always inside the lane and reachable, so a failed roll can never produce an
+            // invalid pickup.
+            Vector3 deterministic = FurthestCornerFromPlayer(minX, maxX, minZ, maxZ, player);
+
+            if (bestScore > float.NegativeInfinity
+                && HorizontalSqrDistance(best, player) > HorizontalSqrDistance(deterministic, player))
+            {
+                return best;
+            }
+
+            if (verboseLogging)
+            {
+                Debug.Log(
+                    $"Upgrade placement fell back to a deterministic safe point after "
+                    + $"{maxPlacementAttempts} attempts.",
+                    this);
+            }
+
+            return deterministic;
+        }
+
+        private static float ShrinkMin(float min, float max, float margin)
+        {
+            return (max - min) <= (margin * 2f) ? (min + max) * 0.5f : min + margin;
+        }
+
+        private static float ShrinkMax(float min, float max, float margin)
+        {
+            return (max - min) <= (margin * 2f) ? (min + max) * 0.5f : max - margin;
+        }
+
+        private static float HorizontalSqrDistance(Vector3 a, Vector3 b)
+        {
+            float dx = a.x - b.x;
+            float dz = a.z - b.z;
+            return (dx * dx) + (dz * dz);
+        }
+
+        private static Vector3 FurthestCornerFromPlayer(
+            float minX, float maxX, float minZ, float maxZ, Vector3 player)
+        {
+            float x = Mathf.Abs(maxX - player.x) >= Mathf.Abs(player.x - minX) ? maxX : minX;
+            float z = Mathf.Abs(maxZ - player.z) >= Mathf.Abs(player.z - minZ) ? maxZ : minZ;
+            return new Vector3(x, 0f, z);
         }
 
         private void Update()
@@ -231,24 +411,32 @@ namespace OperationOutbreak.Upgrades
             }
         }
 
+        /// <summary>Resolves a sequence slot through this run's shuffled order.</summary>
         private UpgradeOpportunity GetOpportunity(int index)
         {
-            return opportunities[Mathf.Clamp(index, 0, opportunities.Count - 1)];
+            int slot = Mathf.Clamp(index, 0, _runOrder.Count - 1);
+            return opportunities[_runOrder[slot]];
         }
+
+        /// <summary>How many opportunities this run will offer.</summary>
+        private int OpportunityCount => _runOrder.Count;
 
         private void SpawnNext()
         {
-            if (_nextIndex >= opportunities.Count)
+            if (_nextIndex >= OpportunityCount)
             {
                 _sequenceFinished = true;
                 _waiting = false;
                 return;
             }
 
-            UpgradeOpportunity opportunity = opportunities[_nextIndex];
+            UpgradeOpportunity opportunity = GetOpportunity(_nextIndex);
             _waiting = false;
 
-            Vector3 position = ResolveSpawnPosition(opportunity.spawnPosition);
+            // Fresh position every time a pickup is created - never tied to upgrade type.
+            Vector3 position = ResolveSpawnPosition(GenerateSpawnPosition());
+            _previousSpawn = position;
+            _hasPreviousSpawn = true;
 
             GameObject pickupObject = new GameObject($"UpgradePickup_{opportunity.upgrade.displayName}");
             pickupObject.transform.SetParent(transform, false);
@@ -272,7 +460,7 @@ namespace OperationOutbreak.Upgrades
             if (verboseLogging)
             {
                 Debug.Log(
-                    $"Upgrade opportunity {_nextIndex + 1}/{opportunities.Count} available: " +
+                    $"Upgrade opportunity {_nextIndex + 1}/{OpportunityCount} available: " +
                     $"{opportunity.upgrade.DisplayLine} at {position} for {opportunity.lifetime}s.",
                     this);
             }
@@ -350,7 +538,7 @@ namespace OperationOutbreak.Upgrades
             _nextIndex++;
             _timer = 0f;
 
-            if (_nextIndex >= opportunities.Count)
+            if (_nextIndex >= OpportunityCount)
             {
                 _sequenceFinished = true;
                 _waiting = false;

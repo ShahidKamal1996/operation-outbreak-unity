@@ -3238,6 +3238,10 @@ MonoBehaviour:
   pickupScale: 0.85
   hoverHeight: 1.15
   collectRadius: 1.25
+  edgeMargin: 0.6
+  minimumDistanceFromPlayer: 3
+  minimumDistanceFromPreviousPickup: 4
+  maxPlacementAttempts: 24
   initialDelay: 3
   verboseLogging: 1
   opportunities:
@@ -3249,8 +3253,7 @@ MonoBehaviour:
       amount: 1
       shape: 2
       tint: {r: 1, g: 0.62, b: 0.14, a: 1}
-    spawnPosition: {x: -2.2, y: 0, z: 7}
-    delayBeforeSpawn: 3
+    delayBeforeSpawn: 2
     lifetime: 5
   - upgrade:
       displayName: DAMAGE
@@ -3260,7 +3263,6 @@ MonoBehaviour:
       amount: 1
       shape: 0
       tint: {r: 0.95, g: 0.25, b: 0.28, a: 1}
-    spawnPosition: {x: 2.4, y: 0, z: 11}
     delayBeforeSpawn: 2
     lifetime: 5
   - upgrade:
@@ -3271,7 +3273,6 @@ MonoBehaviour:
       amount: 2
       shape: 1
       tint: {r: 0.24, g: 0.85, b: 0.38, a: 1}
-    spawnPosition: {x: -2.6, y: 0, z: 4.5}
     delayBeforeSpawn: 2
     lifetime: 5
   - upgrade:
@@ -3282,7 +3283,6 @@ MonoBehaviour:
       amount: 1
       shape: 3
       tint: {r: 0.28, g: 0.66, b: 1, a: 1}
-    spawnPosition: {x: 2.6, y: 0, z: 13}
     delayBeforeSpawn: 2
     lifetime: 5
 --- !u!1660057539 &9223372036854775807
