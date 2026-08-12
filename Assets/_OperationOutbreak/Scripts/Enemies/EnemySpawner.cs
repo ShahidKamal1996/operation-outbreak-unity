@@ -6,7 +6,15 @@ using UnityEngine;
 
 namespace OperationOutbreak.Enemies
 {
-    /// <summary>Small, finite three-wave prototype encounter. No endless spawning or director logic.</summary>
+    /// <summary>
+    /// Small, finite prototype encounter. No endless spawning or director logic.
+    ///
+    /// Milestone 1M - the same spawning code now serves the mission section flow. When
+    /// "missionDriven" is set the spawner no longer runs all three waves back-to-back at
+    /// Start; instead MissionSectionController calls BeginSection once per section and the
+    /// spawner reports SectionCleared when that section's zombies are all dead. There is
+    /// still exactly ONE spawning framework and ONE encounter-completion signal.
+    /// </summary>
     [DisallowMultipleComponent]
     public sealed class EnemySpawner : MonoBehaviour
     {
@@ -23,6 +31,11 @@ namespace OperationOutbreak.Enemies
         [Min(0.01f)] [SerializeField] private float spawnInterval = 0.6f;
         [Min(0f)] [SerializeField] private float betweenWaveDelay = 2f;
 
+        [Header("Mission Sections (Milestone 1M)")]
+        [Tooltip("When enabled the spawner waits for MissionSectionController to call " +
+                 "BeginSection instead of running the legacy three waves at Start.")]
+        [SerializeField] private bool missionDriven = true;
+
         [Header("Lane Spawn Positions")]
         [SerializeField] private Vector3 leftSpawnPosition = new Vector3(-2.5f, 1f, 16f);
         [SerializeField] private Vector3 centreSpawnPosition = new Vector3(0f, 1f, 19f);
@@ -32,6 +45,10 @@ namespace OperationOutbreak.Enemies
         private bool _cancelled;
         private bool _encounterComplete;
 
+        // Milestone 1M section state. Instance-only, so a scene reload is a full reset.
+        private int _activeSectionIndex = -1;
+        private bool _sectionRunning;
+
         /// <summary>
         /// Milestone 1K - raised exactly once when the final wave has been cleared.
         /// This reuses the single existing completion point below; no second
@@ -40,8 +57,21 @@ namespace OperationOutbreak.Enemies
         /// </summary>
         public event Action EncounterCompleted;
 
+        /// <summary>
+        /// Milestone 1M - raised when the zombies of one mission section have all been
+        /// defeated. Carries the zero-based section index so a late callback for an
+        /// out-of-date section can be ignored by the listener.
+        /// </summary>
+        public event Action<int> SectionCleared;
+
         /// <summary>True once the final wave has been cleared during this scene run.</summary>
         public bool IsEncounterComplete => _encounterComplete;
+
+        /// <summary>True while a mission section's zombies are still being fought.</summary>
+        public bool IsSectionRunning => _sectionRunning;
+
+        /// <summary>Zero-based index of the section currently spawned, -1 before the first.</summary>
+        public int ActiveSectionIndex => _activeSectionIndex;
 
         private void OnEnable()
         {
@@ -55,6 +85,11 @@ namespace OperationOutbreak.Enemies
         private void Start()
         {
             if (zombiePrefab == null || playerTarget == null || playerHealth == null || playerHealth.IsDead) { _cancelled = true; return; }
+
+            // Milestone 1M: the mission controller decides when each section spawns, so
+            // the legacy "everything at once" encounter must not auto-start.
+            if (missionDriven) return;
+
             StartCoroutine(RunEncounter());
         }
         private IEnumerator RunEncounter()
@@ -97,6 +132,75 @@ namespace OperationOutbreak.Enemies
             if (index == 0) return leftSpawnPosition;
             return index == 1 ? centreSpawnPosition : rightSpawnPosition;
         }
+
+        /// <summary>
+        /// Milestone 1M - spawns one mission section's zombies. Reuses the existing wave
+        /// coroutine, spawn triangle and target wiring; only the forward offset changes so
+        /// later sections appear ahead of the player in their own combat space.
+        /// </summary>
+        /// <param name="sectionIndex">Zero-based section index, echoed back on completion.</param>
+        /// <param name="count">How many zombies this section spawns.</param>
+        /// <param name="spawnLineZ">World Z the section's spawn triangle is centred on.</param>
+        public void BeginSection(int sectionIndex, int count, float spawnLineZ)
+        {
+            if (_cancelled || _encounterComplete || _sectionRunning) return;
+            if (zombiePrefab == null || playerTarget == null || playerHealth == null) return;
+            if (playerHealth.IsDead) { _cancelled = true; return; }
+
+            _activeSectionIndex = sectionIndex;
+            _sectionRunning = true;
+            StartCoroutine(RunSection(sectionIndex, Mathf.Max(1, count), spawnLineZ));
+        }
+
+        private IEnumerator RunSection(int sectionIndex, int count, float spawnLineZ)
+        {
+            yield return new WaitForSeconds(initialDelay);
+
+            if (_cancelled) { _sectionRunning = false; yield break; }
+
+            // The authored triangle keeps its lateral offsets and its internal depth
+            // stagger; the whole shape is simply translated to this section's spawn line.
+            float authoredBaseZ = Mathf.Min(
+                leftSpawnPosition.z, Mathf.Min(centreSpawnPosition.z, rightSpawnPosition.z));
+            float zShift = spawnLineZ - authoredBaseZ;
+
+            for (int i = 0; i < count; i++)
+            {
+                if (_cancelled) { _sectionRunning = false; yield break; }
+
+                Vector3 position = GetSpawnPosition(i % 3);
+                position.z += zShift;
+
+                ZombieController zombie = Instantiate(zombiePrefab, position, Quaternion.identity);
+                zombie.SetTarget(playerTarget, playerHealth);
+                zombie.Died += HandleEnemyDied;
+                _activeEnemies.Add(zombie);
+
+                if (i < count - 1) yield return new WaitForSeconds(spawnInterval);
+            }
+
+            while (!_cancelled && _activeEnemies.Count > 0) yield return null;
+
+            if (_cancelled) { _sectionRunning = false; yield break; }
+
+            _sectionRunning = false;
+
+            SectionCleared?.Invoke(sectionIndex);
+        }
+
+        /// <summary>
+        /// Milestone 1M - raises the single existing encounter-completion signal once the
+        /// mission's final section is done. Mission Complete already listens to this, so
+        /// no second victory path is introduced.
+        /// </summary>
+        public void CompleteEncounter()
+        {
+            if (_cancelled || _encounterComplete) return;
+
+            _encounterComplete = true;
+            Debug.Log("Encounter complete", this);
+            EncounterCompleted?.Invoke();
+        }
         /// <summary>Returns the retained target when valid, otherwise closest living zombie generally ahead.</summary>
         public ZombieController AcquireTarget(Transform origin, float range, ZombieController retained)
         {
@@ -134,6 +238,7 @@ namespace OperationOutbreak.Enemies
         public void StopEncounter()
         {
             _cancelled = true;
+            _sectionRunning = false;
             StopAllCoroutines();
 
             foreach (ZombieController zombie in _activeEnemies)
@@ -149,6 +254,7 @@ namespace OperationOutbreak.Enemies
         {
             if (_cancelled) return;
             _cancelled = true;
+            _sectionRunning = false;
             StopAllCoroutines();
         }
         private void UnsubscribeAll()

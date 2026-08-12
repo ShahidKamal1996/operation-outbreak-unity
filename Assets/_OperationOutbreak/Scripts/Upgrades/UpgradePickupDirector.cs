@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using OperationOutbreak.Enemies;
+using OperationOutbreak.Mission;
 using OperationOutbreak.Player;
 using OperationOutbreak.UI;
 using OperationOutbreak.Weapons;
@@ -54,6 +55,10 @@ namespace OperationOutbreak.Upgrades
 
         [Tooltip("Used only to stop offering upgrades once the encounter is won.")]
         [SerializeField] private EnemySpawner enemySpawner;
+
+        [Tooltip("Milestone 1M - optional. When present, pickups are constrained to the " +
+                 "section the player has actually unlocked.")]
+        [SerializeField] private MissionSectionController missionSections;
 
         [Header("Prototype Visual")]
         [Tooltip("Opaque prototype material used for the pickup core.")]
@@ -123,6 +128,7 @@ namespace OperationOutbreak.Upgrades
             if (laneBounds == null) laneBounds = FindAnyObjectByType<PlayerLaneBounds>();
             if (notificationHud == null) notificationHud = FindAnyObjectByType<UpgradeNotificationHud>();
             if (enemySpawner == null) enemySpawner = FindAnyObjectByType<EnemySpawner>();
+            if (missionSections == null) missionSections = FindAnyObjectByType<MissionSectionController>();
 
             _applier = new UpgradeApplier(weapon, playerHealth, playerController);
 
@@ -150,7 +156,14 @@ namespace OperationOutbreak.Upgrades
                 playerHealth.Died += HandlePlayerDied;
             }
 
-            if (enemySpawner != null)
+            // Milestone 1M - the upgrade run now ends with the MISSION, not with the
+            // first cleared section. EncounterCompleted is only raised after the final
+            // section, but subscribing to the mission event keeps the intent explicit.
+            if (missionSections != null)
+            {
+                missionSections.MissionCompleted += HandleEncounterCompleted;
+            }
+            else if (enemySpawner != null)
             {
                 enemySpawner.EncounterCompleted += HandleEncounterCompleted;
             }
@@ -161,6 +174,11 @@ namespace OperationOutbreak.Upgrades
             if (playerHealth != null)
             {
                 playerHealth.Died -= HandlePlayerDied;
+            }
+
+            if (missionSections != null)
+            {
+                missionSections.MissionCompleted -= HandleEncounterCompleted;
             }
 
             if (enemySpawner != null)
@@ -297,6 +315,20 @@ namespace OperationOutbreak.Upgrades
                 maxX = fallbackCentre.x + 1f;
                 minZ = fallbackCentre.z + 2f;
                 maxZ = fallbackCentre.z + 4f;
+            }
+
+            // Milestone 1M - clamp to the section the player has actually unlocked.
+            // PlayerLaneBounds already reports the current forward limit, so maxZ is
+            // never inside a locked section; this additionally lifts minZ to the current
+            // section's rear so a pickup is not stranded deep in cleared ground.
+            if (missionSections != null)
+            {
+                float sectionMinZ = missionSections.CurrentSectionMinZ;
+
+                if (!float.IsNegativeInfinity(sectionMinZ))
+                {
+                    minZ = Mathf.Max(minZ, Mathf.Min(sectionMinZ, maxZ));
+                }
             }
 
             // Inset so a pickup never sits on the boundary line itself. If the lane is

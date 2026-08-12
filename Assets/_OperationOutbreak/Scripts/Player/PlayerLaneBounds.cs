@@ -64,6 +64,33 @@ namespace OperationOutbreak.Player
         public float MinZ { get; private set; }
         public float MaxZ { get; private set; }
 
+        // Milestone 1M - optional forward limit supplied by the mission section flow.
+        // When no override is set the component behaves exactly as it did before:
+        // forward limit = forwardReference.z - forwardStandoff.
+        private bool _hasForwardOverride;
+        private float _forwardOverrideZ;
+
+        /// <summary>
+        /// Milestone 1M - lets the mission progression open the corridor one section at a
+        /// time. The lane geometry, lateral limits, rear limit and camera are untouched;
+        /// only the forward stop line moves. Anything that reads MinZ/MaxZ (including the
+        /// upgrade pickup placement) therefore sees the CURRENT reachable area, so a
+        /// pickup can never appear in a section the player has not unlocked yet.
+        /// </summary>
+        public void SetForwardLimit(float worldZ)
+        {
+            _hasForwardOverride = true;
+            _forwardOverrideZ = worldZ;
+            Recalculate();
+        }
+
+        /// <summary>Drops the override and returns to the authored forward standoff.</summary>
+        public void ClearForwardLimit()
+        {
+            _hasForwardOverride = false;
+            Recalculate();
+        }
+
         private void Awake()
         {
             Recalculate();
@@ -107,9 +134,11 @@ namespace OperationOutbreak.Player
                 ? rearReference.position.z - backwardAllowance
                 : fallbackRearZ;
 
-            float forwardZ = forwardReference != null
-                ? forwardReference.position.z - forwardStandoff
-                : fallbackForwardZ;
+            float forwardZ = _hasForwardOverride
+                ? _forwardOverrideZ
+                : (forwardReference != null
+                    ? forwardReference.position.z - forwardStandoff
+                    : fallbackForwardZ);
 
             if (!float.IsInfinity(laneMinZ))
             {
