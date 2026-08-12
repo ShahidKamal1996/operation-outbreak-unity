@@ -69,6 +69,30 @@ namespace OperationOutbreak.Player
             }
         }
 
+        /// <summary>
+        /// Milestone 1L - runtime-only maximum health upgrade (MAX HEALTH +2 gate).
+        ///
+        /// Raises the ceiling AND the current value by the same amount, so a full
+        /// 10/10 player becomes 12/12 rather than 10/12. HealthChanged is raised once
+        /// afterwards, which is all the existing event-driven Health HUD needs to
+        /// redraw - no HUD code or styling is touched.
+        ///
+        /// RESET: maxHealth is an ordinary serialized field on a scene component and
+        /// OnEnable re-seeds CurrentHealth from it, so reloading the scene restores the
+        /// authored 10. Nothing static and nothing written to an asset.
+        /// </summary>
+        public void ApplyMaxHealthBonus(int amount)
+        {
+            if (amount <= 0 || _isDead)
+            {
+                return;
+            }
+
+            maxHealth += amount;
+            CurrentHealth += amount;
+            HealthChanged?.Invoke(CurrentHealth, maxHealth);
+        }
+
 #if UNITY_EDITOR
         private void OnValidate()
         {

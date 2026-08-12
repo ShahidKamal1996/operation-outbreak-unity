@@ -1,3 +1,4 @@
+using OperationOutbreak.Player;
 using OperationOutbreak.Weapons;
 using TMPro;
 using UnityEngine;
@@ -5,14 +6,37 @@ using UnityEngine;
 namespace OperationOutbreak.Upgrades
 {
     /// <summary>
+    /// Which runtime upgrade one gate of a pair awards. Every value maps onto an
+    /// EXISTING approved runtime hook - no upgrade maths lives in this file.
+    ///
+    /// The numbering is deliberately append-only: Unity serializes enums by integer, so
+    /// 0/1 must keep meaning FireRate/Damage or the approved Pair 1 asset would change
+    /// meaning. New kinds are added at the end.
+    /// </summary>
+    public enum GateUpgradeKind
+    {
+        FireRateMultiplier = 0,
+        DamageBonus = 1,
+        MaxHealthBonus = 2,
+        MoveSpeedMultiplier = 3
+    }
+
+    /// <summary>
     /// Milestone 1J.3 - turns the two upgrade gates into one mutually exclusive choice.
     ///
     /// This coordinator lives on the UpgradeGatePair root and is the ONLY place that
     /// decides anything. The gates themselves still just report that the Player passed
     /// through them (1J.2B); they do not know about weapons, upgrades or each other.
     ///
-    /// Upgrades are applied exclusively through the existing WeaponController hooks
-    /// (ApplyFireRateMultiplier / ApplyDamageBonus), so no weapon maths is duplicated here.
+    /// Upgrades are applied exclusively through existing approved runtime hooks
+    /// (WeaponController.ApplyFireRateMultiplier / ApplyDamageBonus, and from 1L
+    /// PlayerHealth.ApplyMaxHealthBonus / PlayerController.ApplyMoveSpeedMultiplier),
+    /// so no upgrade maths is duplicated here.
+    ///
+    /// Milestone 1L - a scene may now contain MORE THAN ONE pair. Every decision below is
+    /// instance state on one pair root and each pair only ever references its own two
+    /// triggers, so pairs are independent by construction: locking Pair 1 cannot touch
+    /// Pair 2 and vice versa. There is deliberately no global/static "upgrade taken" flag.
     ///
     /// RESET: every field below is ordinary instance state on a scene object, and the
     /// Restart button calls SceneManager.LoadScene. Reloading the scene destroys this
@@ -24,10 +48,10 @@ namespace OperationOutbreak.Upgrades
     public sealed class UpgradeGateChoice : MonoBehaviour
     {
         [Header("Gates")]
-        [Tooltip("Trigger for the left gate (FIRE RATE +25%).")]
+        [Tooltip("Trigger for the LEFT gate of this pair.")]
         [SerializeField] private UpgradeGateTrigger leftTrigger;
 
-        [Tooltip("Trigger for the right gate (DAMAGE +1).")]
+        [Tooltip("Trigger for the RIGHT gate of this pair.")]
         [SerializeField] private UpgradeGateTrigger rightTrigger;
 
         [Tooltip("Root of the left gate. Used only to find its renderers/label when locking.")]
@@ -36,16 +60,35 @@ namespace OperationOutbreak.Upgrades
         [Tooltip("Root of the right gate. Used only to find its renderers/label when locking.")]
         [SerializeField] private Transform rightGateRoot;
 
-        [Header("Weapon")]
-        [Tooltip("Player weapon that receives the upgrade. Resolved at Awake when empty.")]
+        [Header("Upgrade Kinds")]
+        [Tooltip("Which upgrade the LEFT gate of this pair awards.")]
+        [SerializeField] private GateUpgradeKind leftUpgrade = GateUpgradeKind.FireRateMultiplier;
+
+        [Tooltip("Which upgrade the RIGHT gate of this pair awards.")]
+        [SerializeField] private GateUpgradeKind rightUpgrade = GateUpgradeKind.DamageBonus;
+
+        [Header("Upgrade Targets")]
+        [Tooltip("Player weapon that receives weapon upgrades. Resolved at Awake when empty.")]
         [SerializeField] private WeaponController weapon;
 
+        [Tooltip("Player health that receives max-health upgrades. Resolved at Awake when empty.")]
+        [SerializeField] private PlayerHealth playerHealth;
+
+        [Tooltip("Player movement that receives move-speed upgrades. Resolved at Awake when empty.")]
+        [SerializeField] private PlayerController playerController;
+
         [Header("Upgrade Values")]
-        [Tooltip("Left gate: fire rate multiplier. 1.25 = +25% faster firing.")]
+        [Tooltip("Fire rate multiplier. 1.25 = +25% faster firing.")]
         [Min(0.01f)] [SerializeField] private float fireRateMultiplier = 1.25f;
 
-        [Tooltip("Right gate: flat projectile damage bonus.")]
+        [Tooltip("Flat projectile damage bonus.")]
         [Min(0)] [SerializeField] private int damageBonus = 1;
+
+        [Tooltip("Milestone 1L - flat maximum health bonus. Current health rises by the same amount.")]
+        [Min(0)] [SerializeField] private int maxHealthBonus = 2;
+
+        [Tooltip("Milestone 1L - movement speed multiplier. 1.15 = +15% faster movement.")]
+        [Min(0.01f)] [SerializeField] private float moveSpeedMultiplier = 1.15f;
 
         [Header("Locked Gate Treatment")]
         [Tooltip("Visibly grey out the gate that was not chosen.")]
@@ -70,6 +113,16 @@ namespace OperationOutbreak.Upgrades
             if (weapon == null)
             {
                 weapon = FindAnyObjectByType<WeaponController>();
+            }
+
+            if (playerHealth == null)
+            {
+                playerHealth = FindAnyObjectByType<PlayerHealth>();
+            }
+
+            if (playerController == null)
+            {
+                playerController = FindAnyObjectByType<PlayerController>();
             }
         }
 
@@ -125,22 +178,64 @@ namespace OperationOutbreak.Upgrades
 
         private void ApplyUpgrade(bool isLeftGate)
         {
-            if (weapon == null)
-            {
-                Debug.LogWarning("UpgradeGateChoice: no WeaponController found, upgrade not applied.", this);
-                return;
-            }
+            ApplyUpgradeKind(isLeftGate ? leftUpgrade : rightUpgrade);
+        }
 
-            if (isLeftGate)
+        /// <summary>
+        /// Every branch delegates to an existing approved runtime hook, so this milestone
+        /// adds no upgrade maths of its own and cannot drift from the systems it upgrades.
+        /// </summary>
+        private void ApplyUpgradeKind(GateUpgradeKind kind)
+        {
+            switch (kind)
             {
-                // Reuses the approved weapon hook - no upgrade maths is duplicated here.
-                weapon.ApplyFireRateMultiplier(fireRateMultiplier);
-                Debug.Log($"Upgrade selected: FIRE RATE +25% (fire rate x{fireRateMultiplier}).", this);
-            }
-            else
-            {
-                weapon.ApplyDamageBonus(damageBonus);
-                Debug.Log($"Upgrade selected: DAMAGE +{damageBonus} (projectile damage +{damageBonus}).", this);
+                case GateUpgradeKind.FireRateMultiplier:
+                    if (weapon == null)
+                    {
+                        Debug.LogWarning("UpgradeGateChoice: no WeaponController found, upgrade not applied.", this);
+                        return;
+                    }
+
+                    // Reuses the approved weapon hook - no upgrade maths is duplicated here.
+                    weapon.ApplyFireRateMultiplier(fireRateMultiplier);
+                    Debug.Log($"Upgrade selected: FIRE RATE +25% (fire rate x{fireRateMultiplier}).", this);
+                    return;
+
+                case GateUpgradeKind.DamageBonus:
+                    if (weapon == null)
+                    {
+                        Debug.LogWarning("UpgradeGateChoice: no WeaponController found, upgrade not applied.", this);
+                        return;
+                    }
+
+                    weapon.ApplyDamageBonus(damageBonus);
+                    Debug.Log($"Upgrade selected: DAMAGE +{damageBonus} (projectile damage +{damageBonus}).", this);
+                    return;
+
+                case GateUpgradeKind.MaxHealthBonus:
+                    if (playerHealth == null)
+                    {
+                        Debug.LogWarning("UpgradeGateChoice: no PlayerHealth found, upgrade not applied.", this);
+                        return;
+                    }
+
+                    playerHealth.ApplyMaxHealthBonus(maxHealthBonus);
+                    Debug.Log(
+                        $"Upgrade selected: MAX HEALTH +{maxHealthBonus} " +
+                        $"({playerHealth.CurrentHealth} / {playerHealth.MaxHealth}).",
+                        this);
+                    return;
+
+                case GateUpgradeKind.MoveSpeedMultiplier:
+                    if (playerController == null)
+                    {
+                        Debug.LogWarning("UpgradeGateChoice: no PlayerController found, upgrade not applied.", this);
+                        return;
+                    }
+
+                    playerController.ApplyMoveSpeedMultiplier(moveSpeedMultiplier);
+                    Debug.Log($"Upgrade selected: MOVE SPEED +15% (move speed x{moveSpeedMultiplier}).", this);
+                    return;
             }
         }
 

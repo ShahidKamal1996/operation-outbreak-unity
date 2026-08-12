@@ -125,6 +125,28 @@ namespace OperationOutbreak.Player
             _smoothingVelocity = Vector3.zero;
         }
 
+        /// <summary>
+        /// Milestone 1L - runtime-only movement speed upgrade (MOVE SPEED +15% gate).
+        ///
+        /// Scales the two authored speeds this ONE controller already uses, so there is
+        /// no second movement controller and no parallel speed value. Direction, input,
+        /// acceleration smoothing, lane clamping, facing and the camera rig are all
+        /// untouched - they simply operate on a faster target velocity.
+        ///
+        /// RESET: strafeSpeed/forwardSpeed are serialized fields on a scene component,
+        /// so a scene reload restores the authored 6 / 5.
+        /// </summary>
+        public void ApplyMoveSpeedMultiplier(float multiplier)
+        {
+            if (multiplier <= 0f)
+            {
+                return;
+            }
+
+            strafeSpeed = Mathf.Max(0f, strafeSpeed * multiplier);
+            forwardSpeed = Mathf.Max(0f, forwardSpeed * multiplier);
+        }
+
         private void Update()
         {
             if (_movementSuspended || _isDead)
