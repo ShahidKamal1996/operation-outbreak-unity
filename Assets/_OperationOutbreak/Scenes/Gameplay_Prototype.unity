@@ -3781,14 +3781,16 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 6fe25d5c38cd408ba35d1251661aed31, type: 3}
   m_Name:
   m_EditorClassIdentifier:
-  titleText: FIRE RATE
+  titleText: "FIRE\nRATE"
   valueText: +25%
-  localOffset: {x: -3.2, y: 4.45, z: 14.2}
-  blockSize: {x: 9, y: 2.4}
-  lineGap: 1.3
+  localOffset: {x: -2.84, y: 4.41, z: 14.2}
+  blockSize: {x: 11, y: 3}
+  titleLineY: 1.204
+  valueLineY: -1.208
   textColor: {r: 1, g: 1, b: 1, a: 1}
-  titleFontSize: 8.5
-  valueFontSize: 13
+  titleFontSize: 19.2
+  valueFontSize: 21.2
+  titleLineSpacing: -33
   outlineWidth: 0.22
   outlineColor: {r: 0.039215688, g: 0.050980393, b: 0.07058824, a: 1}
   matchCameraRotation: 1
@@ -3807,12 +3809,14 @@ MonoBehaviour:
   m_EditorClassIdentifier:
   titleText: DAMAGE
   valueText: +1
-  localOffset: {x: 3.2, y: 4.45, z: 14.2}
-  blockSize: {x: 9, y: 2.4}
-  lineGap: 1.3
+  localOffset: {x: 2.84, y: 4.41, z: 14.2}
+  blockSize: {x: 11, y: 3}
+  titleLineY: 0.196
+  valueLineY: -1.208
   textColor: {r: 1, g: 1, b: 1, a: 1}
-  titleFontSize: 8.5
-  valueFontSize: 13
+  titleFontSize: 12.7
+  valueFontSize: 21.2
+  titleLineSpacing: 0
   outlineWidth: 0.22
   outlineColor: {r: 0.039215688, g: 0.050980393, b: 0.07058824, a: 1}
   matchCameraRotation: 1
