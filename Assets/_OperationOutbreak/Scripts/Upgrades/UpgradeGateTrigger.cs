@@ -1,3 +1,4 @@
+using System;
 using OperationOutbreak.Player;
 using UnityEngine;
 
@@ -17,7 +18,8 @@ namespace OperationOutbreak.Upgrades
     /// Polling one known Transform also makes false activation impossible: zombies,
     /// projectiles, hit sparks and PlayerSpawn are never tested at all.
     ///
-    /// This milestone only reports the entry. No upgrade is applied here.
+    /// Milestone 1J.3 - the gate still applies nothing itself. It raises Entered and lets
+    /// UpgradeGateChoice decide, so the two gates stay unaware of weapons and of each other.
     /// </summary>
     [DisallowMultipleComponent]
     [RequireComponent(typeof(Collider))]
@@ -31,8 +33,29 @@ namespace OperationOutbreak.Upgrades
         [Tooltip("The actual Player. Resolved from the scene at Awake when left empty.")]
         [SerializeField] private PlayerController player;
 
+        /// <summary>Raised the first time the Player enters this gate, unless it is locked.</summary>
+        public event Action<UpgradeGateTrigger> Entered;
+
         /// <summary>True once this gate has been entered during the current scene run.</summary>
         public bool HasBeenEntered { get; private set; }
+
+        /// <summary>
+        /// True once this gate can no longer award an upgrade for the current scene run:
+        /// either the other gate was chosen, or this gate already paid out.
+        /// </summary>
+        public bool IsUpgradeLocked { get; private set; }
+
+        /// <summary>Text shown on this gate, used for logging.</summary>
+        public string UpgradeLabel => upgradeLabel;
+
+        /// <summary>
+        /// Permanently stops this gate awarding an upgrade for the rest of the scene run.
+        /// Instance state only - a scene reload rebuilds this component unlocked.
+        /// </summary>
+        public void LockUpgrade()
+        {
+            IsUpgradeLocked = true;
+        }
 
         private Collider _zone;
         private Transform _playerTransform;
@@ -64,6 +87,17 @@ namespace OperationOutbreak.Upgrades
             {
                 HasBeenEntered = true;
                 Debug.Log($"Upgrade gate entered: {upgradeLabel}", this);
+
+                // Fires at most once per scene run: HasBeenEntered short-circuits every later
+                // frame, so walking back through the chosen gate can never stack the upgrade.
+                if (IsUpgradeLocked)
+                {
+                    Debug.Log($"Upgrade gate ignored (locked): {upgradeLabel}", this);
+                }
+                else
+                {
+                    Entered?.Invoke(this);
+                }
             }
 
             _previousPlayerPosition = position;
