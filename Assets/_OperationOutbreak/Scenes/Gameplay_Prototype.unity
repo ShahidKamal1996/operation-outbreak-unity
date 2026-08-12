@@ -3050,8 +3050,10 @@ MonoBehaviour:
   archetypes:
   - id: BASIC
     prefab: {fileID: 100003, guid: 6e94c31e0da44829a9c5f12a381e79b7, type: 3}
+    spawnDistanceOffset: 0
   - id: RUNNER
     prefab: {fileID: 100003, guid: cda0c69c894048e88833c4e04c65e157, type: 3}
+    spawnDistanceOffset: 5
   waveOneCount: 3
   waveTwoCount: 4
   waveThreeCount: 5
@@ -3062,6 +3064,9 @@ MonoBehaviour:
   leftSpawnPosition: {x: -2.5, y: 1, z: 16}
   centreSpawnPosition: {x: 0, y: 1, z: 19}
   rightSpawnPosition: {x: 2.5, y: 1, z: 16}
+  minimumSpawnStandoff: 12
+  spawnClearanceRadius: 1.4
+  maximumSpawnNudges: 6
 --- !u!1 &240001
 GameObject:
   m_ObjectHideFlags: 0

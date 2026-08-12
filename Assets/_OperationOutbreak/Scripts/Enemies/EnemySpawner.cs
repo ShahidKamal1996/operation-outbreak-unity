@@ -54,6 +54,18 @@ namespace OperationOutbreak.Enemies
         [SerializeField] private Vector3 centreSpawnPosition = new Vector3(0f, 1f, 19f);
         [SerializeField] private Vector3 rightSpawnPosition = new Vector3(2.5f, 1f, 16f);
 
+        [Header("Archetype Spawn Safety (Milestone 1N.1)")]
+        [Tooltip("An archetype's spawn offset can never bring it closer to the player than " +
+                 "this, so the player always keeps a reaction and combat window.")]
+        [Min(1f)] [SerializeField] private float minimumSpawnStandoff = 12f;
+
+        [Tooltip("Enemies spawned closer than this to a live enemy are nudged back toward " +
+                 "the spawn band, preventing overlapping spawns.")]
+        [Min(0.1f)] [SerializeField] private float spawnClearanceRadius = 1.4f;
+
+        [Tooltip("Safety cap on how many times one spawn may be nudged clear.")]
+        [Min(1)] [SerializeField] private int maximumSpawnNudges = 6;
+
         private readonly HashSet<ZombieController> _activeEnemies = new HashSet<ZombieController>();
         private bool _cancelled;
         private bool _encounterComplete;
@@ -153,6 +165,94 @@ namespace OperationOutbreak.Enemies
         /// </summary>
         private ZombieController ResolveArchetypePrefab(string archetypeId)
         {
+            EnemyArchetype archetype = ResolveArchetype(archetypeId);
+
+            return archetype != null && archetype.prefab != null ? archetype.prefab : zombiePrefab;
+        }
+
+        /// <summary>
+        /// Milestone 1N.1 - moves a spawn point <paramref name="offset"/> units closer to the
+        /// player along the lane, then clamps the result so the shortcut can never produce an
+        /// unfair or invalid position.
+        ///
+        /// Guarantees, in order of application:
+        ///  * never closer to the player than <see cref="minimumSpawnStandoff"/>, so the enemy
+        ///    always appears ahead of the player with a real reaction window, never beside or
+        ///    on top of them;
+        ///  * never behind the player, because the standoff is measured forward from the
+        ///    player's own z;
+        ///  * never further out than the authored band (the offset only ever pulls inward);
+        ///  * never on top of an enemy already on the field - the point is nudged back toward
+        ///    the band until it clears <see cref="spawnClearanceRadius"/>, which preserves the
+        ///    crowd separation the chase code then maintains.
+        /// The lane's x is untouched, so the enemy stays inside the playable lane and clear of
+        /// the boundary geometry by construction. The result always remains well inside the
+        /// weapon's target range, since it is strictly nearer than the band it came from.
+        /// </summary>
+        private Vector3 ApplyForwardSpawnOffset(Vector3 bandPosition, float offset)
+        {
+            float nearestAllowedZ = bandPosition.z;
+
+            if (playerTarget != null)
+            {
+                nearestAllowedZ = playerTarget.position.z + minimumSpawnStandoff;
+            }
+
+            // Pull toward the player, but never past the standoff and never past the band.
+            float desiredZ = bandPosition.z - offset;
+            float clampedZ = Mathf.Max(desiredZ, nearestAllowedZ);
+
+            clampedZ = Mathf.Min(clampedZ, bandPosition.z);
+
+            // Push back out of anyone already standing there. Stepping outward (away from the
+            // player) can only ever make the position safer, never closer than the standoff.
+            Vector3 candidate = new Vector3(bandPosition.x, bandPosition.y, clampedZ);
+
+            for (int attempt = 0; attempt < maximumSpawnNudges; attempt++)
+            {
+                if (!IsSpawnBlocked(candidate)) break;
+
+                candidate.z += spawnClearanceRadius;
+
+                // Never pushed beyond the archetype's own band: at that point the position is
+                // exactly the basic spawn point, which is where it would have been anyway.
+                if (candidate.z >= bandPosition.z)
+                {
+                    candidate.z = bandPosition.z;
+                    break;
+                }
+            }
+
+            return candidate;
+        }
+
+        /// <summary>
+        /// Milestone 1N.1 - true when a live enemy is already occupying this point. Uses the
+        /// spawner's own active set rather than a physics query, so it costs nothing per frame
+        /// and cannot be confused by the player, pickups or scenery.
+        /// </summary>
+        private bool IsSpawnBlocked(Vector3 position)
+        {
+            float threshold = spawnClearanceRadius * spawnClearanceRadius;
+
+            foreach (ZombieController zombie in _activeEnemies)
+            {
+                if (zombie == null) continue;
+
+                if ((zombie.transform.position - position).sqrMagnitude < threshold) return true;
+            }
+
+            return false;
+        }
+
+        /// <summary>
+        /// Milestone 1N.1 - resolves the whole archetype entry rather than just its prefab,
+        /// so per-archetype spawn tuning travels with the type instead of being re-derived
+        /// from its id at the call site. Returns null when the id is unknown; the caller
+        /// then falls back to the basic prefab with a zero offset.
+        /// </summary>
+        private EnemyArchetype ResolveArchetype(string archetypeId)
+        {
             if (!string.IsNullOrEmpty(archetypeId) && archetypes != null)
             {
                 for (int i = 0; i < archetypes.Count; i++)
@@ -163,7 +263,7 @@ namespace OperationOutbreak.Enemies
                         && archetype.prefab != null
                         && string.Equals(archetype.id, archetypeId, StringComparison.OrdinalIgnoreCase))
                     {
-                        return archetype.prefab;
+                        return archetype;
                     }
                 }
 
@@ -172,7 +272,7 @@ namespace OperationOutbreak.Enemies
                     this);
             }
 
-            return zombiePrefab;
+            return null;
         }
 
         /// <summary>
@@ -275,9 +375,19 @@ namespace OperationOutbreak.Enemies
                 // Milestone 1N - the ONLY type-dependent step in the whole spawn path.
                 // Everything after it is identical for every archetype, which is what keeps
                 // completion counting, auto-aim and death handling type-agnostic.
-                ZombieController prefab = ResolveArchetypePrefab(spawnOrder[i]);
+                EnemyArchetype archetype = ResolveArchetype(spawnOrder[i]);
+                ZombieController prefab = archetype != null && archetype.prefab != null
+                    ? archetype.prefab
+                    : zombiePrefab;
 
                 if (prefab == null) continue;
+
+                // Milestone 1N.1 - the archetype may enter the fight closer than the band.
+                // An offset of 0 leaves 'position' bit-for-bit untouched, so the basic
+                // zombie still spawns exactly where it always did.
+                float offset = archetype != null ? archetype.spawnDistanceOffset : 0f;
+
+                if (offset > 0f) position = ApplyForwardSpawnOffset(position, offset);
 
                 ZombieController zombie = Instantiate(prefab, position, Quaternion.identity);
                 zombie.SetTarget(playerTarget, playerHealth);

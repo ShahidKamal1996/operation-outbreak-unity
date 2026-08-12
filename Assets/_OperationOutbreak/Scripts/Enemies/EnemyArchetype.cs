@@ -38,6 +38,23 @@ namespace OperationOutbreak.Enemies
 
         [Tooltip("Prefab spawned for this archetype. Must carry a ZombieController.")]
         public ZombieController prefab;
+
+        /// <summary>
+        /// Milestone 1N.1 - how many world units CLOSER to the player this archetype enters
+        /// the fight, measured from the section's authored spawn band.
+        ///
+        /// Zero (the default) reproduces the pre-1N.1 behaviour exactly, which is why the
+        /// BASIC entry keeps spawning byte-identically without needing a special case. A
+        /// positive value is a pressure dial: a fast, frail archetype can be given a head
+        /// start on the approach so it reaches the player before the auto-fire deletes it,
+        /// without touching the weapon or the archetype's stats.
+        ///
+        /// The spawner clamps this against the player's position and the lane bounds, so an
+        /// over-large value can never place an enemy on top of or behind the player.
+        /// </summary>
+        [Tooltip("World units closer to the player than the section's spawn band. " +
+                 "0 = spawn on the band exactly like the basic zombie.")]
+        [Min(0f)] public float spawnDistanceOffset;
     }
 
     /// <summary>
