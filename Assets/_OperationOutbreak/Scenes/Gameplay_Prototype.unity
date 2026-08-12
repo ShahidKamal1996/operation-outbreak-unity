@@ -3047,6 +3047,11 @@ MonoBehaviour:
   zombiePrefab: {fileID: 100003, guid: 6e94c31e0da44829a9c5f12a381e79b7, type: 3}
   playerTarget: {fileID: 200002}
   playerHealth: {fileID: 200006}
+  archetypes:
+  - id: BASIC
+    prefab: {fileID: 100003, guid: 6e94c31e0da44829a9c5f12a381e79b7, type: 3}
+  - id: RUNNER
+    prefab: {fileID: 100003, guid: cda0c69c894048e88833c4e04c65e157, type: 3}
   waveOneCount: 3
   waveTwoCount: 4
   waveThreeCount: 5
@@ -3344,18 +3349,31 @@ MonoBehaviour:
     forwardLimitZ: 15
     enemyCount: 3
     spawnAheadOfLimit: 1
+    composition:
+    - archetypeId: BASIC
+      count: 3
   - label: SECTION 2
     subtitle: ADVANCE
     activationZ: 20
     forwardLimitZ: 33
     enemyCount: 4
     spawnAheadOfLimit: 4
+    composition:
+    - archetypeId: BASIC
+      count: 3
+    - archetypeId: RUNNER
+      count: 1
   - label: SECTION 3
     subtitle: FINAL PUSH
     activationZ: 38
     forwardLimitZ: 51
     enemyCount: 5
     spawnAheadOfLimit: 4
+    composition:
+    - archetypeId: BASIC
+      count: 3
+    - archetypeId: RUNNER
+      count: 2
   postSectionSettle: 0.35
   travelAllowance: 1.5
   verboseLogging: 1

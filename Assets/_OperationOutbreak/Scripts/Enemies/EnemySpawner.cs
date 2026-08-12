@@ -14,14 +14,27 @@ namespace OperationOutbreak.Enemies
     /// Start; instead MissionSectionController calls BeginSection once per section and the
     /// spawner reports SectionCleared when that section's zombies are all dead. There is
     /// still exactly ONE spawning framework and ONE encounter-completion signal.
+    ///
+    /// Milestone 1N - the same framework now spawns more than one enemy archetype. A
+    /// section supplies a composition ("3 BASIC + 1 RUNNER") and the spawner resolves each
+    /// id to a prefab through the archetype library below. Every archetype still runs the
+    /// existing ZombieController, is still tracked in the single _activeEnemies set, and
+    /// therefore still counts toward the same section total, the same clear signal and the
+    /// same auto-aim candidate list. No parallel enemy system was introduced.
     /// </summary>
     [DisallowMultipleComponent]
     public sealed class EnemySpawner : MonoBehaviour
     {
         [Header("References")]
+        [Tooltip("Basic zombie prefab. Also the fallback when an archetype id is unknown.")]
         [SerializeField] private ZombieController zombiePrefab;
         [SerializeField] private Transform playerTarget;
         [SerializeField] private PlayerHealth playerHealth;
+
+        [Header("Enemy Archetypes (Milestone 1N)")]
+        [Tooltip("Maps an archetype id to its prefab. Add an entry here to introduce a new " +
+                 "enemy type - no spawner or mission-controller code change is required.")]
+        [SerializeField] private List<EnemyArchetype> archetypes = new List<EnemyArchetype>();
 
         [Header("Controlled Waves")]
         [Min(1)] [SerializeField] private int waveOneCount = 3;
@@ -134,14 +147,95 @@ namespace OperationOutbreak.Enemies
         }
 
         /// <summary>
+        /// Milestone 1N - resolves an archetype id to its prefab. Unknown or empty ids fall
+        /// back to the basic zombie so a typo in authoring data degrades to the original
+        /// enemy rather than silently spawning nothing and stalling the section.
+        /// </summary>
+        private ZombieController ResolveArchetypePrefab(string archetypeId)
+        {
+            if (!string.IsNullOrEmpty(archetypeId) && archetypes != null)
+            {
+                for (int i = 0; i < archetypes.Count; i++)
+                {
+                    EnemyArchetype archetype = archetypes[i];
+
+                    if (archetype != null
+                        && archetype.prefab != null
+                        && string.Equals(archetype.id, archetypeId, StringComparison.OrdinalIgnoreCase))
+                    {
+                        return archetype.prefab;
+                    }
+                }
+
+                Debug.LogWarning(
+                    $"Unknown enemy archetype '{archetypeId}'; falling back to the basic zombie.",
+                    this);
+            }
+
+            return zombiePrefab;
+        }
+
+        /// <summary>
+        /// Milestone 1N - flattens a composition into the exact spawn order used by the
+        /// section. Entries are interleaved round-robin rather than spawned type-by-type so
+        /// a Runner does not always arrive last; the total is unchanged either way.
+        /// </summary>
+        private static List<string> BuildSpawnOrder(IList<EnemySpawnEntry> composition, int fallbackCount)
+        {
+            List<string> order = new List<string>();
+
+            if (composition != null && composition.Count > 0)
+            {
+                // Remaining counts per entry, consumed round-robin.
+                int[] remaining = new int[composition.Count];
+                int total = 0;
+
+                for (int i = 0; i < composition.Count; i++)
+                {
+                    EnemySpawnEntry entry = composition[i];
+                    remaining[i] = entry != null ? Mathf.Max(0, entry.count) : 0;
+                    total += remaining[i];
+                }
+
+                while (order.Count < total)
+                {
+                    for (int i = 0; i < composition.Count; i++)
+                    {
+                        if (remaining[i] <= 0) continue;
+
+                        remaining[i]--;
+                        order.Add(composition[i].archetypeId);
+                    }
+                }
+            }
+
+            // No composition authored: preserve the pre-1N behaviour exactly.
+            if (order.Count == 0)
+            {
+                for (int i = 0; i < Mathf.Max(1, fallbackCount); i++)
+                {
+                    order.Add(EnemyArchetypeId.Basic);
+                }
+            }
+
+            return order;
+        }
+
+        /// <summary>
         /// Milestone 1M - spawns one mission section's zombies. Reuses the existing wave
         /// coroutine, spawn triangle and target wiring; only the forward offset changes so
         /// later sections appear ahead of the player in their own combat space.
         /// </summary>
         /// <param name="sectionIndex">Zero-based section index, echoed back on completion.</param>
-        /// <param name="count">How many zombies this section spawns.</param>
+        /// <param name="count">Fallback total when no composition is supplied.</param>
         /// <param name="spawnLineZ">World Z the section's spawn triangle is centred on.</param>
-        public void BeginSection(int sectionIndex, int count, float spawnLineZ)
+        /// <param name="composition">
+        /// Milestone 1N - per-archetype make-up of this section. When null or empty the
+        /// spawner falls back to <paramref name="count"/> basic zombies, which is exactly
+        /// the Milestone 1M behaviour.
+        /// </param>
+        public void BeginSection(
+            int sectionIndex, int count, float spawnLineZ, IList<EnemySpawnEntry> composition = null)
         {
             if (_cancelled || _encounterComplete || _sectionRunning) return;
             if (zombiePrefab == null || playerTarget == null || playerHealth == null) return;
@@ -149,10 +243,15 @@ namespace OperationOutbreak.Enemies
 
             _activeSectionIndex = sectionIndex;
             _sectionRunning = true;
-            StartCoroutine(RunSection(sectionIndex, Mathf.Max(1, count), spawnLineZ));
+
+            // Flattened here, not in the coroutine, so the authored list cannot be mutated
+            // mid-spawn and the section's total is fixed the moment it begins.
+            List<string> spawnOrder = BuildSpawnOrder(composition, count);
+
+            StartCoroutine(RunSection(sectionIndex, spawnOrder, spawnLineZ));
         }
 
-        private IEnumerator RunSection(int sectionIndex, int count, float spawnLineZ)
+        private IEnumerator RunSection(int sectionIndex, List<string> spawnOrder, float spawnLineZ)
         {
             yield return new WaitForSeconds(initialDelay);
 
@@ -164,6 +263,8 @@ namespace OperationOutbreak.Enemies
                 leftSpawnPosition.z, Mathf.Min(centreSpawnPosition.z, rightSpawnPosition.z));
             float zShift = spawnLineZ - authoredBaseZ;
 
+            int count = spawnOrder.Count;
+
             for (int i = 0; i < count; i++)
             {
                 if (_cancelled) { _sectionRunning = false; yield break; }
@@ -171,7 +272,14 @@ namespace OperationOutbreak.Enemies
                 Vector3 position = GetSpawnPosition(i % 3);
                 position.z += zShift;
 
-                ZombieController zombie = Instantiate(zombiePrefab, position, Quaternion.identity);
+                // Milestone 1N - the ONLY type-dependent step in the whole spawn path.
+                // Everything after it is identical for every archetype, which is what keeps
+                // completion counting, auto-aim and death handling type-agnostic.
+                ZombieController prefab = ResolveArchetypePrefab(spawnOrder[i]);
+
+                if (prefab == null) continue;
+
+                ZombieController zombie = Instantiate(prefab, position, Quaternion.identity);
                 zombie.SetTarget(playerTarget, playerHealth);
                 zombie.Died += HandleEnemyDied;
                 _activeEnemies.Add(zombie);

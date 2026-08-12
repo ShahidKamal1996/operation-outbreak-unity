@@ -50,8 +50,43 @@ namespace OperationOutbreak.Mission
                      "current one. Also caps where upgrade pickups may appear.")]
             public float forwardLimitZ = 15f;
 
-            [Tooltip("Zombies spawned by this section. Reuses the existing EnemySpawner waves.")]
+            [Tooltip("Fallback total used only when \"composition\" is empty. Reuses the " +
+                     "existing EnemySpawner waves.")]
             [Min(1)] public int enemyCount = 3;
+
+            [Tooltip("Milestone 1N - which enemy archetypes make up this section, e.g. " +
+                     "3 x BASIC + 1 x RUNNER. Leave empty to spawn \"enemyCount\" basic " +
+                     "zombies. The mission controller never inspects the archetypes; it " +
+                     "only forwards this data to the spawner.")]
+            public List<EnemySpawnEntry> composition = new List<EnemySpawnEntry>();
+
+            /// <summary>
+            /// Total enemies this section will spawn, regardless of archetype mix. This is
+            /// the number the section must kill to clear, so a Runner counts exactly the
+            /// same as a Basic zombie.
+            /// </summary>
+            public int TotalEnemyCount
+            {
+                get
+                {
+                    if (composition == null || composition.Count == 0)
+                    {
+                        return Mathf.Max(1, enemyCount);
+                    }
+
+                    int total = 0;
+
+                    for (int i = 0; i < composition.Count; i++)
+                    {
+                        if (composition[i] != null)
+                        {
+                            total += Mathf.Max(0, composition[i].count);
+                        }
+                    }
+
+                    return total > 0 ? total : Mathf.Max(1, enemyCount);
+                }
+            }
 
             [Tooltip("Where this section's zombies appear, relative to the section's " +
                      "forward limit. Positive values are ahead of the player's stop line.")]
@@ -261,16 +296,20 @@ namespace OperationOutbreak.Mission
 
             if (enemySpawner != null)
             {
+                // Milestone 1N - the composition is passed straight through. Mission
+                // progression stays ignorant of enemy types: it only cares that the
+                // section reports itself cleared.
                 enemySpawner.BeginSection(
                     index,
                     section.enemyCount,
-                    section.forwardLimitZ + section.spawnAheadOfLimit);
+                    section.forwardLimitZ + section.spawnAheadOfLimit,
+                    section.composition);
             }
 
             if (verboseLogging)
             {
                 Debug.Log(
-                    $"Section {index + 1} started - {section.enemyCount} enemies, "
+                    $"Section {index + 1} started - {section.TotalEnemyCount} enemies, "
                     + $"forward limit z={section.forwardLimitZ}.",
                     this);
             }
@@ -357,7 +396,9 @@ namespace OperationOutbreak.Mission
         }
 
         /// <summary>
-        /// Default 3/4/5 layout used when the scene supplies no data. Values match the
+        /// Default 3/4/5 layout used when the scene supplies no data. Milestone 1N keeps
+        /// those totals and only varies the make-up: 3 basic, then 3 basic + 1 runner,
+        /// then 3 basic + 2 runners. Values match the
         /// existing corridor: the approved Section 1 stop line is z=15, and each later
         /// section advances the player 18 units further along the 100-unit lane.
         /// </summary>
@@ -369,19 +410,33 @@ namespace OperationOutbreak.Mission
                 {
                     label = "SECTION 1", subtitle = "OUTBREAK",
                     activationZ = -100f, forwardLimitZ = 15f,
-                    enemyCount = 3, spawnAheadOfLimit = 1f
+                    enemyCount = 3, spawnAheadOfLimit = 1f,
+                    composition = new List<EnemySpawnEntry>
+                    {
+                        new EnemySpawnEntry(EnemyArchetypeId.Basic, 3)
+                    }
                 },
                 new SectionDefinition
                 {
                     label = "SECTION 2", subtitle = "ADVANCE",
                     activationZ = 20f, forwardLimitZ = 33f,
-                    enemyCount = 4, spawnAheadOfLimit = 4f
+                    enemyCount = 4, spawnAheadOfLimit = 4f,
+                    composition = new List<EnemySpawnEntry>
+                    {
+                        new EnemySpawnEntry(EnemyArchetypeId.Basic, 3),
+                        new EnemySpawnEntry(EnemyArchetypeId.Runner, 1)
+                    }
                 },
                 new SectionDefinition
                 {
                     label = "SECTION 3", subtitle = "FINAL PUSH",
                     activationZ = 38f, forwardLimitZ = 51f,
-                    enemyCount = 5, spawnAheadOfLimit = 4f
+                    enemyCount = 5, spawnAheadOfLimit = 4f,
+                    composition = new List<EnemySpawnEntry>
+                    {
+                        new EnemySpawnEntry(EnemyArchetypeId.Basic, 3),
+                        new EnemySpawnEntry(EnemyArchetypeId.Runner, 2)
+                    }
                 }
             };
         }
