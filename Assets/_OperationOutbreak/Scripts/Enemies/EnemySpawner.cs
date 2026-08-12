@@ -89,8 +89,26 @@ namespace OperationOutbreak.Enemies
         /// </summary>
         public event Action<int> SectionCleared;
 
+        /// <summary>
+        /// Milestone 1O - raised immediately after an enemy has been instantiated and
+        /// targeted, carrying the enemy, the archetype id that produced it and the section
+        /// it belongs to (-1 for the legacy non-mission waves).
+        ///
+        /// Diagnostics needs a per-enemy hook that also knows WHICH archetype was resolved,
+        /// which no existing event carried. It is raised at the end of the spawn step, so a
+        /// listener cannot affect placement, the nudge pass or spawn timing.
+        /// </summary>
+        public event Action<ZombieController, string, int> EnemySpawned;
+
         /// <summary>True once the final wave has been cleared during this scene run.</summary>
         public bool IsEncounterComplete => _encounterComplete;
+
+        /// <summary>
+        /// Milestone 1O - read-only view of the authored spawn clearance radius, so the
+        /// diagnostics overlap check measures against the same number the spawner used
+        /// rather than a hard-coded copy.
+        /// </summary>
+        public float SpawnClearanceRadius => spawnClearanceRadius;
 
         /// <summary>True while a mission section's zombies are still being fought.</summary>
         public bool IsSectionRunning => _sectionRunning;
@@ -149,6 +167,10 @@ namespace OperationOutbreak.Enemies
                 zombie.SetTarget(playerTarget, playerHealth);
                 zombie.Died += HandleEnemyDied;
                 _activeEnemies.Add(zombie);
+
+                // Milestone 1O - same observation hook on the legacy wave path.
+                EnemySpawned?.Invoke(zombie, EnemyArchetypeId.Basic, -1);
+
                 if (i < count - 1) yield return new WaitForSeconds(spawnInterval);
             }
         }
@@ -393,6 +415,11 @@ namespace OperationOutbreak.Enemies
                 zombie.SetTarget(playerTarget, playerHealth);
                 zombie.Died += HandleEnemyDied;
                 _activeEnemies.Add(zombie);
+
+                // Milestone 1O - observation hook. Raised after the enemy is fully set up
+                // and tracked, so nothing about the spawn can be changed by a listener.
+                EnemySpawned?.Invoke(
+                    zombie, archetype != null ? archetype.id : EnemyArchetypeId.Basic, sectionIndex);
 
                 if (i < count - 1) yield return new WaitForSeconds(spawnInterval);
             }

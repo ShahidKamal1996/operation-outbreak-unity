@@ -120,6 +120,51 @@ namespace OperationOutbreak.Upgrades
         /// <summary>True while a pickup is on the field.</summary>
         public bool HasActivePickup => _active != null;
 
+        /// <summary>
+        /// Milestone 1O - raised once per run with the shuffled order, so diagnostics can
+        /// report the exact permutation that was rolled and prove every upgrade is offered
+        /// exactly once. The list handed out is read-only: the randomisation logic itself
+        /// is untouched and no listener can reorder a run.
+        /// </summary>
+        public event System.Action<IReadOnlyList<int>> RunOrderBuilt;
+
+        /// <summary>
+        /// Milestone 1O - raised when a pickup appears, carrying its slot in this run's
+        /// order, the authored opportunity index, the definition and the resolved position.
+        /// Raised after the pickup is fully initialised, so placement and timing are fixed
+        /// before any observer sees it.
+        /// </summary>
+        public event System.Action<int, int, UpgradeDefinition, Vector3> PickupSpawned;
+
+        /// <summary>
+        /// Milestone 1O - raised when the active pickup resolves: true when collected,
+        /// false when it expired. Raised after the upgrade has already been applied and
+        /// after the sequence has advanced, so it cannot alter upgrade timing.
+        /// </summary>
+        public event System.Action<bool, UpgradeDefinition> PickupResolved;
+
+        /// <summary>
+        /// Milestone 1O - the shuffled order for the current run, read-only.
+        ///
+        /// The order is rolled in OnEnable, which can run before an observer has had a
+        /// chance to subscribe to <see cref="RunOrderBuilt"/>. This accessor lets a late
+        /// observer read the same permutation in Start, so diagnostics never reports an
+        /// empty order just because of script execution order.
+        /// </summary>
+        public IReadOnlyList<int> CurrentRunOrder => _runOrder;
+
+        /// <summary>Milestone 1O - read-only view of the authored minimum player distance.</summary>
+        public float MinimumDistanceFromPlayer => minimumDistanceFromPlayer;
+
+        /// <summary>Milestone 1O - read-only view of the authored minimum pickup spacing.</summary>
+        public float MinimumDistanceFromPreviousPickup => minimumDistanceFromPreviousPickup;
+
+        /// <summary>
+        /// Milestone 1O - how many opportunities this run will offer. Previously private;
+        /// exposing it read-only lets diagnostics assert the shuffle is a full permutation.
+        /// </summary>
+        public int OpportunityCount => _runOrder.Count;
+
         private void Awake()
         {
             if (playerController == null) playerController = FindAnyObjectByType<PlayerController>();
@@ -286,6 +331,10 @@ namespace OperationOutbreak.Upgrades
 
                 Debug.Log($"Upgrade order for this run: {order}", this);
             }
+
+            // Milestone 1O - publish the rolled permutation for observation. The shuffle
+            // above is unchanged; this only reports what it produced.
+            RunOrderBuilt?.Invoke(_runOrder);
         }
 
         /// <summary>
@@ -450,9 +499,6 @@ namespace OperationOutbreak.Upgrades
             return opportunities[_runOrder[slot]];
         }
 
-        /// <summary>How many opportunities this run will offer.</summary>
-        private int OpportunityCount => _runOrder.Count;
-
         private void SpawnNext()
         {
             if (_nextIndex >= OpportunityCount)
@@ -488,6 +534,10 @@ namespace OperationOutbreak.Upgrades
                 pickupScale);
 
             _active = pickup;
+
+            // Milestone 1O - observation hook, raised after the pickup exists at its final
+            // position with its final lifetime. Placement and pacing are already decided.
+            PickupSpawned?.Invoke(_nextIndex, _runOrder[_nextIndex], opportunity.upgrade, position);
 
             if (verboseLogging)
             {
@@ -542,6 +592,10 @@ namespace OperationOutbreak.Upgrades
             }
 
             AdvanceAfterResolution();
+
+            // Milestone 1O - observation hook, raised after the upgrade has been applied
+            // and the sequence has already advanced.
+            PickupResolved?.Invoke(true, definition);
         }
 
         private void HandleExpired(UpgradePickup pickup)
@@ -556,8 +610,13 @@ namespace OperationOutbreak.Upgrades
                 Debug.Log($"Upgrade missed: {pickup.Definition.DisplayLine} expired, no upgrade applied.", this);
             }
 
+            UpgradeDefinition expiredDefinition = pickup.Definition;
+
             // Deliberately no upgrade and no failure screen - the run simply continues.
             AdvanceAfterResolution();
+
+            // Milestone 1O - observation hook for the "missed it" case.
+            PickupResolved?.Invoke(false, expiredDefinition);
         }
 
         /// <summary>

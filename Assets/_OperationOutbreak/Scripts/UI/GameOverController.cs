@@ -13,6 +13,9 @@ namespace OperationOutbreak.UI
   [Tooltip("Milestone 1K - victory owner, used only to keep the two outcomes exclusive.")]
   [SerializeField] private MissionCompleteController missionComplete;
   private GameObject panel; private bool shown;
+  // Milestone 1O - raised once, when the Game Over screen is actually shown (after the
+  // victory-exclusion guard). Diagnostics uses it as the failure end-of-run checkpoint.
+  public event System.Action GameOverShown;
   void Awake(){ Build(); }
   void OnEnable(){ if(playerHealth!=null) playerHealth.Died+=Show; }
   void OnDisable(){ if(playerHealth!=null) playerHealth.Died-=Show; }
@@ -27,6 +30,6 @@ namespace OperationOutbreak.UI
   static void Text(string value,Transform parent,Vector2 pos,float size){var go=new GameObject(value,typeof(RectTransform),typeof(TextMeshProUGUI));go.transform.SetParent(parent,false);var r=(RectTransform)go.transform;r.anchorMin=r.anchorMax=new Vector2(.5f,.5f);r.sizeDelta=new Vector2(700,100);r.anchoredPosition=pos;var t=go.GetComponent<TextMeshProUGUI>();t.font=TMP_Settings.defaultFontAsset;t.text=value;t.fontSize=size;t.fontStyle=FontStyles.Bold;t.alignment=TextAlignmentOptions.Center;t.color=Color.white;}
   // Milestone 1K - Game Over must never appear after victory. Zombies are already
   // suspended on victory so the Player cannot be damaged, this is a second safeguard.
-  void Show(){if(shown)return; if(missionComplete!=null&&missionComplete.IsVictory)return; shown=true;panel.SetActive(true);} void Restart(){SceneManager.LoadScene(SceneManager.GetActiveScene().buildIndex);}
+  void Show(){if(shown)return; if(missionComplete!=null&&missionComplete.IsVictory)return; shown=true;panel.SetActive(true);GameOverShown?.Invoke();} void Restart(){SceneManager.LoadScene(SceneManager.GetActiveScene().buildIndex);}
  }
 }

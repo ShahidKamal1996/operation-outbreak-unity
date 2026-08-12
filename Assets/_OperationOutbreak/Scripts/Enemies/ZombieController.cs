@@ -39,6 +39,37 @@ namespace OperationOutbreak.Enemies
         public int CurrentHealth { get; private set; }
         public bool IsAlive => CurrentHealth > 0;
         public event Action<ZombieController> Died;
+
+        /// <summary>
+        /// Milestone 1O - read-only views of this enemy's authored stats, so the diagnostics
+        /// layer can report "Runner speed 3.5 vs Basic 2.5" from the real values instead of
+        /// duplicating them in a second table that could silently drift.
+        ///
+        /// These are getters only. Nothing can write a stat through them, so no balance
+        /// change is possible and the serialized values remain the single source of truth.
+        /// </summary>
+        public float MoveSpeed => moveSpeed;
+
+        /// <summary>Milestone 1O - read-only authored max health.</summary>
+        public int MaxHealth => maxHealth;
+
+        /// <summary>Milestone 1O - read-only authored contact damage.</summary>
+        public int AttackDamage => attackDamage;
+
+        /// <summary>
+        /// Milestone 1O - raised after this enemy takes damage, carrying the amount.
+        /// Diagnostics counts projectile hits with it. Purely a notification: it is raised
+        /// after the health maths has already completed and no listener can alter it.
+        /// </summary>
+        public event Action<ZombieController, int> DamageTaken;
+
+        /// <summary>
+        /// Milestone 1O - raised immediately after this enemy lands a hit on the player,
+        /// carrying the damage dealt. Lets diagnostics report whether an archetype ever
+        /// actually reached the player without polling anything.
+        /// </summary>
+        public event Action<ZombieController, int> DamagedPlayer;
+
         private bool _deathNotified;
 
         private PlayerHealth _playerHealth;
@@ -128,6 +159,11 @@ namespace OperationOutbreak.Enemies
             {
                 _playerHealth.TakeDamage(attackDamage);
                 _nextAttackTime = Time.time + attackInterval;
+
+                // Milestone 1O - notification only, raised after the damage has already
+                // been dealt and the cooldown already scheduled, so observers cannot
+                // influence combat timing or outcome.
+                DamagedPlayer?.Invoke(this, attackDamage);
             }
         }
 
@@ -166,6 +202,10 @@ namespace OperationOutbreak.Enemies
             }
 
             CurrentHealth = Mathf.Max(0, CurrentHealth - amount);
+
+            // Milestone 1O - notification only; the health maths above is already complete.
+            DamageTaken?.Invoke(this, amount);
+
             if (CurrentHealth > 0) StartCoroutine(HitFlash());
             if (CurrentHealth == 0)
             {

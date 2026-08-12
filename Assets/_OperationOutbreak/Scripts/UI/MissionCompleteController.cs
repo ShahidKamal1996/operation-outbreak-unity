@@ -54,6 +54,13 @@ namespace OperationOutbreak.UI
         /// <summary>True once the victory state has been entered during this scene run.</summary>
         public bool IsVictory => _shown;
 
+        /// <summary>
+        /// Milestone 1O - raised once, the moment the victory screen is shown. Diagnostics
+        /// uses it as the end-of-run checkpoint for a successful mission. Notification
+        /// only: it is raised after the victory state is fully entered.
+        /// </summary>
+        public event System.Action VictoryShown;
+
         private void Awake()
         {
             if (enemySpawner == null) enemySpawner = FindAnyObjectByType<EnemySpawner>();
@@ -101,6 +108,9 @@ namespace OperationOutbreak.UI
             EnterVictoryState();
             _panel.SetActive(true);
             Debug.Log("Mission complete", this);
+
+            // Milestone 1O - end-of-run checkpoint for the diagnostics report.
+            VictoryShown?.Invoke();
         }
 
         /// <summary>
