@@ -42,7 +42,7 @@ namespace OperationOutbreak.Upgrades
             public Vector3 spawnPosition = new Vector3(0f, 0f, 8f);
 
             [Tooltip("Seconds to wait after the PREVIOUS opportunity resolved before this one appears.")]
-            [Min(0f)] public float delayBeforeSpawn = 5f;
+            [Min(0f)] public float delayBeforeSpawn = 2f;
 
             [Tooltip("Seconds this pickup stays available. 5 is the prototype value.")]
             [Min(0.5f)] public float lifetime = 5f;
@@ -76,7 +76,7 @@ namespace OperationOutbreak.Upgrades
 
         [Header("Sequence")]
         [Tooltip("Seconds before the FIRST opportunity appears, so the run starts with combat.")]
-        [Min(0f)] [SerializeField] private float initialDelay = 4f;
+        [Min(0f)] [SerializeField] private float initialDelay = 3f;
 
         [Tooltip("Log each spawn/collect/expire to the console.")]
         [SerializeField] private bool verboseLogging = true;
@@ -167,7 +167,7 @@ namespace OperationOutbreak.Upgrades
                         tint = new Color(1f, 0.62f, 0.14f, 1f)
                     },
                     spawnPosition = new Vector3(-2.2f, 0f, 7f),
-                    delayBeforeSpawn = 4f,
+                    delayBeforeSpawn = 3f,
                     lifetime = 5f
                 },
                 new UpgradeOpportunity
@@ -180,7 +180,7 @@ namespace OperationOutbreak.Upgrades
                         tint = new Color(0.95f, 0.25f, 0.28f, 1f)
                     },
                     spawnPosition = new Vector3(2.4f, 0f, 11f),
-                    delayBeforeSpawn = 5f,
+                    delayBeforeSpawn = 2f,
                     lifetime = 5f
                 },
                 new UpgradeOpportunity
@@ -193,7 +193,7 @@ namespace OperationOutbreak.Upgrades
                         tint = new Color(0.24f, 0.85f, 0.38f, 1f)
                     },
                     spawnPosition = new Vector3(-2.6f, 0f, 4.5f),
-                    delayBeforeSpawn = 5f,
+                    delayBeforeSpawn = 2f,
                     lifetime = 5f
                 },
                 new UpgradeOpportunity
@@ -206,7 +206,7 @@ namespace OperationOutbreak.Upgrades
                         tint = new Color(0.28f, 0.66f, 1f, 1f)
                     },
                     spawnPosition = new Vector3(2.6f, 0f, 13f),
-                    delayBeforeSpawn = 5f,
+                    delayBeforeSpawn = 2f,
                     lifetime = 5f
                 }
             };

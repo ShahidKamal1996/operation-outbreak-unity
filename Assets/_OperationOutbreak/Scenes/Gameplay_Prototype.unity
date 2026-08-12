@@ -3238,7 +3238,7 @@ MonoBehaviour:
   pickupScale: 0.85
   hoverHeight: 1.15
   collectRadius: 1.25
-  initialDelay: 4
+  initialDelay: 3
   verboseLogging: 1
   opportunities:
   - upgrade:
@@ -3250,7 +3250,7 @@ MonoBehaviour:
       shape: 2
       tint: {r: 1, g: 0.62, b: 0.14, a: 1}
     spawnPosition: {x: -2.2, y: 0, z: 7}
-    delayBeforeSpawn: 4
+    delayBeforeSpawn: 3
     lifetime: 5
   - upgrade:
       displayName: DAMAGE
@@ -3261,7 +3261,7 @@ MonoBehaviour:
       shape: 0
       tint: {r: 0.95, g: 0.25, b: 0.28, a: 1}
     spawnPosition: {x: 2.4, y: 0, z: 11}
-    delayBeforeSpawn: 5
+    delayBeforeSpawn: 2
     lifetime: 5
   - upgrade:
       displayName: MAX HEALTH
@@ -3272,7 +3272,7 @@ MonoBehaviour:
       shape: 1
       tint: {r: 0.24, g: 0.85, b: 0.38, a: 1}
     spawnPosition: {x: -2.6, y: 0, z: 4.5}
-    delayBeforeSpawn: 5
+    delayBeforeSpawn: 2
     lifetime: 5
   - upgrade:
       displayName: MOVE SPEED
@@ -3283,7 +3283,7 @@ MonoBehaviour:
       shape: 3
       tint: {r: 0.28, g: 0.66, b: 1, a: 1}
     spawnPosition: {x: 2.6, y: 0, z: 13}
-    delayBeforeSpawn: 5
+    delayBeforeSpawn: 2
     lifetime: 5
 --- !u!1660057539 &9223372036854775807
 SceneRoots:
