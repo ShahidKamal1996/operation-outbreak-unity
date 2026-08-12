@@ -47,6 +47,7 @@ namespace OperationOutbreak.Weapons
         private int _baseDamage;
         private GameObject _muzzleFlash;
         private bool _isOwnerDead;
+        private bool _firingSuspended;
         private ZombieController _currentTarget;
         private Vector3 _aimDirection = Vector3.forward;
         private float _nextTargetRefreshTime;
@@ -94,9 +95,21 @@ namespace OperationOutbreak.Weapons
             }
         }
 
+        /// <summary>
+        /// Milestone 1K - permanently stops automatic fire for the current scene run.
+        /// No new projectiles are created afterwards. Authored fire rate and damage are
+        /// left untouched, and a scene reload restores normal firing.
+        /// </summary>
+        public void SuspendFiring()
+        {
+            _firingSuspended = true;
+            _currentTarget = null;
+            if (_muzzleFlash != null) _muzzleFlash.SetActive(false);
+        }
+
         private void Update()
         {
-            if (_isOwnerDead || muzzlePoint == null || projectilePrefab == null) return;
+            if (_firingSuspended || _isOwnerDead || muzzlePoint == null || projectilePrefab == null) return;
             RefreshTarget();
             if (_currentTarget == null || Time.time < _nextShotTime)
             {
