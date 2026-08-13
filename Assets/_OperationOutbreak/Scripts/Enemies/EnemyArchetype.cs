@@ -81,4 +81,47 @@ namespace OperationOutbreak.Enemies
             this.count = count;
         }
     }
+
+    /// <summary>
+    /// Milestone 1O-R - read-only description of a single spawn, handed to diagnostics
+    /// listeners. It exists so an observer can tell the difference between "no spawn offset
+    /// was configured" and "an offset was configured but the safety clamps removed it".
+    ///
+    /// Purely informational: the enemy has already been placed by the time this is built,
+    /// and nothing in the spawn path reads it back.
+    /// </summary>
+    public readonly struct EnemySpawnReport
+    {
+        /// <summary>Archetype id that produced the enemy (BASIC / RUNNER).</summary>
+        public readonly string ArchetypeId;
+
+        /// <summary>Mission section index, or -1 for the legacy non-mission waves.</summary>
+        public readonly int SectionIndex;
+
+        /// <summary>Where the enemy actually ended up.</summary>
+        public readonly Vector3 FinalPosition;
+
+        /// <summary>The authored band slot before any archetype offset was considered.</summary>
+        public readonly Vector3 BandPosition;
+
+        /// <summary>The archetype's configured spawnDistanceOffset (what was asked for).</summary>
+        public readonly float RequestedOffset;
+
+        /// <summary>How much of the requested offset survived the standoff/nudge clamps.</summary>
+        public float AppliedOffset => BandPosition.z - FinalPosition.z;
+
+        public EnemySpawnReport(
+            string archetypeId,
+            int sectionIndex,
+            Vector3 finalPosition,
+            Vector3 bandPosition,
+            float requestedOffset)
+        {
+            ArchetypeId = archetypeId;
+            SectionIndex = sectionIndex;
+            FinalPosition = finalPosition;
+            BandPosition = bandPosition;
+            RequestedOffset = requestedOffset;
+        }
+    }
 }

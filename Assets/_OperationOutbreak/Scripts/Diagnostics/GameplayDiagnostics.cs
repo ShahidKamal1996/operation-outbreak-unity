@@ -328,13 +328,15 @@ namespace OperationOutbreak.Diagnostics
 
         // ------------------------------------------------------------------ enemies
 
-        private void HandleEnemySpawned(ZombieController enemy, string archetypeId, int sectionIndex)
+        private void HandleEnemySpawned(ZombieController enemy, EnemySpawnReport report)
         {
             if (enemy == null)
             {
                 return;
             }
 
+            string archetypeId = report.ArchetypeId;
+            int sectionIndex = report.SectionIndex;
             Vector3 spawnPosition = enemy.transform.position;
             Vector3 playerPosition = playerTransform != null ? playerTransform.position : Vector3.zero;
 
@@ -356,7 +358,9 @@ namespace OperationOutbreak.Diagnostics
                 MaxHealth = enemy.MaxHealth,
                 AttackDamage = enemy.AttackDamage,
                 SpawnedOverlapping = overlapping,
-                NearestEnemyDistanceAtSpawn = nearest
+                NearestEnemyDistanceAtSpawn = nearest,
+                BandPosition = report.BandPosition,
+                RequestedSpawnOffset = report.RequestedOffset
             };
 
             _data.Enemies.Add(record);
@@ -452,6 +456,19 @@ namespace OperationOutbreak.Diagnostics
                     ? DiagnosticRules.PlanarDistance(position, _previousPickupPosition)
                     : -1f
             };
+
+            // Milestone 1O-R - snapshot the CURRENT reachable rectangle. The forward limit
+            // moves as sections unlock (Milestone 1M), so the run-start bounds are only valid
+            // for Section 1. Reading them here means each pickup is judged against the area
+            // the player could actually reach when that pickup appeared.
+            if (laneBounds != null)
+            {
+                record.LaneMinX = laneBounds.MinX;
+                record.LaneMaxX = laneBounds.MaxX;
+                record.LaneMinZ = laneBounds.MinZ;
+                record.LaneMaxZ = laneBounds.MaxZ;
+                record.LaneBoundsCaptured = true;
+            }
 
             _data.Upgrades.Add(record);
             _activeUpgrade = record;

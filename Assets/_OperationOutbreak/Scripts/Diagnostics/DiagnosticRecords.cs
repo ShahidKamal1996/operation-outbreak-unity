@@ -37,6 +37,25 @@ namespace OperationOutbreak.Diagnostics
         /// <summary>Distance to the nearest live enemy at the moment of spawn, -1 when alone.</summary>
         public float NearestEnemyDistanceAtSpawn = -1f;
 
+        /// <summary>
+        /// Milestone 1O-R - the authored band position this enemy would have used before any
+        /// archetype spawn offset was considered. Recorded so the offset can be audited.
+        /// </summary>
+        public Vector3 BandPosition;
+
+        /// <summary>The archetype's configured spawnDistanceOffset (what was asked for).</summary>
+        public float RequestedSpawnOffset;
+
+        /// <summary>
+        /// How much forward offset actually survived the spawner's standoff/nudge clamps.
+        /// A value below <see cref="RequestedSpawnOffset"/> means the clamp suppressed it.
+        /// </summary>
+        public float AppliedSpawnOffset => BandPosition.z - SpawnPosition.z;
+
+        /// <summary>True when an offset was configured but the clamps removed all of it.</summary>
+        public bool SpawnOffsetSuppressed =>
+            RequestedSpawnOffset > 0.01f && AppliedSpawnOffset < RequestedSpawnOffset - 0.01f;
+
         public bool IsRunner => Archetype == "RUNNER";
 
         public float LifetimeSeconds => DeathTime >= 0f ? DeathTime - SpawnTime : -1f;
@@ -64,6 +83,18 @@ namespace OperationOutbreak.Diagnostics
 
         public bool Collected;
         public bool Expired;
+
+        /// <summary>
+        /// Milestone 1O-R - the reachable lane rectangle AT THE MOMENT THIS PICKUP SPAWNED.
+        /// PlayerLaneBounds has had a mission-driven forward limit since Milestone 1M, so the
+        /// reachable area grows as sections unlock. Judging a Section 2/3 pickup against the
+        /// Section 1 rectangle produced false "unreachable" failures, so each pickup now
+        /// carries the bounds that were actually in force when it appeared.
+        /// </summary>
+        public float LaneMinX, LaneMaxX, LaneMinZ, LaneMaxZ;
+
+        /// <summary>False when no PlayerLaneBounds was wired, in which case bounds are unknown.</summary>
+        public bool LaneBoundsCaptured;
 
         /// <summary>Negative until collected or expired.</summary>
         public float ResolutionTime = -1f;

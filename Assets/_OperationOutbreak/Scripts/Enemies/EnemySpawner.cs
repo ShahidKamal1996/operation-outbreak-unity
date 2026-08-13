@@ -97,8 +97,13 @@ namespace OperationOutbreak.Enemies
         /// Diagnostics needs a per-enemy hook that also knows WHICH archetype was resolved,
         /// which no existing event carried. It is raised at the end of the spawn step, so a
         /// listener cannot affect placement, the nudge pass or spawn timing.
+        ///
+        /// Milestone 1O-R - now carries an <see cref="EnemySpawnReport"/> so diagnostics can
+        /// also see the authored band position and the offset that was REQUESTED, not just
+        /// the final position. Without that, a spawn offset silently removed by the standoff
+        /// clamp is indistinguishable from one that was never configured.
         /// </summary>
-        public event Action<ZombieController, string, int> EnemySpawned;
+        public event Action<ZombieController, EnemySpawnReport> EnemySpawned;
 
         /// <summary>True once the final wave has been cleared during this scene run.</summary>
         public bool IsEncounterComplete => _encounterComplete;
@@ -169,7 +174,8 @@ namespace OperationOutbreak.Enemies
                 _activeEnemies.Add(zombie);
 
                 // Milestone 1O - same observation hook on the legacy wave path.
-                EnemySpawned?.Invoke(zombie, EnemyArchetypeId.Basic, -1);
+                EnemySpawned?.Invoke(zombie, new EnemySpawnReport(
+                    EnemyArchetypeId.Basic, -1, position, position, 0f));
 
                 if (i < count - 1) yield return new WaitForSeconds(spawnInterval);
             }
@@ -409,6 +415,10 @@ namespace OperationOutbreak.Enemies
                 // zombie still spawns exactly where it always did.
                 float offset = archetype != null ? archetype.spawnDistanceOffset : 0f;
 
+                // Milestone 1O-R - remember the pre-offset band position purely so the
+                // diagnostics event can report requested-vs-applied offset. Observation only.
+                Vector3 bandPosition = position;
+
                 if (offset > 0f) position = ApplyForwardSpawnOffset(position, offset);
 
                 ZombieController zombie = Instantiate(prefab, position, Quaternion.identity);
@@ -418,8 +428,9 @@ namespace OperationOutbreak.Enemies
 
                 // Milestone 1O - observation hook. Raised after the enemy is fully set up
                 // and tracked, so nothing about the spawn can be changed by a listener.
-                EnemySpawned?.Invoke(
-                    zombie, archetype != null ? archetype.id : EnemyArchetypeId.Basic, sectionIndex);
+                EnemySpawned?.Invoke(zombie, new EnemySpawnReport(
+                    archetype != null ? archetype.id : EnemyArchetypeId.Basic,
+                    sectionIndex, position, bandPosition, offset));
 
                 if (i < count - 1) yield return new WaitForSeconds(spawnInterval);
             }

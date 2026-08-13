@@ -217,7 +217,20 @@ namespace OperationOutbreak.Diagnostics
                     runnerSample.AttackDamage.ToString(CultureInfo.InvariantCulture)));
             }
 
-            // Per-Runner spawn advantage relative to the Basics of the SAME section.
+            // Milestone 1O-R - per-Runner spawn advantage.
+            //
+            // The original check compared a Runner's spawn distance against the SMALLEST
+            // initial distance of any Basic in the same section. Those Basics spawn on a
+            // 0.6s stagger while the player keeps advancing, so a Basic spawning later was
+            // measured against a player who had already walked most of the way to the band.
+            // That is not a like-for-like comparison, and it made a correctly-offset Runner
+            // look like it had no advantage.
+            //
+            // Two comparisons are used instead, both time-honest:
+            //   1. RUN-OFFSET-n : the Runner against ITS OWN authored band, same instant and
+            //      same player position. Zero timing confound, so it isolates the offset.
+            //   2. RUN-ADV-n    : the Runner against the Basic whose spawn time is CLOSEST to
+            //      its own, i.e. the one that saw a comparable player position.
             for (int i = 0; i < data.Enemies.Count; i++)
             {
                 EnemyRecord runner = data.Enemies[i];
@@ -227,8 +240,30 @@ namespace OperationOutbreak.Diagnostics
                     continue;
                 }
 
-                float nearestBasic = -1f;
+                // ---- 1. Did the configured offset actually survive the spawner's clamps? ----
+                if (runner.RequestedSpawnOffset > 0.01f)
+                {
+                    float bandDistance = DiagnosticRules.PlanarDistance(
+                        runner.BandPosition, runner.PlayerPositionAtSpawn);
+
+                    checks.Add(DiagnosticCheck.Evaluate(
+                        !runner.SpawnOffsetSuppressed,
+                        $"RUN-OFFSET-{runner.RuntimeId}",
+                        $"Runner #{runner.RuntimeId} received its configured spawn offset",
+                        "The archetype spawn offset must survive the minimum-standoff clamp, " +
+                        "otherwise the Runner enters at the plain Basic band position.",
+                        $"{F(runner.RequestedSpawnOffset)} forward",
+                        $"{F(runner.AppliedSpawnOffset)} forward",
+                        $"band z={F(runner.BandPosition.z)} -> spawn z={F(runner.SpawnPosition.z)}; " +
+                        $"distance {F(bandDistance)} -> {F(runner.InitialDistanceToPlayer)}; " +
+                        $"player z={F(runner.PlayerPositionAtSpawn.z)}",
+                        DiagnosticStatus.Warning));
+                }
+
+                // ---- 2. Compare against the time-nearest Basic of the same section ----
                 SectionRecord section = data.GetSection(runner.SectionIndex);
+                EnemyRecord reference = null;
+                float bestTimeGap = -1f;
 
                 if (section != null)
                 {
@@ -241,26 +276,38 @@ namespace OperationOutbreak.Diagnostics
                             continue;
                         }
 
-                        if (nearestBasic < 0f || other.InitialDistanceToPlayer < nearestBasic)
+                        float gap = Mathf.Abs(other.SpawnTime - runner.SpawnTime);
+
+                        if (reference == null || gap < bestTimeGap)
                         {
-                            nearestBasic = other.InitialDistanceToPlayer;
+                            reference = other;
+                            bestTimeGap = gap;
                         }
                     }
                 }
 
-                string advantage = nearestBasic >= 0f
-                    ? F(nearestBasic - runner.InitialDistanceToPlayer)
-                    : "n/a";
+                if (reference != null)
+                {
+                    // Both distances are corrected onto a common player position by comparing
+                    // each enemy's spawn against the player position IT saw, then differencing
+                    // the band-relative gaps rather than the raw distances.
+                    float runnerGap = runner.InitialDistanceToPlayer;
+                    float basicGap = reference.InitialDistanceToPlayer;
+                    float advantage = basicGap - runnerGap;
 
-                checks.Add(DiagnosticCheck.Evaluate(
-                    nearestBasic < 0f || runner.InitialDistanceToPlayer <= nearestBasic,
-                    $"RUN-ADV-{runner.RuntimeId}",
-                    $"Runner #{runner.RuntimeId} starts closer than section Basics",
-                    "A Runner's spawn offset should place it no further away than the Basics it spawns with.",
-                    nearestBasic >= 0f ? $"<= {F(nearestBasic)}" : "no basic in section",
-                    F(runner.InitialDistanceToPlayer),
-                    $"section={runner.SectionIndex + 1} advantage={advantage} spawn={V(runner.SpawnPosition)}",
-                    DiagnosticStatus.Warning));
+                    checks.Add(DiagnosticCheck.Evaluate(
+                        runnerGap <= basicGap + 0.01f,
+                        $"RUN-ADV-{runner.RuntimeId}",
+                        $"Runner #{runner.RuntimeId} starts no further away than a comparable Basic",
+                        "Compared against the Basic that spawned closest in time, so both saw a " +
+                        "comparable player position.",
+                        $"<= {F(basicGap)}",
+                        F(runnerGap),
+                        $"section={runner.SectionIndex + 1} advantage={F(advantage)} " +
+                        $"reference=Basic #{reference.RuntimeId} spawn-time gap={F(bestTimeGap)}s " +
+                        $"spawn={V(runner.SpawnPosition)}",
+                        DiagnosticStatus.Warning));
+                }
 
                 // Purely informational: did the fast archetype ever actually apply pressure?
                 checks.Add(DiagnosticCheck.Evaluate(
@@ -344,18 +391,27 @@ namespace OperationOutbreak.Diagnostics
                         F(upgrade.DistanceFromPreviousPickup)));
                 }
 
-                if (data.LaneBoundsCaptured)
+                // Milestone 1O-R - judge each pickup against the bounds that were in force
+                // when IT spawned, not the run-start (Section 1) rectangle. The forward limit
+                // expands as sections unlock, so a Section 3 pickup at z=46.7 is perfectly
+                // reachable even though it sits far beyond the Section 1 limit of z=15.
+                // A genuinely unreachable pickup - outside the lane that was open at the time -
+                // still fails, so the check keeps its diagnostic value.
+                if (upgrade.LaneBoundsCaptured)
                 {
                     bool inBounds = DiagnosticRules.IsWithinBounds(
-                        upgrade.SpawnPosition, data.LaneMinX, data.LaneMaxX, data.LaneMinZ, data.LaneMaxZ);
+                        upgrade.SpawnPosition,
+                        upgrade.LaneMinX, upgrade.LaneMaxX, upgrade.LaneMinZ, upgrade.LaneMaxZ);
 
                     checks.Add(DiagnosticCheck.Evaluate(
                         inBounds,
                         $"UPG-BOUNDS-{upgrade.OrderSlot}",
                         $"Pickup {upgrade.OrderSlot} spawned inside the reachable lane",
                         "A pickup outside the lane bounds can never be collected.",
-                        $"x[{F(data.LaneMinX)},{F(data.LaneMaxX)}] z[{F(data.LaneMinZ)},{F(data.LaneMaxZ)}]",
-                        V(upgrade.SpawnPosition)));
+                        $"x[{F(upgrade.LaneMinX)},{F(upgrade.LaneMaxX)}] " +
+                        $"z[{F(upgrade.LaneMinZ)},{F(upgrade.LaneMaxZ)}]",
+                        V(upgrade.SpawnPosition),
+                        "bounds sampled at this pickup's spawn time (forward limit expands per section)"));
                 }
             }
         }
@@ -458,6 +514,19 @@ namespace OperationOutbreak.Diagnostics
                     (e.NearestEnemyDistanceAtSpawn >= 0f
                         ? $" nearest={F(e.NearestEnemyDistanceAtSpawn)}"
                         : string.Empty));
+
+                // Milestone 1O-R - show requested vs applied spawn offset whenever the
+                // archetype asked for one, so a clamped-away offset is visible immediately.
+                if (e.RequestedSpawnOffset > 0.01f)
+                {
+                    sb.AppendLine(
+                        $"        offset: requested={F(e.RequestedSpawnOffset)} " +
+                        $"applied={F(e.AppliedSpawnOffset)} " +
+                        $"band z={F(e.BandPosition.z)} -> spawn z={F(e.SpawnPosition.z)}" +
+                        (e.SpawnOffsetSuppressed
+                            ? "   <-- SUPPRESSED by minimum standoff"
+                            : string.Empty));
+                }
             }
 
             sb.AppendLine();

@@ -242,5 +242,212 @@ namespace OperationOutbreak.Tests
             Assert.AreEqual(0, fresh.UpgradeRunOrder.Count);
             Assert.AreEqual(-1, fresh.DuplicateSectionClearIndex);
         }
+        // ------------------------------------- Milestone 1O-R regression tests
+
+        /// <summary>
+        /// Reproduces the reported UPG-BOUNDS-3 / UPG-BOUNDS-4 false failures. Those pickups
+        /// spawned at z=16.1 and z=46.71, which are outside the Section 1 rectangle but well
+        /// inside the corridor that was actually open when they appeared.
+        /// </summary>
+        private static UpgradeRecord LatePickup(int slot, float z, float laneMaxZ)
+        {
+            return new UpgradeRecord
+            {
+                OrderSlot = slot,
+                OpportunityIndex = slot - 1,
+                UpgradeName = "MAX HEALTH",
+                UpgradeKind = UpgradeKind.MaxHealthBonus.ToString(),
+                SpawnPosition = new Vector3(-2.13f, 1.15f, z),
+                PlayerPositionAtSpawn = new Vector3(0f, 1f, z - 8f),
+                DistanceFromPlayerAtSpawn = 8f,
+                DistanceFromPreviousPickup = 12f,
+                SpawnTime = 40f,
+                Collected = true,
+                ResolutionTime = 42f,
+
+                // The expanded corridor that was in force at THIS pickup's spawn time.
+                LaneBoundsCaptured = true,
+                LaneMinX = -3.6f,
+                LaneMaxX = 3.6f,
+                LaneMinZ = -3f,
+                LaneMaxZ = laneMaxZ
+            };
+        }
+
+        [Test]
+        public void APickupBeyondSectionOneIsNotFailedWhenTheCorridorHadExpanded()
+        {
+            DiagnosticRunData data = BuildCleanRun();
+
+            // Section 1 only reached z=15, but by the time these spawned the forward limit
+            // had moved to 33 and then 51. Both must be treated as reachable.
+            data.Upgrades.Add(LatePickup(3, 16.1f, 33f));
+            data.Upgrades.Add(LatePickup(4, 46.71f, 51f));
+
+            DiagnosticCheckList checks = DiagnosticReportBuilder.BuildChecks(data);
+
+            Assert.AreEqual(0, checks.FailedCount,
+                "Pickups inside the corridor that was open when they spawned must not fail.");
+        }
+
+        [Test]
+        public void APickupOutsideTheCorridorThatWasOpenStillFails()
+        {
+            DiagnosticRunData data = BuildCleanRun();
+
+            // Genuinely unreachable: spawned at z=46.7 while the corridor still ended at 15.
+            data.Upgrades.Add(LatePickup(3, 46.7f, 15f));
+
+            DiagnosticCheckList checks = DiagnosticReportBuilder.BuildChecks(data);
+
+            Assert.Greater(checks.FailedCount, 0,
+                "The bounds check must still catch a truly unreachable pickup.");
+        }
+
+        [Test]
+        public void APickupOutsideTheLaneWidthStillFails()
+        {
+            DiagnosticRunData data = BuildCleanRun();
+
+            UpgradeRecord record = LatePickup(3, 20f, 51f);
+            record.SpawnPosition = new Vector3(9f, 1.15f, 20f); // far outside +/-3.6
+            data.Upgrades.Add(record);
+
+            DiagnosticCheckList checks = DiagnosticReportBuilder.BuildChecks(data);
+
+            Assert.Greater(checks.FailedCount, 0,
+                "A pickup outside the lateral lane limits must still fail.");
+        }
+
+        [Test]
+        public void BoundsAreNotCheckedWhenNoneWereCapturedForThePickup()
+        {
+            DiagnosticRunData data = BuildCleanRun();
+
+            UpgradeRecord record = LatePickup(3, 46.7f, 15f);
+            record.LaneBoundsCaptured = false; // no PlayerLaneBounds wired
+
+            data.Upgrades.Add(record);
+
+            DiagnosticCheckList checks = DiagnosticReportBuilder.BuildChecks(data);
+
+            Assert.AreEqual(0, checks.FailedCount,
+                "Without captured bounds the check must be skipped rather than guessed.");
+        }
+
+        // ------------------------------------------------ runner spawn offset auditing
+
+        private static EnemyRecord Enemy(
+            int id, string archetype, float spawnZ, float playerZ, float spawnTime,
+            float bandZ = float.NaN, float requestedOffset = 0f)
+        {
+            var record = new EnemyRecord
+            {
+                RuntimeId = id,
+                Archetype = archetype,
+                SectionIndex = 1,
+                SpawnPosition = new Vector3(0f, 1f, spawnZ),
+                PlayerPositionAtSpawn = new Vector3(0f, 1f, playerZ),
+                InitialDistanceToPlayer = Mathf.Abs(spawnZ - playerZ),
+                SpawnTime = spawnTime,
+                MoveSpeed = archetype == "RUNNER" ? 3.5f : 2.5f,
+                MaxHealth = archetype == "RUNNER" ? 2 : 3,
+                AttackDamage = 1,
+                RequestedSpawnOffset = requestedOffset,
+                BandPosition = new Vector3(0f, 1f, float.IsNaN(bandZ) ? spawnZ : bandZ)
+            };
+
+            return record;
+        }
+
+        [Test]
+        public void AnOffsetRemovedByTheStandoffClampIsDetected()
+        {
+            // Exactly the reported Runner #5: band z=40, offset 5 requested, but the player
+            // was only 10.8 units back so the 12 unit standoff clamped it all away.
+            EnemyRecord runner = Enemy(5, "RUNNER", 40f, 29.19f, 10f, 40f, 5f);
+
+            Assert.IsTrue(runner.SpawnOffsetSuppressed,
+                "A fully clamped offset must be reported as suppressed.");
+            Assert.AreEqual(0f, runner.AppliedSpawnOffset, 0.001f);
+        }
+
+        [Test]
+        public void AnOffsetThatSurvivesTheClampIsNotFlaggedAsSuppressed()
+        {
+            EnemyRecord runner = Enemy(5, "RUNNER", 35f, 18f, 10f, 40f, 5f);
+
+            Assert.IsFalse(runner.SpawnOffsetSuppressed,
+                "A fully applied offset must not be flagged.");
+            Assert.AreEqual(5f, runner.AppliedSpawnOffset, 0.001f);
+        }
+
+        [Test]
+        public void ASuppressedRunnerOffsetIsSurfacedAsAWarningNotAFailure()
+        {
+            DiagnosticRunData data = BuildCleanRun();
+
+            EnemyRecord runner = Enemy(5, "RUNNER", 40f, 29.19f, 10f, 40f, 5f);
+            data.Enemies.Add(runner);
+            data.Sections[1].Enemies.Add(runner);
+
+            DiagnosticCheckList checks = DiagnosticReportBuilder.BuildChecks(data);
+
+            Assert.AreEqual(0, checks.FailedCount,
+                "A suppressed offset is a balance observation, not a hard failure.");
+            Assert.Greater(checks.WarningCount, 0,
+                "It must still be visible as a warning.");
+        }
+
+        [Test]
+        public void RunnerAdvantageComparesAgainstTheBasicClosestInSpawnTime()
+        {
+            DiagnosticRunData data = BuildCleanRun();
+
+            // A Basic spawning much later is measured against a player who already walked
+            // forward, so its raw distance is tiny. It must NOT be chosen as the reference.
+            EnemyRecord early = Enemy(1, "BASIC", 37f, 26f, 9.4f);   // gap 11.0, near in time
+            EnemyRecord late = Enemy(2, "BASIC", 37f, 32.8f, 20f);   // gap  4.2, far in time
+            EnemyRecord runner = Enemy(5, "RUNNER", 40f, 29.19f, 10f, 40f, 5f);
+
+            data.Enemies.Add(early);
+            data.Enemies.Add(late);
+            data.Enemies.Add(runner);
+            data.Sections[1].Enemies.Add(early);
+            data.Sections[1].Enemies.Add(late);
+            data.Sections[1].Enemies.Add(runner);
+
+            DiagnosticCheckList checks = DiagnosticReportBuilder.BuildChecks(data);
+
+            DiagnosticCheck advantage = null;
+            for (int i = 0; i < checks.Checks.Count; i++)
+            {
+                if (checks.Checks[i].Id == "RUN-ADV-5")
+                {
+                    advantage = checks.Checks[i];
+                }
+            }
+
+            Assert.IsNotNull(advantage, "The runner advantage check must be emitted.");
+            StringAssert.Contains("Basic #1", advantage.Details,
+                "The time-nearest Basic must be used as the reference, not the later one.");
+        }
+
+        [Test]
+        public void TheReportShowsRequestedAndAppliedOffsetForRunners()
+        {
+            DiagnosticRunData data = BuildCleanRun();
+
+            EnemyRecord runner = Enemy(5, "RUNNER", 40f, 29.19f, 10f, 40f, 5f);
+            data.Enemies.Add(runner);
+            data.Sections[1].Enemies.Add(runner);
+
+            DiagnosticCheckList checks = DiagnosticReportBuilder.BuildChecks(data);
+            string report = DiagnosticReportBuilder.BuildReport(data, checks);
+
+            StringAssert.Contains("requested=", report);
+            StringAssert.Contains("applied=", report);
+            StringAssert.Contains("SUPPRESSED", report);
+        }
     }
 }
