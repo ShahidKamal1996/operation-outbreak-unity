@@ -64,13 +64,35 @@ namespace OperationOutbreak.Diagnostics
             RequestedSpawnOffset > 0.01f && AppliedSpawnOffset < RequestedSpawnOffset - 0.01f;
 
         /// <summary>
+        /// Milestone 1N.2-R - true when a configured offset was cancelled outright: the
+        /// archetype asked to spawn closer and gained nothing at all, so the enemy entered on
+        /// the plain band position.
+        ///
+        /// This is the exact shape of the original bug (offset 5 requested, 0 applied) and it
+        /// is never a legitimate outcome, no matter where the enemy happens to end up. It is
+        /// therefore classified separately from a partial offset, and deliberately BEFORE the
+        /// safety explanation is considered.
+        /// </summary>
+        public bool SpawnOffsetFullyCancelled =>
+            RequestedSpawnOffset > 0.01f && AppliedSpawnOffset <= 0.01f;
+
+        /// <summary>
         /// Milestone 1N.2 - true when the offset was cut short specifically because honouring
         /// it in full would have breached the archetype's own minimum standoff, i.e. the enemy
         /// is sitting exactly on its safety boundary. This is the legitimate reason for a
         /// partial offset and is reported as such, rather than being hidden.
+        ///
+        /// Milestone 1N.2-R - a FULLY CANCELLED offset is explicitly excluded. Landing on the
+        /// standoff boundary only excuses a shortfall when some of the offset actually
+        /// survived; if none did, the standoff did not "limit" the offset, it erased it, and
+        /// the enemy sitting on a boundary is a coincidence of the band geometry rather than
+        /// evidence of a safe clamp. Without this exclusion a Runner whose 5 unit offset was
+        /// wiped out by the old global 12 unit standoff was quietly excused as safety-limited,
+        /// hiding the very misconfiguration this milestone exists to surface.
         /// </summary>
         public bool SpawnOffsetLimitedBySafety =>
             SpawnOffsetSuppressed &&
+            !SpawnOffsetFullyCancelled &&
             StandoffUsed > 0f &&
             InitialDistanceToPlayer <= StandoffUsed + 0.05f;
 

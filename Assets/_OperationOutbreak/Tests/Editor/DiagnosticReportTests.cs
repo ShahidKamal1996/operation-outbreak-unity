@@ -251,6 +251,18 @@ namespace OperationOutbreak.Tests
         /// </summary>
         private static UpgradeRecord LatePickup(int slot, float z, float laneMaxZ)
         {
+            // Milestone 1N.2-R - the live window must be derived from the slot.
+            //
+            // This helper previously hard-coded SpawnTime=40 / ResolutionTime=42 for EVERY
+            // pickup it produced. Any test that added two of them therefore described two
+            // pickups that existed at exactly the same instant, which correctly tripped the
+            // UPG-ONEATATIME invariant. The resulting failure had nothing to do with lane
+            // bounds, but it made the corridor-expansion regression test fail and look like a
+            // bounds bug. Upgrades are strictly sequential at runtime (the director keeps a
+            // single _active pickup), so the fixture now models that: slot 3 occupies
+            // [30, 32] and slot 4 occupies [40, 42], never overlapping.
+            float spawnTime = slot * 10f;
+
             return new UpgradeRecord
             {
                 OrderSlot = slot,
@@ -261,9 +273,9 @@ namespace OperationOutbreak.Tests
                 PlayerPositionAtSpawn = new Vector3(0f, 1f, z - 8f),
                 DistanceFromPlayerAtSpawn = 8f,
                 DistanceFromPreviousPickup = 12f,
-                SpawnTime = 40f,
+                SpawnTime = spawnTime,
                 Collected = true,
-                ResolutionTime = 42f,
+                ResolutionTime = spawnTime + 2f,
 
                 // The expanded corridor that was in force at THIS pickup's spawn time.
                 LaneBoundsCaptured = true,
@@ -528,6 +540,111 @@ namespace OperationOutbreak.Tests
             Assert.IsNotNull(offset, "The offset check must be emitted for a Runner.");
             Assert.AreEqual(DiagnosticStatus.Passed, offset.Status,
                 "A Runner that received its full offset must PASS.");
+        }
+
+        // ------------------------------------- Milestone 1N.2-R corrected semantics
+
+        [Test]
+        public void ACancelledOffsetOnTheStandoffBoundaryIsStillNotSafetyLimited()
+        {
+            // The adversarial case behind failure 1: the Runner ends up EXACTLY on its 6 unit
+            // boundary, but nothing of the requested offset survived. Sitting on the boundary
+            // must not buy an excuse when the applied offset is zero.
+            EnemyRecord runner = Enemy(7, "RUNNER", 40f, 34f, 10f, 40f, 5f, 6f);
+
+            Assert.AreEqual(0f, runner.AppliedSpawnOffset, 0.001f);
+            Assert.IsTrue(runner.SpawnOffsetFullyCancelled,
+                "Zero applied offset is a full cancellation.");
+            Assert.IsFalse(runner.SpawnOffsetLimitedBySafety,
+                "A boundary position must not excuse an offset that never applied.");
+        }
+
+        [Test]
+        public void CancellationAndSafetyLimitingAreMutuallyExclusive()
+        {
+            // Locks the invariant across the whole classification: no record may ever be both
+            // "cancelled" and "legitimately safety limited" at once.
+            EnemyRecord cancelled = Enemy(1, "RUNNER", 40f, 29.19f, 10f, 40f, 5f, 12f);
+            EnemyRecord partial = Enemy(2, "RUNNER", 35.19f, 29.19f, 10f, 40f, 5f, 6f);
+            EnemyRecord full = Enemy(3, "RUNNER", 53f, 46.98f, 10f, 58f, 5f, 6f);
+
+            Assert.IsFalse(cancelled.SpawnOffsetFullyCancelled && cancelled.SpawnOffsetLimitedBySafety);
+            Assert.IsFalse(partial.SpawnOffsetFullyCancelled && partial.SpawnOffsetLimitedBySafety);
+            Assert.IsFalse(full.SpawnOffsetFullyCancelled && full.SpawnOffsetLimitedBySafety);
+
+            // And each still lands in exactly the bucket it belongs to.
+            Assert.IsTrue(cancelled.SpawnOffsetFullyCancelled);
+            Assert.IsTrue(partial.SpawnOffsetLimitedBySafety);
+            Assert.IsFalse(full.SpawnOffsetSuppressed);
+        }
+
+        [Test]
+        public void APartialOffsetIsNeverReportedAsFullyCancelled()
+        {
+            // The smallest legitimate partial observed in the real run: 0.38 of 5 applied.
+            EnemyRecord runner = Enemy(11, "RUNNER", 54.62f, 48.62f, 10f, 55f, 5f, 6f);
+
+            Assert.IsFalse(runner.SpawnOffsetFullyCancelled,
+                "A small but real offset is a partial, not a cancellation.");
+            Assert.IsTrue(runner.SpawnOffsetLimitedBySafety,
+                "It is resting on the standoff boundary, so the shortfall is explained.");
+        }
+
+        [Test]
+        public void TheReportLabelsACancelledOffsetAsSuppressedRatherThanPartial()
+        {
+            DiagnosticRunData data = BuildCleanRun();
+
+            EnemyRecord runner = Enemy(5, "RUNNER", 40f, 34f, 10f, 40f, 5f, 6f);
+            data.Enemies.Add(runner);
+            data.Sections[1].Enemies.Add(runner);
+
+            DiagnosticCheckList checks = DiagnosticReportBuilder.BuildChecks(data);
+            string report = DiagnosticReportBuilder.BuildReport(data, checks);
+
+            StringAssert.Contains("SUPPRESSED", report);
+            StringAssert.DoesNotContain("partial, limited by minimum standoff", report,
+                "A cancelled offset must never be printed as a legitimate partial clamp.");
+        }
+
+        [Test]
+        public void TwoLatePickupsDoNotOverlapInTimeInTheFixture()
+        {
+            // Guards the root cause of failure 2: the helper used to stamp every pickup with
+            // the same spawn/resolution window, which tripped the one-at-a-time invariant and
+            // masqueraded as a bounds failure.
+            UpgradeRecord first = LatePickup(3, 16.1f, 33f);
+            UpgradeRecord second = LatePickup(4, 46.71f, 51f);
+
+            Assert.IsFalse(
+                DiagnosticRules.WindowsOverlap(
+                    first.SpawnTime, first.ResolutionTime,
+                    second.SpawnTime, second.ResolutionTime),
+                "Sequential pickups must occupy disjoint windows, as they do at runtime.");
+        }
+
+        [Test]
+        public void ALatePickupInsideItsCapturedBoundsEmitsAPassingBoundsCheck()
+        {
+            // Proves the corridor-expansion rule directly, rather than only via FailedCount:
+            // the check must exist AND pass for a pickup beyond the Section 1 limit.
+            DiagnosticRunData data = BuildCleanRun();
+            data.Upgrades.Add(LatePickup(4, 46.71f, 51f));
+
+            DiagnosticCheckList checks = DiagnosticReportBuilder.BuildChecks(data);
+
+            DiagnosticCheck bounds = null;
+            for (int i = 0; i < checks.Checks.Count; i++)
+            {
+                if (checks.Checks[i].Id == "UPG-BOUNDS-4")
+                {
+                    bounds = checks.Checks[i];
+                }
+            }
+
+            Assert.IsNotNull(bounds, "The bounds check must still be emitted.");
+            Assert.AreEqual(DiagnosticStatus.Passed, bounds.Status,
+                "A pickup inside the corridor open at its spawn time must pass.");
         }
     }
 }

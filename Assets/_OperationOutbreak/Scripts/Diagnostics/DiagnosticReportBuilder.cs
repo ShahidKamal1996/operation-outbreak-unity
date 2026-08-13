@@ -246,13 +246,18 @@ namespace OperationOutbreak.Diagnostics
                     float bandDistance = DiagnosticRules.PlanarDistance(
                         runner.BandPosition, runner.PlayerPositionAtSpawn);
 
-                    // Milestone 1N.2 - three distinct outcomes, reported honestly:
-                    //   full offset            -> PASS
-                    //   partial, but the enemy is sitting on its own safety standoff, i.e. the
-                    //   player had already advanced too far -> WARNING, legitimately clamped
-                    //   partial for any other reason (or fully removed) -> WARNING, a real
-                    //   configuration problem worth looking at
+                    // Milestone 1N.2 / 1N.2-R - three mutually exclusive outcomes, reported
+                    // honestly and in this order of precedence:
+                    //   1. full offset (applied ~= requested)          -> PASS
+                    //   2. FULLY CANCELLED (applied ~= 0)              -> WARNING, "suppressed".
+                    //      Never excused as a safety clamp even if the enemy happens to sit on
+                    //      its standoff boundary: nothing survived, so this is the original
+                    //      misconfiguration and it must stay visible.
+                    //   3. partial (0 < applied < requested) and the enemy is resting on its
+                    //      own safety standoff                         -> WARNING, legitimately
+                    //      clamped; any other partial is reported as a plain shortfall.
                     bool fullyApplied = !runner.SpawnOffsetSuppressed;
+                    bool fullyCancelled = runner.SpawnOffsetFullyCancelled;
                     bool safetyLimited = runner.SpawnOffsetLimitedBySafety;
 
                     string offsetDetails =
@@ -261,7 +266,14 @@ namespace OperationOutbreak.Diagnostics
                         $"player z={F(runner.PlayerPositionAtSpawn.z)}; " +
                         $"standoff used={F(runner.StandoffUsed)}";
 
-                    if (safetyLimited)
+                    if (fullyCancelled)
+                    {
+                        offsetDetails +=
+                            "; the offset was cancelled outright - the Runner entered on the " +
+                            "plain band position, so its spawn pressure never applied. Check " +
+                            "the archetype's minimum standoff override against the band geometry";
+                    }
+                    else if (safetyLimited)
                     {
                         offsetDetails +=
                             "; partial offset was required to keep the archetype's minimum " +
@@ -277,7 +289,9 @@ namespace OperationOutbreak.Diagnostics
                         "offset is acceptable only when the standoff itself forced it.",
                         $"{F(runner.RequestedSpawnOffset)} forward",
                         $"{F(runner.AppliedSpawnOffset)} forward" +
-                        (safetyLimited ? " (limited by standoff)" : string.Empty),
+                        (fullyCancelled
+                            ? " (SUPPRESSED entirely)"
+                            : safetyLimited ? " (limited by standoff)" : string.Empty),
                         offsetDetails,
                         DiagnosticStatus.Warning));
                 }
@@ -546,11 +560,17 @@ namespace OperationOutbreak.Diagnostics
                         $"applied={F(e.AppliedSpawnOffset)} " +
                         $"standoff={F(e.StandoffUsed)} " +
                         $"band z={F(e.BandPosition.z)} -> spawn z={F(e.SpawnPosition.z)}" +
-                        (e.SpawnOffsetSuppressed
-                            ? (e.SpawnOffsetLimitedBySafety
-                                ? "   <-- partial, limited by minimum standoff"
-                                : "   <-- SUPPRESSED by minimum standoff")
-                            : "   <-- applied in full"));
+                        // Milestone 1N.2-R - a fully cancelled offset is always labelled
+                        // SUPPRESSED. It is checked first so that an enemy which happens to
+                        // rest on its standoff boundary with nothing applied can never be
+                        // mislabelled as a legitimate partial clamp.
+                        (e.SpawnOffsetFullyCancelled
+                            ? "   <-- SUPPRESSED, offset cancelled entirely"
+                            : e.SpawnOffsetSuppressed
+                                ? (e.SpawnOffsetLimitedBySafety
+                                    ? "   <-- partial, limited by minimum standoff"
+                                    : "   <-- partial, offset fell short")
+                                : "   <-- applied in full"));
                 }
             }
 
