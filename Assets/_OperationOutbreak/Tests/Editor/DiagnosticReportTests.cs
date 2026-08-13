@@ -339,7 +339,7 @@ namespace OperationOutbreak.Tests
 
         private static EnemyRecord Enemy(
             int id, string archetype, float spawnZ, float playerZ, float spawnTime,
-            float bandZ = float.NaN, float requestedOffset = 0f)
+            float bandZ = float.NaN, float requestedOffset = 0f, float standoffUsed = 0f)
         {
             var record = new EnemyRecord
             {
@@ -354,6 +354,7 @@ namespace OperationOutbreak.Tests
                 MaxHealth = archetype == "RUNNER" ? 2 : 3,
                 AttackDamage = 1,
                 RequestedSpawnOffset = requestedOffset,
+                StandoffUsed = standoffUsed,
                 BandPosition = new Vector3(0f, 1f, float.IsNaN(bandZ) ? spawnZ : bandZ)
             };
 
@@ -448,6 +449,85 @@ namespace OperationOutbreak.Tests
             StringAssert.Contains("requested=", report);
             StringAssert.Contains("applied=", report);
             StringAssert.Contains("SUPPRESSED", report);
+        }
+        // ------------------------------------- Milestone 1N.2 standoff reporting
+
+        [Test]
+        public void APartialOffsetForcedByTheStandoffIsReportedAsSafetyLimited()
+        {
+            // Section 2 band 40, player 29.19, 6 unit Runner standoff: 4.81 of 5 applied and
+            // the Runner is sitting exactly on its safety boundary.
+            EnemyRecord runner = Enemy(5, "RUNNER", 35.19f, 29.19f, 10f, 40f, 5f, 6f);
+
+            Assert.IsTrue(runner.SpawnOffsetSuppressed,
+                "A 4.81 of 5 offset is still short of the request.");
+            Assert.IsTrue(runner.SpawnOffsetLimitedBySafety,
+                "The shortfall is explained by the standoff, so it must be marked as such.");
+        }
+
+        [Test]
+        public void AFullyAppliedOffsetIsNeitherSuppressedNorSafetyLimited()
+        {
+            // Section 3 band 58, player 46.98: the whole 5 units fit inside the 6 unit standoff.
+            EnemyRecord runner = Enemy(9, "RUNNER", 53f, 46.98f, 10f, 58f, 5f, 6f);
+
+            Assert.IsFalse(runner.SpawnOffsetSuppressed);
+            Assert.IsFalse(runner.SpawnOffsetLimitedBySafety);
+            Assert.AreEqual(5f, runner.AppliedSpawnOffset, 0.001f);
+        }
+
+        [Test]
+        public void AnOffsetLostToTheOldGlobalStandoffIsNotExcusedAsSafetyLimited()
+        {
+            // The original bug: band 40, player 29.19, standoff 12. The Runner ends up 10.81
+            // away, nowhere near its boundary, so this must NOT be reported as a legitimate
+            // safety clamp - it is a configuration problem.
+            EnemyRecord runner = Enemy(5, "RUNNER", 40f, 29.19f, 10f, 40f, 5f, 12f);
+
+            Assert.IsTrue(runner.SpawnOffsetSuppressed);
+            Assert.IsFalse(runner.SpawnOffsetLimitedBySafety,
+                "A fully cancelled offset must not be excused as a safety clamp.");
+        }
+
+        [Test]
+        public void TheReportShowsTheStandoffThatWasUsed()
+        {
+            DiagnosticRunData data = BuildCleanRun();
+
+            EnemyRecord runner = Enemy(9, "RUNNER", 53f, 46.98f, 10f, 58f, 5f, 6f);
+            data.Enemies.Add(runner);
+            data.Sections[1].Enemies.Add(runner);
+
+            DiagnosticCheckList checks = DiagnosticReportBuilder.BuildChecks(data);
+            string report = DiagnosticReportBuilder.BuildReport(data, checks);
+
+            StringAssert.Contains("standoff=", report);
+            StringAssert.Contains("applied in full", report);
+        }
+
+        [Test]
+        public void AFullyAppliedRunnerOffsetPassesTheOffsetCheck()
+        {
+            DiagnosticRunData data = BuildCleanRun();
+
+            EnemyRecord runner = Enemy(9, "RUNNER", 53f, 46.98f, 10f, 58f, 5f, 6f);
+            data.Enemies.Add(runner);
+            data.Sections[1].Enemies.Add(runner);
+
+            DiagnosticCheckList checks = DiagnosticReportBuilder.BuildChecks(data);
+
+            DiagnosticCheck offset = null;
+            for (int i = 0; i < checks.Checks.Count; i++)
+            {
+                if (checks.Checks[i].Id == "RUN-OFFSET-9")
+                {
+                    offset = checks.Checks[i];
+                }
+            }
+
+            Assert.IsNotNull(offset, "The offset check must be emitted for a Runner.");
+            Assert.AreEqual(DiagnosticStatus.Passed, offset.Status,
+                "A Runner that received its full offset must PASS.");
         }
     }
 }

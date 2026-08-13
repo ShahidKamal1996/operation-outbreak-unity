@@ -360,7 +360,8 @@ namespace OperationOutbreak.Diagnostics
                 SpawnedOverlapping = overlapping,
                 NearestEnemyDistanceAtSpawn = nearest,
                 BandPosition = report.BandPosition,
-                RequestedSpawnOffset = report.RequestedOffset
+                RequestedSpawnOffset = report.RequestedOffset,
+                StandoffUsed = report.StandoffUsed
             };
 
             _data.Enemies.Add(record);

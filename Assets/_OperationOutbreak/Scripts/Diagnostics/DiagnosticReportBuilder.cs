@@ -246,17 +246,39 @@ namespace OperationOutbreak.Diagnostics
                     float bandDistance = DiagnosticRules.PlanarDistance(
                         runner.BandPosition, runner.PlayerPositionAtSpawn);
 
+                    // Milestone 1N.2 - three distinct outcomes, reported honestly:
+                    //   full offset            -> PASS
+                    //   partial, but the enemy is sitting on its own safety standoff, i.e. the
+                    //   player had already advanced too far -> WARNING, legitimately clamped
+                    //   partial for any other reason (or fully removed) -> WARNING, a real
+                    //   configuration problem worth looking at
+                    bool fullyApplied = !runner.SpawnOffsetSuppressed;
+                    bool safetyLimited = runner.SpawnOffsetLimitedBySafety;
+
+                    string offsetDetails =
+                        $"band z={F(runner.BandPosition.z)} -> spawn z={F(runner.SpawnPosition.z)}; " +
+                        $"distance {F(bandDistance)} -> {F(runner.InitialDistanceToPlayer)}; " +
+                        $"player z={F(runner.PlayerPositionAtSpawn.z)}; " +
+                        $"standoff used={F(runner.StandoffUsed)}";
+
+                    if (safetyLimited)
+                    {
+                        offsetDetails +=
+                            "; partial offset was required to keep the archetype's minimum " +
+                            "standoff - the player had already advanced toward the band";
+                    }
+
                     checks.Add(DiagnosticCheck.Evaluate(
-                        !runner.SpawnOffsetSuppressed,
+                        fullyApplied,
                         $"RUN-OFFSET-{runner.RuntimeId}",
                         $"Runner #{runner.RuntimeId} received its configured spawn offset",
                         "The archetype spawn offset must survive the minimum-standoff clamp, " +
-                        "otherwise the Runner enters at the plain Basic band position.",
+                        "otherwise the Runner enters at the plain Basic band position. A partial " +
+                        "offset is acceptable only when the standoff itself forced it.",
                         $"{F(runner.RequestedSpawnOffset)} forward",
-                        $"{F(runner.AppliedSpawnOffset)} forward",
-                        $"band z={F(runner.BandPosition.z)} -> spawn z={F(runner.SpawnPosition.z)}; " +
-                        $"distance {F(bandDistance)} -> {F(runner.InitialDistanceToPlayer)}; " +
-                        $"player z={F(runner.PlayerPositionAtSpawn.z)}",
+                        $"{F(runner.AppliedSpawnOffset)} forward" +
+                        (safetyLimited ? " (limited by standoff)" : string.Empty),
+                        offsetDetails,
                         DiagnosticStatus.Warning));
                 }
 
@@ -522,10 +544,13 @@ namespace OperationOutbreak.Diagnostics
                     sb.AppendLine(
                         $"        offset: requested={F(e.RequestedSpawnOffset)} " +
                         $"applied={F(e.AppliedSpawnOffset)} " +
+                        $"standoff={F(e.StandoffUsed)} " +
                         $"band z={F(e.BandPosition.z)} -> spawn z={F(e.SpawnPosition.z)}" +
                         (e.SpawnOffsetSuppressed
-                            ? "   <-- SUPPRESSED by minimum standoff"
-                            : string.Empty));
+                            ? (e.SpawnOffsetLimitedBySafety
+                                ? "   <-- partial, limited by minimum standoff"
+                                : "   <-- SUPPRESSED by minimum standoff")
+                            : "   <-- applied in full"));
                 }
             }
 

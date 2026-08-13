@@ -55,8 +55,9 @@ namespace OperationOutbreak.Enemies
         [SerializeField] private Vector3 rightSpawnPosition = new Vector3(2.5f, 1f, 16f);
 
         [Header("Archetype Spawn Safety (Milestone 1N.1)")]
-        [Tooltip("An archetype's spawn offset can never bring it closer to the player than " +
-                 "this, so the player always keeps a reaction and combat window.")]
+        [Tooltip("DEFAULT closest any archetype may spawn to the player, in world units. " +
+                 "An archetype may override this with its own minimumSpawnStandoffOverride; " +
+                 "this value is used whenever it does not.")]
         [Min(1f)] [SerializeField] private float minimumSpawnStandoff = 12f;
 
         [Tooltip("Enemies spawned closer than this to a live enemy are nudged back toward " +
@@ -175,7 +176,7 @@ namespace OperationOutbreak.Enemies
 
                 // Milestone 1O - same observation hook on the legacy wave path.
                 EnemySpawned?.Invoke(zombie, new EnemySpawnReport(
-                    EnemyArchetypeId.Basic, -1, position, position, 0f));
+                    EnemyArchetypeId.Basic, -1, position, position, 0f, minimumSpawnStandoff));
 
                 if (i < count - 1) yield return new WaitForSeconds(spawnInterval);
             }
@@ -204,9 +205,10 @@ namespace OperationOutbreak.Enemies
         /// unfair or invalid position.
         ///
         /// Guarantees, in order of application:
-        ///  * never closer to the player than <see cref="minimumSpawnStandoff"/>, so the enemy
-        ///    always appears ahead of the player with a real reaction window, never beside or
-        ///    on top of them;
+        ///  * never closer to the player than <paramref name="standoff"/> - the archetype's own
+        ///    minimum if it declares one, otherwise the spawner's global
+        ///    <see cref="minimumSpawnStandoff"/> - so the enemy always appears ahead of the
+        ///    player with a real reaction window, never beside or on top of them;
         ///  * never behind the player, because the standoff is measured forward from the
         ///    player's own z;
         ///  * never further out than the authored band (the offset only ever pulls inward);
@@ -217,20 +219,14 @@ namespace OperationOutbreak.Enemies
         /// the boundary geometry by construction. The result always remains well inside the
         /// weapon's target range, since it is strictly nearer than the band it came from.
         /// </summary>
-        private Vector3 ApplyForwardSpawnOffset(Vector3 bandPosition, float offset)
+        private Vector3 ApplyForwardSpawnOffset(Vector3 bandPosition, float offset, float standoff)
         {
-            float nearestAllowedZ = bandPosition.z;
-
-            if (playerTarget != null)
-            {
-                nearestAllowedZ = playerTarget.position.z + minimumSpawnStandoff;
-            }
-
-            // Pull toward the player, but never past the standoff and never past the band.
-            float desiredZ = bandPosition.z - offset;
-            float clampedZ = Mathf.Max(desiredZ, nearestAllowedZ);
-
-            clampedZ = Mathf.Min(clampedZ, bandPosition.z);
+            // Milestone 1N.2 - the clamp itself lives in EnemySpawnMath so the safety rules
+            // have a single definition that the EditMode tests can call directly.
+            float clampedZ = playerTarget != null
+                ? EnemySpawnMath.ClampForwardOffset(
+                    bandPosition.z, playerTarget.position.z, offset, standoff)
+                : bandPosition.z;
 
             // Push back out of anyone already standing there. Stepping outward (away from the
             // player) can only ever make the position safer, never closer than the standoff.
@@ -415,11 +411,18 @@ namespace OperationOutbreak.Enemies
                 // zombie still spawns exactly where it always did.
                 float offset = archetype != null ? archetype.spawnDistanceOffset : 0f;
 
+                // Milestone 1N.2 - the standoff is archetype data too, not a type check. An
+                // archetype that declares no override resolves to the global default, so BASIC
+                // keeps the exact 12 unit corridor it has always had.
+                float standoff = archetype != null
+                    ? archetype.ResolveMinimumStandoff(minimumSpawnStandoff)
+                    : minimumSpawnStandoff;
+
                 // Milestone 1O-R - remember the pre-offset band position purely so the
                 // diagnostics event can report requested-vs-applied offset. Observation only.
                 Vector3 bandPosition = position;
 
-                if (offset > 0f) position = ApplyForwardSpawnOffset(position, offset);
+                if (offset > 0f) position = ApplyForwardSpawnOffset(position, offset, standoff);
 
                 ZombieController zombie = Instantiate(prefab, position, Quaternion.identity);
                 zombie.SetTarget(playerTarget, playerHealth);
@@ -430,7 +433,7 @@ namespace OperationOutbreak.Enemies
                 // and tracked, so nothing about the spawn can be changed by a listener.
                 EnemySpawned?.Invoke(zombie, new EnemySpawnReport(
                     archetype != null ? archetype.id : EnemyArchetypeId.Basic,
-                    sectionIndex, position, bandPosition, offset));
+                    sectionIndex, position, bandPosition, offset, standoff));
 
                 if (i < count - 1) yield return new WaitForSeconds(spawnInterval);
             }

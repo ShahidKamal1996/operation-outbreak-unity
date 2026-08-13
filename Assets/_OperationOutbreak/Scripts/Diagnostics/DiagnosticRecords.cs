@@ -52,9 +52,27 @@ namespace OperationOutbreak.Diagnostics
         /// </summary>
         public float AppliedSpawnOffset => BandPosition.z - SpawnPosition.z;
 
-        /// <summary>True when an offset was configured but the clamps removed all of it.</summary>
+        /// <summary>
+        /// Milestone 1N.2 - the minimum standoff that was actually in force for this spawn,
+        /// after any per-archetype override. Recorded so the report can explain a clamped
+        /// offset instead of only stating that it happened.
+        /// </summary>
+        public float StandoffUsed;
+
+        /// <summary>True when an offset was configured but the clamps removed some of it.</summary>
         public bool SpawnOffsetSuppressed =>
             RequestedSpawnOffset > 0.01f && AppliedSpawnOffset < RequestedSpawnOffset - 0.01f;
+
+        /// <summary>
+        /// Milestone 1N.2 - true when the offset was cut short specifically because honouring
+        /// it in full would have breached the archetype's own minimum standoff, i.e. the enemy
+        /// is sitting exactly on its safety boundary. This is the legitimate reason for a
+        /// partial offset and is reported as such, rather than being hidden.
+        /// </summary>
+        public bool SpawnOffsetLimitedBySafety =>
+            SpawnOffsetSuppressed &&
+            StandoffUsed > 0f &&
+            InitialDistanceToPlayer <= StandoffUsed + 0.05f;
 
         public bool IsRunner => Archetype == "RUNNER";
 

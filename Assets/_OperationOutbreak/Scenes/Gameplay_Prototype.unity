@@ -3051,9 +3051,11 @@ MonoBehaviour:
   - id: BASIC
     prefab: {fileID: 100003, guid: 6e94c31e0da44829a9c5f12a381e79b7, type: 3}
     spawnDistanceOffset: 0
+    minimumSpawnStandoffOverride: 12
   - id: RUNNER
     prefab: {fileID: 100003, guid: cda0c69c894048e88833c4e04c65e157, type: 3}
     spawnDistanceOffset: 5
+    minimumSpawnStandoffOverride: 6
   waveOneCount: 3
   waveTwoCount: 4
   waveThreeCount: 5
