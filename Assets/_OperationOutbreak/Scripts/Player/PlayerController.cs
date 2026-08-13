@@ -48,6 +48,16 @@ namespace OperationOutbreak.Player
         /// <summary>Current world-space planar velocity, in units per second.</summary>
         public Vector3 CurrentVelocity => _velocity;
 
+        /// <summary>
+        /// Milestone 1O.5 - read-only planar (XZ) speed in units per second.
+        ///
+        /// Exists purely so the visual/animation layer can observe how fast the player is
+        /// already moving without diffing world positions per frame and without gaining any
+        /// authority over movement. Derived entirely from the velocity this controller
+        /// already computes: no new state, no extra field, nothing cached.
+        /// </summary>
+        public float CurrentPlanarSpeed => new Vector2(_velocity.x, _velocity.z).magnitude;
+
         private Vector3 _velocity;
         private Vector3 _smoothingVelocity;
         private float _leanVelocity;

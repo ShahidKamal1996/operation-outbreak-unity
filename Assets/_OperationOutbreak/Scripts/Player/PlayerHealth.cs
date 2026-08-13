@@ -27,6 +27,15 @@ namespace OperationOutbreak.Player
         /// <summary>Raised after a confirmed health value change.</summary>
         public event Action<int, int> HealthChanged;
 
+        /// <summary>
+        /// Milestone 1O.5 - raised ONLY when confirmed incoming damage is applied while the
+        /// player survives it. Deliberately separate from HealthChanged, which also fires on
+        /// Max Health upgrades and on the initial OnEnable seed: a cosmetic hit reaction must
+        /// never be triggered by picking up an upgrade or by healing. It is also not raised
+        /// for the killing blow, so a hit reaction can never interrupt or override Death.
+        /// </summary>
+        public event Action Damaged;
+
         private bool _isDead;
 
         private void OnEnable()
@@ -53,6 +62,13 @@ namespace OperationOutbreak.Player
 
             }
 #endif
+
+            if (CurrentHealth > 0)
+            {
+                // Survived the hit: cosmetic observers may react. The killing blow
+                // intentionally skips this so Death is never contested.
+                Damaged?.Invoke();
+            }
 
             if (CurrentHealth == 0)
             {

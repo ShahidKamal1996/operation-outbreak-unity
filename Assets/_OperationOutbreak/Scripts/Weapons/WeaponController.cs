@@ -42,6 +42,15 @@ namespace OperationOutbreak.Weapons
         [Min(1)]
         [SerializeField] private int damage = 1;
 
+        /// <summary>
+        /// Milestone 1O.5 - raised immediately AFTER a projectile has been spawned and
+        /// initialised. Purely a notification for cosmetic observers (the Carl animation
+        /// bridge). Subscribers cannot influence spawn position, fire rate, damage,
+        /// targeting or cadence: everything that matters has already happened by the time
+        /// this fires, and the return value is ignored.
+        /// </summary>
+        public event System.Action ShotFired;
+
         private float _nextShotTime;
         private float _baseFireRate;
         private int _baseDamage;
@@ -179,6 +188,9 @@ namespace OperationOutbreak.Weapons
                 projectileSpeed,
                 projectileLifetime,
                 damage);
+
+            // Cosmetic observers are notified last, once the shot is fully committed.
+            ShotFired?.Invoke();
         }
 
 #if UNITY_EDITOR
