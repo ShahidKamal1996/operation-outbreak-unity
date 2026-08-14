@@ -64,6 +64,21 @@ namespace OperationOutbreak.Enemies
         public event Action<ZombieController, int> DamageTaken;
 
         /// <summary>
+        /// Milestone 1P - visual-only hit punch curve for <see cref="HitReaction"/>.
+        ///
+        /// Pure sine pulse: exactly 1 at progress 0, peaks at 1 + 0.07 at the midpoint,
+        /// back to exactly 1 at progress 1. The curve can never go below 1, so the enemy
+        /// can never be made to shrink by hit feedback. It only ever scales the Visual
+        /// child, never the authoritative transform, collider or navigation state.
+        /// </summary>
+        public static float ComputeHitPunchScale(float progress)
+        {
+            const float MaxPunch = 0.07f;
+            float clampedProgress = Mathf.Clamp01(progress);
+            return 1f + MaxPunch * Mathf.Sin(clampedProgress * Mathf.PI);
+        }
+
+        /// <summary>
         /// Milestone 1O - raised immediately after this enemy lands a hit on the player,
         /// carrying the damage dealt. Lets diagnostics report whether an archetype ever
         /// actually reached the player without polling anything.
@@ -206,7 +221,7 @@ namespace OperationOutbreak.Enemies
             // Milestone 1O - notification only; the health maths above is already complete.
             DamageTaken?.Invoke(this, amount);
 
-            if (CurrentHealth > 0) StartCoroutine(HitFlash());
+            if (CurrentHealth > 0) StartCoroutine(HitReaction());
             if (CurrentHealth == 0)
             {
                 if (!_deathNotified)
@@ -216,15 +231,58 @@ namespace OperationOutbreak.Enemies
                 }
 
                 _isDying = true;
+
+                // Milestone 1P - clear any white hit flash still on the corpse so death
+                // feedback starts from the authored material colours.
+                SetFlashColor(Color.clear);
                 StartCoroutine(DeathFeedback());
             }
         }
 
-        private System.Collections.IEnumerator HitFlash()
+        /// <summary>
+        /// Milestone 1D white flash, refined in 1P into one combined hit reaction: the
+        /// existing short white material flash plus a tiny visual-only scale punch on the
+        /// Visual child, driven by <see cref="ComputeHitPunchScale"/>. Both are
+        /// presentation-only - the authoritative transform, collider, chase logic, hit
+        /// detection and attack range are never touched.
+        ///
+        /// Death safety: every frame checks _isDying, so a reaction that overlaps the
+        /// moment of death stops immediately, clears its flash and never writes the visual
+        /// scale again. DeathFeedback takes over the Visual scale from the authored base
+        /// scale, exactly as it did before 1P.
+        /// </summary>
+        private System.Collections.IEnumerator HitReaction()
         {
+            Transform visual = transform.Find("Visual");
             SetFlashColor(Color.white);
-            yield return new WaitForSeconds(0.1f);
+
+            float elapsed = 0f;
+            const float reactionDuration = 0.12f;
+
+            while (elapsed < reactionDuration)
+            {
+                if (_isDying)
+                {
+                    SetFlashColor(Color.clear);
+                    yield break;
+                }
+
+                elapsed += Time.deltaTime;
+
+                if (visual != null)
+                {
+                    visual.localScale = _visualScale * ComputeHitPunchScale(elapsed / reactionDuration);
+                }
+
+                yield return null;
+            }
+
             SetFlashColor(Color.clear);
+
+            if (visual != null)
+            {
+                visual.localScale = _visualScale;
+            }
         }
 
         private void SetFlashColor(Color color)
