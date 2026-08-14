@@ -8,6 +8,11 @@ namespace OperationOutbreak.Weapons
     /// Milestone 1C auto-fire weapon. While this component is active it repeatedly
     /// launches the configured projectile straight down the combat lane (+Z).
     /// Aiming and target selection deliberately do not belong here.
+    ///
+    /// Milestone 1P - the muzzle flash presentation that used to live here (a sphere
+    /// created in Start and toggled by a coroutine) was extracted to the feedback layer:
+    /// MuzzleFlashFeedback listens to <see cref="ShotFired"/> and spawns the visual through
+    /// CombatFeedback. This component no longer contains any presentation code.
     /// </summary>
     [DisallowMultipleComponent]
     public sealed class WeaponController : MonoBehaviour
@@ -45,16 +50,24 @@ namespace OperationOutbreak.Weapons
         /// <summary>
         /// Milestone 1O.5 - raised immediately AFTER a projectile has been spawned and
         /// initialised. Purely a notification for cosmetic observers (the Carl animation
-        /// bridge). Subscribers cannot influence spawn position, fire rate, damage,
-        /// targeting or cadence: everything that matters has already happened by the time
-        /// this fires, and the return value is ignored.
+        /// bridge, and since Milestone 1P the muzzle flash feedback). Subscribers cannot
+        /// influence spawn position, fire rate, damage, targeting or cadence: everything
+        /// that matters has already happened by the time this fires, and the return value
+        /// is ignored.
         /// </summary>
         public event System.Action ShotFired;
+
+        /// <summary>
+        /// Milestone 1P - read-only view of the authored muzzle anchor so presentation
+        /// listeners can place their own visuals at the existing firing origin without
+        /// this component knowing anything about them. Writing is impossible; gameplay
+        /// remains the only owner of the anchor.
+        /// </summary>
+        public Transform MuzzlePoint => muzzlePoint;
 
         private float _nextShotTime;
         private float _baseFireRate;
         private int _baseDamage;
-        private GameObject _muzzleFlash;
         private bool _isOwnerDead;
         private bool _firingSuspended;
         private ZombieController _currentTarget;
@@ -70,18 +83,6 @@ namespace OperationOutbreak.Weapons
             {
                 playerHealth = GetComponentInParent<PlayerHealth>();
             }
-        }
-
-        private void Start()
-        {
-            _muzzleFlash = GameObject.CreatePrimitive(PrimitiveType.Sphere);
-            _muzzleFlash.name = "MuzzleFlash";
-            Destroy(_muzzleFlash.GetComponent<Collider>());
-            _muzzleFlash.transform.SetParent(muzzlePoint, false);
-            _muzzleFlash.transform.localPosition = new Vector3(0f, 0f, 0.16f);
-            _muzzleFlash.transform.localScale = Vector3.one * 0.38f;
-            _muzzleFlash.GetComponent<Renderer>().material.color = new Color(1f, .85f, .25f, 1f);
-            _muzzleFlash.SetActive(false);
         }
 
         private void OnEnable()
@@ -113,7 +114,9 @@ namespace OperationOutbreak.Weapons
         {
             _firingSuspended = true;
             _currentTarget = null;
-            if (_muzzleFlash != null) _muzzleFlash.SetActive(false);
+            // No flash cleanup needed here since Milestone 1P: the muzzle flash is spawned
+            // by the presentation layer in response to ShotFired, which simply stops being
+            // raised. Any flash already on screen finishes its own sub-0.1s lifetime.
         }
 
         private void Update()
@@ -166,13 +169,6 @@ namespace OperationOutbreak.Weapons
             _isOwnerDead = true;
         }
 
-        private System.Collections.IEnumerator FlashMuzzle()
-        {
-            _muzzleFlash.SetActive(true);
-            yield return new WaitForSeconds(0.09f);
-            if (_muzzleFlash != null) _muzzleFlash.SetActive(false);
-        }
-
         private void FireForward()
         {
             // World +Z is intentional for this milestone. Muzzle/player rotation is not
@@ -182,7 +178,6 @@ namespace OperationOutbreak.Weapons
                 muzzlePoint.position,
                 Quaternion.identity);
 
-            if (_muzzleFlash != null) StartCoroutine(FlashMuzzle());
             projectile.Initialize(
                 _aimDirection,
                 projectileSpeed,
