@@ -63,9 +63,16 @@ namespace OperationOutbreak.Feedback
         }
 
         /// <summary>
-        /// Returns an active visual: a reused one from the stack when available, otherwise
-        /// a freshly built one. Null-sweeps the stack in case something destroyed a pooled
-        /// visual behind the pool's back (e.g. scene unload).
+        /// Returns an ACTIVE visual: a reused one from the stack when available, otherwise
+        /// a freshly built one.
+        ///
+        /// Activation is part of the acquire contract (Milestone 1P QA fix): a stored
+        /// visual is inactive because Release deactivates it, and a component such as
+        /// FeedbackVisualLifecycle must never start a coroutine on an inactive object.
+        /// The factory result is activated too, so no factory can hand out a dead object.
+        ///
+        /// Null-sweeps the stack in case something destroyed a pooled visual behind the
+        /// pool's back (e.g. scene unload).
         /// </summary>
         public GameObject Acquire()
         {
@@ -80,7 +87,14 @@ namespace OperationOutbreak.Feedback
                 }
             }
 
-            return _factory();
+            GameObject created = _factory();
+
+            if (created != null)
+            {
+                created.SetActive(true);
+            }
+
+            return created;
         }
 
         /// <summary>

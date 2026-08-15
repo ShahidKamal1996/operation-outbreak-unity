@@ -57,11 +57,17 @@ namespace OperationOutbreak.Feedback
             spark.transform.position = position + Vector3.up * 0.28f;
             spark.transform.localScale = Vector3.one * SparkScale;
 
+            // Lifecycle order (Milestone 1P QA fix): acquire -> configure -> ACTIVATE ->
+            // start lifecycle coroutine. Activation is explicit here even though the pool
+            // and Play also guarantee it, so the required sequence is visible at the call
+            // site and survives future refactors.
+            spark.SetActive(true);
+
             FeedbackVisualLifecycle lifecycle = spark.GetComponent<FeedbackVisualLifecycle>();
 
             if (lifecycle != null)
             {
-                lifecycle.Play(SparkDuration, 0.5f, finished =>
+                lifecycle.Play(SparkDuration, 0.5f, SparkScale, finished =>
                     EnsurePool(ref _sparkPool, CreateSparkVisual).Release(finished));
             }
             else
@@ -89,11 +95,15 @@ namespace OperationOutbreak.Feedback
             flash.transform.position = position + safeForward * MuzzleForwardOffset;
             flash.transform.localScale = Vector3.one * MuzzleFlashScale;
 
+            // Lifecycle order (Milestone 1P QA fix): acquire -> configure -> ACTIVATE ->
+            // start lifecycle coroutine. See SpawnHitSpark for the full reasoning.
+            flash.SetActive(true);
+
             FeedbackVisualLifecycle lifecycle = flash.GetComponent<FeedbackVisualLifecycle>();
 
             if (lifecycle != null)
             {
-                lifecycle.Play(duration, 0.4f, finished =>
+                lifecycle.Play(duration, 0.4f, MuzzleFlashScale, finished =>
                     EnsurePool(ref _muzzlePool, CreateMuzzleVisual).Release(finished));
             }
             else
@@ -151,7 +161,10 @@ namespace OperationOutbreak.Feedback
             renderer.receiveShadows = false;
 
             visual.AddComponent<FeedbackVisualLifecycle>();
-            visual.SetActive(false);
+
+            // Milestone 1P QA fix: the factory must hand out ACTIVE visuals. Deactivation
+            // belongs exclusively to the pool's Release; a factory-created inactive visual
+            // was the root cause of the "Coroutine couldn't be started" regression.
             return visual;
         }
 

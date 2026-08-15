@@ -4,6 +4,7 @@ using OperationOutbreak.Enemies;
 using OperationOutbreak.Feedback;
 using OperationOutbreak.Weapons;
 using UnityEngine;
+using UnityEngine.TestTools;
 
 namespace OperationOutbreak.Tests
 {
@@ -12,14 +13,25 @@ namespace OperationOutbreak.Tests
     /// layer: pool lifecycle, envelope and hit-punch curves, muzzle flash duration safety
     /// and the projectile's runtime trail + configuration clamping.
     ///
+    /// Milestone 1P QA fix - the manual QA regression ("Coroutine couldn't be started
+    /// because the game object is inactive") is now pinned here: activation order, safe
+    /// reuse of inactive pooled visuals, exactly-once completion/return-to-pool, and
+    /// error-free repeated muzzle flash / hit spark cycles. The fixture-level TearDown
+    /// fails any test during which Unity logs an unexpected error, which is what catches
+    /// the coroutine error even if no assertion touches it.
+    ///
     /// The visual "does it look right" judgement is deliberately NOT asserted here; that
-    /// belongs to the manual Unity QA pass. What IS asserted is everything a bug could
-    /// silently break: pooling that leaks or re-instantiates per shot, a hit punch that
-    /// could shrink an enemy, a flash that could linger forever during rapid fire, and a
-    /// projectile that could stack trails or accept a broken configuration.
+    /// belongs to the manual Unity QA pass.
     /// </summary>
     public sealed class CombatFeedbackTests
     {
+        [TearDown]
+        public void FailOnUnexpectedUnityErrors()
+        {
+            // Catches "Coroutine couldn't be started because the game object ... is
+            // inactive" and any other error/exception logged during a test.
+            LogAssert.NoUnexpectedReceived();
+        }
         // ===================================================== FeedbackObjectPool
 
         [Test]
@@ -97,6 +109,87 @@ namespace OperationOutbreak.Tests
                 "A zero cap must discard everything rather than grow unbounded.");
         }
 
+        [Test]
+        public void AcquireActivatesEvenAFactoryThatCreatesInactiveObjects()
+        {
+            var pool = new FeedbackObjectPool(
+                () =>
+                {
+                    GameObject visual = new GameObject("Visual");
+                    visual.SetActive(false);
+                    return visual;
+                },
+                4, DestroyImmediate);
+
+            GameObject visual = pool.Acquire();
+
+            Assert.IsTrue(visual.activeSelf,
+                "Acquire must guarantee an active object no matter what the factory does - " +
+                "this was the Milestone 1P QA failure path.");
+            pool.Drain();
+        }
+
+        [Test]
+        public void InactivePooledObjectsAreReusedActively()
+        {
+            var pool = new FeedbackObjectPool(() => new GameObject("Visual"), 4, DestroyImmediate);
+
+            GameObject visual = pool.Acquire();
+            pool.Release(visual);
+
+            Assert.IsFalse(visual.activeSelf,
+                "Release must deactivate the visual while it is stored.");
+
+            GameObject reused = pool.Acquire();
+
+            Assert.AreEqual(visual, reused, "The stored visual must be reused, not rebuilt.");
+            Assert.IsTrue(reused.activeSelf,
+                "Acquire must reactivate a stored visual before handing it out.");
+            pool.Drain();
+        }
+
+        [Test]
+        public void LifecycleCompletionReturnsTheVisualToThePoolExactlyOnce()
+        {
+            var pool = new FeedbackObjectPool(
+                () =>
+                {
+                    GameObject visual = new GameObject("Visual");
+                    visual.AddComponent<FeedbackVisualLifecycle>();
+                    return visual;
+                },
+                4, DestroyImmediate);
+
+            GameObject visual = pool.Acquire();
+            FeedbackVisualLifecycle lifecycle = visual.GetComponent<FeedbackVisualLifecycle>();
+
+            Assert.AreEqual(0, pool.RetainedCount);
+
+            lifecycle.Play(0.09f, 0.4f, 0.38f, pool.Release);
+
+            Assert.AreEqual(0, pool.RetainedCount,
+                "The visual must stay checked out while the envelope is playing.");
+
+            lifecycle.CompleteNow();
+
+            Assert.AreEqual(1, pool.RetainedCount,
+                "Completion must return the visual to the pool.");
+            Assert.IsFalse(visual.activeSelf,
+                "A returned visual must be deactivated.");
+
+            lifecycle.CompleteNow();
+
+            Assert.AreEqual(1, pool.RetainedCount,
+                "A second completion must never double-return the visual to the pool.");
+
+            GameObject reused = pool.Acquire();
+
+            Assert.AreEqual(visual, reused, "The returned visual must be reused.");
+            Assert.IsTrue(reused.activeSelf, "A reused visual must come back active.");
+
+            pool.Drain();
+        }
+
         // ===================================================== FeedbackVisualLifecycle
 
         [Test]
@@ -132,6 +225,84 @@ namespace OperationOutbreak.Tests
         {
             Assert.AreEqual(1f, FeedbackVisualLifecycle.ComputePulseScale(-0.5f, 0.5f), 0.0001f);
             Assert.AreEqual(1f, FeedbackVisualLifecycle.ComputePulseScale(1.5f, 0.5f), 0.0001f);
+        }
+
+        [Test]
+        public void PlayActivatesAnInactiveVisualBeforeStartingItsCoroutine()
+        {
+            GameObject visual = new GameObject("Visual");
+            FeedbackVisualLifecycle lifecycle = visual.AddComponent<FeedbackVisualLifecycle>();
+
+            try
+            {
+                visual.SetActive(false);
+
+                // Pre-fix, this threw "Coroutine couldn't be started because the game
+                // object ... is inactive". Post-fix Play activates first; the TearDown
+                // LogAssert would also fail the test if the error were still logged.
+                lifecycle.Play(0.09f, 0.4f, 0.38f, _ => { });
+
+                Assert.IsTrue(visual.activeSelf,
+                    "A pooled visual must be active before its lifecycle coroutine starts.");
+            }
+            finally
+            {
+                Object.DestroyImmediate(visual);
+            }
+        }
+
+        [Test]
+        public void RepeatedMuzzleFlashPlaysNeverProduceCoroutineErrors()
+        {
+            GameObject visual = new GameObject("CombatMuzzleFlash");
+            FeedbackVisualLifecycle lifecycle = visual.AddComponent<FeedbackVisualLifecycle>();
+
+            try
+            {
+                for (int i = 0; i < 12; i++)
+                {
+                    // Simulate the pooled-release state each cycle: a stored muzzle flash
+                    // is inactive when the next shot acquires it.
+                    visual.SetActive(false);
+                    visual.transform.localScale = Vector3.one * 0.38f;
+
+                    lifecycle.Play(0.09f, 0.4f, 0.38f, _ => { });
+
+                    Assert.IsTrue(visual.activeSelf,
+                        "Every Play must leave the flash active; an inactive flash is the " +
+                        "exact QA regression that broke rapid fire.");
+                }
+            }
+            finally
+            {
+                Object.DestroyImmediate(visual);
+            }
+        }
+
+        [Test]
+        public void RepeatedHitSparkPlaysNeverProduceCoroutineErrors()
+        {
+            GameObject visual = new GameObject("CombatHitSpark");
+            FeedbackVisualLifecycle lifecycle = visual.AddComponent<FeedbackVisualLifecycle>();
+
+            try
+            {
+                for (int i = 0; i < 12; i++)
+                {
+                    visual.SetActive(false);
+                    visual.transform.localScale = Vector3.one * 0.34f;
+
+                    lifecycle.Play(0.18f, 0.5f, 0.34f, _ => { });
+
+                    Assert.IsTrue(visual.activeSelf,
+                        "Every Play must leave the spark active so hit feedback can never " +
+                        "die on the first impact of a session.");
+                }
+            }
+            finally
+            {
+                Object.DestroyImmediate(visual);
+            }
         }
 
         // ===================================================== MuzzleFlashFeedback
