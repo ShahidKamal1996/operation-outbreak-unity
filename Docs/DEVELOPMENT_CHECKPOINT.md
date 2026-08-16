@@ -27,6 +27,7 @@
 | 1C — 1O.5 (shooting, zombies, combat HUD, waves, targeting, gates, feedback, upgrades, sections, Runner, diagnostics, Carl) | IMPLEMENTED (see MILESTONE_LEDGER.md) |
 | Gate systems (1J series) | Development paused per milestone briefs. NOT resumed by 1P. |
 | **1P — weapon & combat feel foundation** | **VERIFIED** (2026-08-16 — project owner's local Unity QA; see "Manual Unity QA" below) |
+| **1P.5 — Toon Soldier visual integration** | **IMPLEMENTED — AWAITING MANUAL UNITY QA** (2026-08-16) |
 | 1Q | NOT STARTED. Milestone 1P is accepted, so 1Q is no longer blocked — but it must not begin until the project owner explicitly authorizes it. |
 
 ## What Milestone 1P delivered
@@ -111,6 +112,64 @@ The 12-step checklist that was executed for this acceptance:
 10. MISSION COMPLETE — fires exactly once. ✔
 11. GAME OVER — behaviour remains valid. ✔
 12. CONSOLE — no new exceptions/errors caused by combat feedback. ✔
+
+## What Milestone 1P.5 delivered
+
+Character presentation replacement ONLY — zero gameplay changes:
+
+1. **Toon Soldier as active presentation** — the imported `ToonSoldier_demo` (humanoid,
+   `ToonSoldier_demoAvatar`) is the active player visual under `Player/ToonSoldierVisual`;
+   `CarlVisual` is parked INACTIVE and kept fully intact as the known-good fallback.
+2. **Animator controller** — `Art/Animations/Player/ToonSoldier_Player.controller`
+   mirrors the verified Carl controller parameter contract exactly (Speed / IsMoving /
+   Gunplay / HitReaction / Dead), so the existing single `PlayerAnimationBridge` drives
+   the soldier without any code change:
+   - IDLE → `assault_combat_idle` (loop),
+   - MOVING → locomotion blend tree (idle → `assault_combat_run`, driven by Speed),
+   - FIRING → `assault_combat_shoot` (non-looping) via the existing Gunplay trigger,
+     with exit-time return to locomotion. Rapid fire cannot lock the animator.
+   - Known presentation limitation: the package has no hit-reaction or death clips, so
+     those two bridge parameters exist but have no states; a hit player shows no soldier
+     reaction animation (enemy-side 1P hit feedback is unaffected).
+3. **Bridge wiring** — the scene pins the bridge's `animator` to the Toon Soldier's
+   Animator (stripped prefab reference) and assigns the controller via a prefab-instance
+   override. One bridge, one authority — no second animation system.
+4. **URP material** — `Materials/Player/ToonSoldier_Player.mat` (URP/Lit, same texture,
+   white base colour) replaces the package's built-in "Standard" material at setup time.
+   The original package material is left untouched on disk.
+5. **Editor tools (presentation swap)** — `Tools > Operation Outbreak > Set Up Toon
+   Soldier Player Visual` (new, idempotent) activates the soldier, deactivates Carl and
+   pins the bridge to the soldier; the 1O.5 Carl tool gained the mirror toggle so Carl
+   can be restored as a one-click fallback. `ToonSoldier_demo` stays at its normalized
+   local transform (0,0,0 / identity / 1,1,1) — placement offsets belong on
+   `ToonSoldierVisual` only.
+6. **Weapon** — the model's internal rifle is presentation only. Gameplay firing,
+   projectile origin, targeting and muzzle feedback remain owned by the existing
+   `Weapon`/`MuzzlePoint` hierarchy. Rifle/muzzle visual alignment is a QA observation,
+   not a gameplay fix.
+
+## Manual Unity QA checklist for 1P.5
+
+Run the scene first (the committed YAML wires the soldier without extra steps; if the
+soldier is missing locally, run `Tools > Operation Outbreak > Set Up Toon Soldier Player
+Visual` and save the scene):
+
+1. Toon Soldier visible instead of Carl.
+2. Character stands at correct height.
+3. Character faces correct direction.
+4. Idle animation works.
+5. Run animation works while moving.
+6. Shoot animation triggers while firing.
+7. Rapid fire does not freeze animator.
+8. Player root movement remains unchanged.
+9. Existing muzzle flash/projectile/hit feedback works.
+10. Existing weapon/projectile mechanics unchanged.
+11. All 3 mission sections complete normally.
+12. Mission Complete exactly once.
+13. Console has no new errors.
+14. Carl can be re-enabled as fallback without broken references (Tools > Operation
+    Outbreak > Set Up Carl Player Visual).
+15. Re-run EditMode suite: expect 109/109 (no gameplay code changed in 1P.5).
 
 ## Known discrepancies reported during 1P
 

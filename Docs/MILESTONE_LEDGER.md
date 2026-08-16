@@ -54,6 +54,7 @@
 | — | Mobile rendering baseline | IMPLEMENTED | 2026-08-14 | `35f8481` |
 | — | Gameplay post-processing baseline | IMPLEMENTED | 2026-08-14 | `f43af78` |
 | **1P** | **Weapon & combat feel foundation** | **VERIFIED** | 2026-08-14 → QA 2026-08-16 | commits on `arena/milestone-1p-weapon-combat-feel` (see git log) — owner QA: EditMode 109/109 PASS, gameplay diagnostics PASS (0 failures), recording reviewed |
+| **1P.5** | **Toon Soldier visual integration** | **IMPLEMENTED — AWAITING MANUAL UNITY QA** | 2026-08-16 | commits on `arena/milestone-1p5-toon-soldier-integration` — presentation-only swap: soldier active, Carl inactive fallback, existing bridge reused, URP material applied |
 | 1Q | NEXT | NOT STARTED — 1P is verified and no longer blocks; begin only when the owner authorizes | — | — |
 
 ## Notes
@@ -74,3 +75,7 @@
 - The 5 gameplay-diagnostics warnings concern existing RUNNER encounter/spawn-pressure
   behavior only. They are explicitly **NOT** Milestone 1P failures and do not affect
   1P acceptance; they remain a pre-existing tuning item for a future milestone.
+- **Milestone 1P.5 (2026-08-16):** Toon Soldier replaced Carl as the ACTIVE presentation
+  layer only — gameplay untouched (no movement, weapon, enemy, mission, camera or
+  rendering values changed). The verified 1P status is unchanged. 1P.5 awaits the
+  project owner's manual Unity QA and is NOT verified by Arena implementation alone.

@@ -96,6 +96,65 @@
   (production-polish milestone), and weapon/impact audio is a production-polish
   dependency to be scheduled when final assets exist.
 
+## Milestone 1P.5 decisions
+
+### AD-1P.5-1: The Toon Soldier reuses the single existing animation bridge, unchanged
+
+- **Decision:** No new animation-authority code. `PlayerAnimationBridge` is reused
+  verbatim: its `animator` field is pinned (in the committed scene) to the Toon Soldier's
+  Animator via a stripped prefab reference. The new `ToonSoldier_Player.controller`
+  declares the exact parameter set the bridge already drives (Speed float, IsMoving
+  bool, Gunplay trigger, HitReaction trigger, Dead bool), so the bridge's existing
+  `ShotFired` / `CurrentPlanarSpeed` / health hooks drive the soldier without a line of
+  runtime code changing.
+- **Why:** The 1P.5 brief requires reusing existing presentation hooks and forbids a
+  second competing gameplay-animation authority. One bridge, one Animator target at a
+  time, matches the 1O.5 architecture.
+- **Controller shape:** mirrors `Carl_Player.controller` — `NeutralStance`
+  (`assault_combat_idle`), `Locomotion` blend tree (idle at 0.15 / `assault_combat_run`
+  at 0.85 on Speed), `Gunplay` (`assault_combat_shoot`, non-looping, AnyState trigger
+  with self-transition allowed, exit-time return at 0.8). `assault_combat_shoot` was
+  chosen over `assault_combat_shoot_burst` because a single-shot clip returns cleanly to
+  locomotion under the bridge's 0.18s Gunplay cooldown during 5-shots/s auto-fire; the
+  non-looping clip plus exit transitions makes animator lock-up impossible.
+- **Known presentation limitation:** the package has no hit-reaction or death clips, so
+  the HitReaction/Dead parameters exist (bridge contract, no console warnings) but have
+  no states. A dead soldier parks on the idle pose. Enemy-side 1P hit feedback is
+  unaffected. Documented rather than papered over.
+
+### AD-1P.5-2: Presentation swap is committed YAML + idempotent editor tools
+
+- **Decision:** The committed scene wires everything that CAN be authored deterministically
+  (bridge → soldier Animator stripped reference, controller via prefab-instance
+  override, CarlVisual inactive). The FBX-instantiation edge cases stay in editor tools,
+  mirroring the 1O.5 Carl tool: `ToonSoldierVisualSetup` (new) activates the soldier,
+  deactivates Carl, applies the URP material, pins the bridge; `CarlVisualSetup` gained
+  the mirror toggle so Carl is restorable as a one-click fallback (QA #14). The soldier
+  tool REUSES an existing instance instead of re-instantiating, so the committed
+  scene-level wiring survives tool runs.
+- **Why:** FBX sub-asset fileIDs are machine-generated (the 1O.5 tool's header documents
+  this); tools are the established, safe path for those. Committed YAML for the rest
+  keeps the pull-and-play flow that the user's own scene prep enabled.
+
+### AD-1P.5-3: URP material conversion for the soldier (package material untouched)
+
+- **Decision:** The package's `basic_soldier_blue.mat` uses the built-in "Standard"
+  shader, which renders magenta under URP (this project is URP). A new project material
+  `Materials/Player/ToonSoldier_Player.mat` (URP/Lit, shader GUID identical to
+  `Carl_Player.mat`, same `basic_soldier_blue.png` texture in `_BaseMap`, white base
+  colour) is applied to the soldier's renderers by the setup tool. The package material
+  is NOT modified; no global rendering/post-processing/lighting settings changed.
+- **Why:** Minimal conversion per the 1P.5 brief; the asset-package file stays pristine.
+
+### AD-1P.5-4: The Toon Soldier's rifle is presentation only
+
+- **Decision:** The model's internal rifle/WeaponContainer is never gameplay authority.
+  Firing, projectile origin, targeting and muzzle feedback remain owned by the existing
+  `Weapon` GameObject + `MuzzlePoint`, exactly as in 1P. No gameplay muzzle was moved to
+  match the model. If the soldier's rifle and the muzzle flash look misaligned during QA,
+  the fix is a presentation offset on `ToonSoldierVisual` (or a future visual socket),
+  reported to the owner for manual tuning — never a gameplay change.
+
 ## UNKNOWN / open questions
 
 - Pre-1P architecture rationale for gates (1J series) could not be recovered (original
