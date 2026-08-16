@@ -83,10 +83,22 @@ namespace OperationOutbreak.Tests
             var pool = new FeedbackObjectPool(
                 () => new GameObject("Visual"), 4, discarded.Add);
 
-            pool.Release(pool.Acquire());
-            pool.Release(pool.Acquire());
+            // Acquire both objects BEFORE releasing either. The previous version of this
+            // test interleaved Release(Acquire()) twice, so the second Acquire correctly
+            // REUSED the object the first Release had just stored and the pool therefore
+            // held exactly one distinct visual - the old assertion demanded two objects
+            // against the pool's intended reuse behaviour.
+            GameObject first = pool.Acquire();
+            GameObject second = pool.Acquire();
 
-            Assert.AreEqual(2, pool.RetainedCount);
+            Assert.AreNotEqual(first, second,
+                "Two acquires from an empty pool must build two distinct visuals.");
+
+            pool.Release(first);
+            pool.Release(second);
+
+            Assert.AreEqual(2, pool.RetainedCount,
+                "Two released visuals must both be retained while the pool is below its cap.");
 
             pool.Drain();
 
@@ -362,7 +374,22 @@ namespace OperationOutbreak.Tests
         public void ProjectileTrailIsAddedOnceAndCarriesNoCollision()
         {
             GameObject projectileObject = new GameObject("TestProjectile");
+
+            // Adding Projectile auto-adds its required SphereCollider (RequireComponent
+            // since long before 1P). That collider is the projectile's legitimate
+            // gameplay hit-detection volume - the trail must never touch it.
             Projectile projectile = projectileObject.AddComponent<Projectile>();
+
+            // Snapshot the pre-trail gameplay collider state as the baseline.
+            Collider[] collidersBefore = projectileObject.GetComponents<Collider>();
+            SphereCollider sphere = projectileObject.GetComponent<SphereCollider>();
+            Assert.IsNotNull(sphere,
+                "Projectile must carry its required gameplay SphereCollider.");
+
+            float radiusBefore = sphere.radius;
+            Vector3 centerBefore = sphere.center;
+            bool triggerBefore = sphere.isTrigger;
+            bool enabledBefore = sphere.enabled;
 
             try
             {
@@ -377,8 +404,6 @@ namespace OperationOutbreak.Tests
 
                 TrailRenderer trail = trails[0];
                 Assert.IsTrue(trail.emitting, "A live projectile's trail must be emitting.");
-                Assert.IsNull(trail.GetComponent<Collider>(),
-                    "The trail must never add gameplay collision.");
                 Assert.AreEqual(
                     UnityEngine.Rendering.ShadowCastingMode.Off,
                     trail.shadowCastingMode,
@@ -387,6 +412,30 @@ namespace OperationOutbreak.Tests
                     "The trail must share the cached combat feedback material, not a per-shot instance.");
                 Assert.LessOrEqual(trail.time, 0.2f,
                     "The trail must be short-lived so rapid fire cannot stack long trails.");
+
+                // Correct invariant (the pre-fix test wrongly asserted that NO collider
+                // could exist on the projectile object, but the required gameplay
+                // SphereCollider has always lived there): trail setup must not add,
+                // remove, reorder, replace, disable, resize or otherwise mutate any
+                // gameplay collider.
+                Collider[] collidersAfter = projectileObject.GetComponents<Collider>();
+                Assert.AreEqual(collidersBefore.Length, collidersAfter.Length,
+                    "Trail setup must not add or remove gameplay colliders.");
+
+                for (int i = 0; i < collidersBefore.Length; i++)
+                {
+                    Assert.AreEqual(collidersBefore[i], collidersAfter[i],
+                        "Trail setup must not replace or reorder gameplay colliders.");
+                }
+
+                Assert.AreEqual(radiusBefore, sphere.radius, 0.0001f,
+                    "Trail setup must not resize the projectile's gameplay collider.");
+                Assert.AreEqual(centerBefore, sphere.center,
+                    "Trail setup must not move the projectile's gameplay collider.");
+                Assert.AreEqual(triggerBefore, sphere.isTrigger,
+                    "Trail setup must not change the projectile collider's trigger role.");
+                Assert.AreEqual(enabledBefore, sphere.enabled,
+                    "Trail setup must not enable or disable the projectile's gameplay collider.");
             }
             finally
             {
