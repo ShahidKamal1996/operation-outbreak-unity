@@ -222,6 +222,17 @@ Character presentation replacement ONLY — zero gameplay changes:
     oriented so its +Z runs hand→muzzle, keeping the flash's authored forward offset on
     the barrel line. The authored `barrelTipOffset` remains only as a last-resort
     fallback when the mesh/weights are unavailable. See AD-1P.5-6.
+13. **QA fix #7 (2026-08-17)** — compile error CS0165 in `WeaponMuzzleSocketBinder`:
+    the measurement call declared its out variable inside a short-circuiting `&&`
+    expression (`useMeasuredBarrelTip && TryMeasureMuzzle(handBone, out Vector3
+    measuredOffset)`), and C# definite-assignment analysis only considers an
+    out-declared variable definitely assigned when the whole expression is definitely
+    evaluated — `useMeasuredBarrelTip` is a runtime bool, so the compiler could not
+    prove the call ran, even inside `if (measured)`. Fix: the variable is now declared
+    with an initializer equal to the documented fallback (`barrelTipOffset`) before the
+    call — semantically correct on every path; the out call overwrites it whenever
+    measurement runs. Verified under real Roslyn: the old pattern reproduces CS0165 and
+    the fixed file compiles with 0 errors. Runtime muzzle logic unchanged.
 
 ## Manual Unity QA checklist for 1P.5
 

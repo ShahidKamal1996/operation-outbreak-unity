@@ -309,7 +309,17 @@ namespace OperationOutbreak.Weapons
                 _socket.SetParent(handBone, false);
             }
 
-            bool measured = useMeasuredBarrelTip && TryMeasureMuzzle(handBone, out Vector3 measuredOffset);
+            // CS0165 guard (QA fix #7): an out variable declared inside a
+            // short-circuiting && expression is only definitely assigned when the
+            // whole expression is definitely evaluated. useMeasuredBarrelTip is a
+            // runtime bool, so the compiler cannot prove TryMeasureMuzzle ran -
+            // even inside if (measured), because flow analysis does not track the
+            // "measured == true => call executed" correlation. Initializing with
+            // barrelTipOffset is semantically correct for EVERY path: it is exactly
+            // the documented fallback the else-branch uses, and the out call
+            // overwrites it whenever measurement actually runs.
+            Vector3 measuredOffset = barrelTipOffset;
+            bool measured = useMeasuredBarrelTip && TryMeasureMuzzle(handBone, out measuredOffset);
 
             if (measured)
             {
