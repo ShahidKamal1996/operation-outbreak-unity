@@ -198,6 +198,16 @@ Character presentation replacement ONLY — zero gameplay changes:
     Animator/avatar init, and `Unbind()` restores the muzzle to its authored Weapon
     ownership for the Carl/prototype fallback. The authored offset remains only as a
     fallback/override when `useMeasuredBarrelTip` is disabled. See AD-1P.5-6.
+11. **QA fix #5 (2026-08-17)** — `TryPickBarrelTipHandLocal_SelectsTheForwardMostVertex`
+    failed while displaying identical expected/actual vectors. Diagnosis: the test used
+    exact `Vector3` equality (Unity 2021.2+ `Vector3.Equals` is exact per-component), but
+    the measured tip passes through `Transform.InverseTransformPoint` (float4x4 inverse),
+    so it differs from the decimal-constructed expected vector at the 1e-8..1e-6 level —
+    invisible at the Test Runner's 0.01 display precision, yet not bit-identical.
+    Production was CORRECT (the right vertex is selected; the nearest wrong selection is
+    ~1.16 units away). TEST-ONLY fix: the assertion now uses
+    `Vector3.Distance(expected, actual) <= 1e-4` plus a selection-correctness guard
+    (nearest wrong candidate must be > 0.5 away). No production code changed.
 
 ## Manual Unity QA checklist for 1P.5
 
@@ -229,7 +239,9 @@ Character presentation replacement ONLY — zero gameplay changes:
     (Unbind restores the original parent/local transform).
 15. Full EditMode suite passes — expect **128/128** (previous 125 + 3 new QA-fix-4
     tests: forward-most barrel-tip selection, graceful measurement failure, and
-    Unbind restoring the muzzle to its original Weapon ownership).
+    Unbind restoring the muzzle to its original Weapon ownership; the barrel-tip
+    selection assertion now uses a 1e-4 positional tolerance — exact Vector3 equality
+    was invalid for values produced through Transform matrix math).
 
 ## Known discrepancies reported during 1P
 

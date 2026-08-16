@@ -218,6 +218,13 @@
   when measurement is disabled or unavailable), and `Unbind()` restores the muzzle's
   original parent/local transform for the Carl/prototype fallback. Bounded frame
   retries cover late Animator/avatar initialization without per-frame work.
+- **QA fix #5 addendum:** the barrel-tip selection EditMode test was corrected from
+  exact `Vector3` equality to a 1e-4 positional-tolerance comparison plus a
+  selection-correctness guard. Reason: Unity 2021.2+ `Vector3.Equals` is exact
+  per-component equality, while `InverseTransformPoint` output carries inherent
+  float32 transform noise (~1e-8..1e-6 at unit scale) — the two vectors display
+  identically but are never bit-equal. Production selection logic was verified correct
+  and is unchanged.
 
 ## UNKNOWN / open questions
 

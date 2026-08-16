@@ -296,11 +296,32 @@ namespace OperationOutbreak.Tests
                     out Vector3 handLocalTip);
 
                 Assert.IsTrue(found, "A non-empty mesh must yield a barrel tip.");
-                Assert.AreEqual(
-                    new Vector3(0.15f, 0.05f, 0.95f),
-                    handLocalTip,
+
+                // NOTE (QA fix #5): do NOT use exact Vector3 equality here. Unity's
+                // Vector3.Equals (since 2021.2) is exact per-component equality, but the
+                // measured tip passes through Transform.InverseTransformPoint (float4x4
+                // inverse math), so it differs from the decimal-constructed expected
+                // vector at the 1e-8..1e-6 level - both display as (0.15, 0.05, 0.95)
+                // in the Test Runner, yet are not bit-identical. The assertion therefore
+                // compares positional distance with a small epsilon.
+                Vector3 expectedTip = new Vector3(0.15f, 0.05f, 0.95f);
+                const float PositionTolerance = 1e-4f;
+
+                Assert.LessOrEqual(
+                    Vector3.Distance(expectedTip, handLocalTip),
+                    PositionTolerance,
                     "The measured tip must be the forward-most vertex in hand-local space " +
-                    "(0.45-0.3, 1.05-1.0, 1.15-0.2).");
+                    $"(expected {expectedTip}, got {handLocalTip}). Tolerance {PositionTolerance} " +
+                    "absorbs float32 transform noise (~1e-6), not selection errors.");
+
+                // Selection-correctness guard: picking the nearest WRONG vertex (the
+                // side point at (-0.4, 0.8, 0.4)) would yield hand-local (-0.7, -0.2, 0.2),
+                // over 1.1 units away - the tolerance above cannot hide that.
+                Vector3 sideVertexHandLocal = new Vector3(-0.7f, -0.2f, 0.2f);
+                Assert.Greater(
+                    Vector3.Distance(sideVertexHandLocal, handLocalTip),
+                    0.5f,
+                    "The tip must come from the forward-most vertex, not a body/side vertex.");
             }
             finally
             {
