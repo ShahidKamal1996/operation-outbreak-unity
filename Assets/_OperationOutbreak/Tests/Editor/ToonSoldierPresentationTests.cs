@@ -269,6 +269,118 @@ namespace OperationOutbreak.Tests
             Object.DestroyImmediate(muzzleObject);
         }
 
+        // ============================================= QA fix #4 - barrel tip resolution
+
+        [Test]
+        public void TryPickBarrelTipHandLocal_SelectsTheForwardMostVertex()
+        {
+            GameObject meshObject = new GameObject("MESH_Infantry");
+            GameObject rootObject = new GameObject("ToonSoldier_demo");
+            GameObject handObject = new GameObject("Bip001 R Hand");
+            handObject.transform.position = new Vector3(0.3f, 1.0f, 0.2f);
+
+            try
+            {
+                // Synthetic skinned point cloud: body points near the root, one far
+                // forward vertex representing the visible rifle barrel tip.
+                Vector3[] vertices =
+                {
+                    new Vector3(0f, 0f, 0f),           // behind
+                    new Vector3(0.3f, 1.1f, 0.5f),     // body, near the hand
+                    new Vector3(-0.4f, 0.8f, 0.4f),    // side
+                    new Vector3(0.45f, 1.05f, 1.15f),  // barrel tip - forward-most
+                };
+
+                bool found = WeaponMuzzleSocketBinder.TryPickBarrelTipHandLocal(
+                    vertices, meshObject.transform, rootObject.transform, handObject.transform,
+                    out Vector3 handLocalTip);
+
+                Assert.IsTrue(found, "A non-empty mesh must yield a barrel tip.");
+                Assert.AreEqual(
+                    new Vector3(0.15f, 0.05f, 0.95f),
+                    handLocalTip,
+                    "The measured tip must be the forward-most vertex in hand-local space " +
+                    "(0.45-0.3, 1.05-1.0, 1.15-0.2).");
+            }
+            finally
+            {
+                Object.DestroyImmediate(meshObject);
+                Object.DestroyImmediate(rootObject);
+                Object.DestroyImmediate(handObject);
+            }
+        }
+
+        [Test]
+        public void TryPickBarrelTipHandLocal_FailsGracefullyOnInvalidInput()
+        {
+            GameObject meshObject = new GameObject("Mesh");
+            GameObject rootObject = new GameObject("Root");
+            GameObject handObject = new GameObject("Hand");
+
+            try
+            {
+                Assert.IsFalse(
+                    WeaponMuzzleSocketBinder.TryPickBarrelTipHandLocal(
+                        null, meshObject.transform, rootObject.transform, handObject.transform,
+                        out _),
+                    "Null vertices must fail gracefully.");
+                Assert.IsFalse(
+                    WeaponMuzzleSocketBinder.TryPickBarrelTipHandLocal(
+                        new Vector3[0], meshObject.transform, rootObject.transform,
+                        handObject.transform, out _),
+                    "An empty vertex array must fail gracefully.");
+            }
+            finally
+            {
+                Object.DestroyImmediate(meshObject);
+                Object.DestroyImmediate(rootObject);
+                Object.DestroyImmediate(handObject);
+            }
+        }
+
+        [Test]
+        public void Unbind_RestoresTheMuzzleToItsOriginalWeaponOwnership()
+        {
+            GameObject weaponRoot = new GameObject("Weapon");
+            GameObject muzzleObject = new GameObject("MuzzlePoint");
+            muzzleObject.transform.SetParent(weaponRoot.transform, false);
+            muzzleObject.transform.localPosition = new Vector3(0f, 0.25f, 0.75f);
+
+            var binder = muzzleObject.AddComponent<WeaponMuzzleSocketBinder>();
+            var so = new SerializedObject(binder);
+            so.FindProperty("muzzlePoint").objectReferenceValue = muzzleObject.transform;
+            so.ApplyModifiedPropertiesWithoutUndo();
+
+            GameObject socketObject = new GameObject("ToonSoldierMuzzleSocket");
+
+            try
+            {
+                // First attempt captures the original ownership (soldier root is null,
+                // so binding itself is refused - exactly the Carl fallback path).
+                binder.TryBind();
+
+                // Simulate a successful bind by hand.
+                WeaponMuzzleSocketBinder.AttachMuzzleToSocket(
+                    muzzleObject.transform, socketObject.transform, new Vector3(0f, 0f, 1f), Vector3.zero);
+
+                Assert.AreEqual(socketObject.transform, muzzleObject.transform.parent,
+                    "Precondition: muzzle bound under the soldier socket.");
+
+                binder.Unbind();
+
+                Assert.AreEqual(weaponRoot.transform, muzzleObject.transform.parent,
+                    "Unbind must restore the muzzle to the authored Weapon hierarchy (Carl fallback).");
+                Assert.AreEqual(new Vector3(0f, 0.25f, 0.75f), muzzleObject.transform.localPosition,
+                    "Unbind must restore the authored muzzle local transform.");
+            }
+            finally
+            {
+                Object.DestroyImmediate(muzzleObject);
+                Object.DestroyImmediate(weaponRoot);
+                Object.DestroyImmediate(socketObject);
+            }
+        }
+
         /// <summary>Unity euler angles are 0..360; normalise to -180..180 for sign assertions.</summary>
         private static float NormalizeEuler(float eulerY)
         {

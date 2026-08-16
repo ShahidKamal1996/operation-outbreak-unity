@@ -205,6 +205,19 @@
   yaw maths was verified correct against the ±179/±170 wrap matrix; the failing
   EditMode test was corrected to compare angular difference via `Mathf.DeltaAngle`
   rather than raw floats. No runtime change was made.
+- **QA fix #4 addendum (barrel-tip measurement):** FBX forensics (skin clusters,
+  TransformLink matrices) proved the barrel tip sits ~1.25 m from the right hand's
+  bind origin in a rotated bone frame — no hand-authored hand-local offset can be
+  correct without Unity on-screen tuning. Decision: the muzzle socket position is
+  MEASURED at runtime, not authored. `WeaponMuzzleSocketBinder` bakes the soldier's
+  `SkinnedMeshRenderer` once at startup, picks the forward-most vertex along the
+  soldier root's facing (the package's rifle points forward; FrontAxis +Z in the FBX),
+  and parents the existing MuzzlePoint to a runtime socket
+  (`Right Hand → ToonSoldierMuzzleSocket → MuzzlePoint`) at the measured hand-local
+  position. The authored `barrelTipOffset` is demoted to fallback/override (used only
+  when measurement is disabled or unavailable), and `Unbind()` restores the muzzle's
+  original parent/local transform for the Carl/prototype fallback. Bounded frame
+  retries cover late Animator/avatar initialization without per-frame work.
 
 ## UNKNOWN / open questions
 

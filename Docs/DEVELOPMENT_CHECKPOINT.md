@@ -182,6 +182,22 @@ Character presentation replacement ONLY — zero gameplay changes:
    float equality instead of angular difference. Production code unchanged; the test now
    asserts via `Mathf.DeltaAngle` equivalence and a new boundary-matrix test pins
    ±179/±170 wrap cases (short direction, maxDelta respected, no ~358° rotation).
+10. **QA fix #4 (2026-08-17)** — the projectile/muzzle flash still originated near the
+    soldier's head/upper-body instead of the rifle barrel. Root causes: (a) the
+    hand-local `barrelTipOffset` (0,0,0.6) was a blind guess — FBX forensics showed the
+    real barrel tip sits ~1.25 m from the right hand's bind origin in a rotated bone
+    frame, so no naive hand-local offset can land on it; (b) if the Animator's humanoid
+    bones were not resolvable on the first attempt, the muzzle silently stayed at its
+    authored Weapon position (Player y=1 + Weapon 0.25 ≈ head/upper-body height —
+    exactly what QA photographed). Fix: `WeaponMuzzleSocketBinder` now MEASURES the
+    barrel tip at startup — it bakes the soldier's SkinnedMeshRenderer, picks the
+    forward-most vertex along the soldier root's facing (the visible barrel end), and
+    parents the existing MuzzlePoint to a runtime socket
+    (`Right Hand → ToonSoldierMuzzleSocket → MuzzlePoint`) at that measured hand-local
+    position. Binding now retries over a bounded number of frames for late
+    Animator/avatar init, and `Unbind()` restores the muzzle to its authored Weapon
+    ownership for the Carl/prototype fallback. The authored offset remains only as a
+    fallback/override when `useMeasuredBarrelTip` is disabled. See AD-1P.5-6.
 
 ## Manual Unity QA checklist for 1P.5
 
@@ -198,21 +214,22 @@ Character presentation replacement ONLY — zero gameplay changes:
 4. Target on left → soldier visibly turns/aims left.
 5. Target on right → soldier visibly turns/aims right.
 6. No visual jitter between targets.
-7. Projectile originates at the visible rifle barrel.
+7. Projectile originates at the visible rifle barrel (not head/chest/hand center).
 8. Muzzle flash appears at the visible rifle barrel.
 9. Muzzle follows the rifle during idle/run/shoot animation.
-   - If the flash sits ahead/behind/off the barrel, tune the Weapon's
-     `WeaponMuzzleSocketBinder` → `barrelTipOffset` (and `barrelRotationEuler` if the
-     rifle axis differs). This is a presentation tuning field, never a gameplay value.
+   - The barrel tip is measured automatically from the deformed mesh at startup. If it
+     is still visibly off, set `WeaponMuzzleSocketBinder` → `useMeasuredBarrelTip` OFF
+     and hand-tune `barrelTipOffset` / `barrelRotationEuler` (presentation fields only).
 10. Idle/run/shoot animations still work (controller rebuilt per step 0 above).
 11. Player movement/lane behavior unchanged (Player root never rotated).
 12. All 3 mission sections complete normally; Mission Complete exactly once.
 13. Console clean — no new errors or warnings.
 14. Carl fallback: re-enable via Tools > Operation Outbreak > Set Up Carl Player Visual
-    — no broken references; the muzzle returns to its authored Weapon position.
-15. Full EditMode suite passes — expect **125/125** (previous 124 + 1 new
-    `TurnToward_WrapBoundaries_TakeTheShortDirectionAndRespectMaxDelta` regression;
-    the wrap test now compares angular equivalence, never raw Euler floats).
+    — no broken references; the muzzle returns to its authored Weapon position
+    (Unbind restores the original parent/local transform).
+15. Full EditMode suite passes — expect **128/128** (previous 125 + 3 new QA-fix-4
+    tests: forward-most barrel-tip selection, graceful measurement failure, and
+    Unbind restoring the muzzle to its original Weapon ownership).
 
 ## Known discrepancies reported during 1P
 

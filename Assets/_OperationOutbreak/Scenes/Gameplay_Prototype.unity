@@ -2567,8 +2567,10 @@ MonoBehaviour:
   m_EditorClassIdentifier: 
   soldierVisualRoot: {fileID: 1097152860}
   muzzlePoint: {fileID: 210021}
+  useMeasuredBarrelTip: 1
   barrelTipOffset: {x: 0, y: 0, z: 0.6}
   barrelRotationEuler: {x: 0, y: 0, z: 0}
+  bindRetryFrames: 2
 --- !u!1 &210010
 GameObject:
   m_ObjectHideFlags: 0
