@@ -10,6 +10,8 @@
 - **IMPLEMENTED** — work landed on an Arena working branch and its commit(s) are below.
 - **IMPLEMENTED — AWAITING MANUAL UNITY QA** — Arena implementation complete; human
   Unity QA required before the milestone is accepted (never self-verified).
+- **VERIFIED** — the project owner's local Unity QA passed and the milestone was
+  accepted. Arena implementation alone is never sufficient for this status.
 - **POSTPONED** — work paused by milestone brief; not part of the active line.
 
 ## Ledger
@@ -51,8 +53,8 @@
 | 1O.5 | Real player character integration (Carl visual + animation bridge) | IMPLEMENTED | 2026-08-13 | `4349004`, `b6bc395` |
 | — | Mobile rendering baseline | IMPLEMENTED | 2026-08-14 | `35f8481` |
 | — | Gameplay post-processing baseline | IMPLEMENTED | 2026-08-14 | `f43af78` |
-| **1P** | **Weapon & combat feel foundation** | **IMPLEMENTED — AWAITING MANUAL UNITY QA** | 2026-08-14 | commits on `arena/milestone-1p-weapon-combat-feel` (see git log) |
-| 1Q | NEXT | NOT STARTED — blocked until 1P is manually accepted in Unity | — | — |
+| **1P** | **Weapon & combat feel foundation** | **VERIFIED** | 2026-08-14 → QA 2026-08-16 | commits on `arena/milestone-1p-weapon-combat-feel` (see git log) — owner QA: EditMode 109/109 PASS, gameplay diagnostics PASS (0 failures), recording reviewed |
+| 1Q | NEXT | NOT STARTED — 1P is verified and no longer blocks; begin only when the owner authorizes | — | — |
 
 ## Notes
 
@@ -63,3 +65,12 @@
   EditMode suite in `Assets/_OperationOutbreak/Tests/Editor/` pins the approved values
   (e.g. Basic 2.5 speed / 3 HP / 1 dmg, Runner 3.5 / 2 / 1, 3 sections of 3/4/5 enemies
   with 0/1/2 Runners).
+- **Milestone 1P QA result (2026-08-16, project owner's local Unity run): VERIFIED.**
+  Evidence: EditMode Test Runner 109/109 passed (Unity 6.5); gameplay diagnostics
+  PASS — 39 checks, 34 passed, 0 failed, 5 warnings; Console 0 errors / 0 warnings
+  during the accepted run; full gameplay recording reviewed and all combat-feedback
+  behaviors confirmed. The pooled-feedback coroutine regression found in the first QA
+  pass is RESOLVED (`2762433` activation-order fix, `a02c65b` test corrections).
+- The 5 gameplay-diagnostics warnings concern existing RUNNER encounter/spawn-pressure
+  behavior only. They are explicitly **NOT** Milestone 1P failures and do not affect
+  1P acceptance; they remain a pre-existing tuning item for a future milestone.

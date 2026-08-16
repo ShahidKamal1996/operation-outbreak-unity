@@ -83,6 +83,10 @@
   EditMode suite could not be executed there. Running
   `Window > General > Test Runner > EditMode` in Unity is part of the 1P QA gate. All new
   C# was validated with a C# grammar parser (syntax only, not Unity API semantics).
+- **Status — resolved (2026-08-16):** the project owner ran the full suite in Unity 6.5:
+  109/109 passed, which closes this entry's open constraint. The 1P QA gate is satisfied
+  and Milestone 1P is VERIFIED. (See DEVELOPMENT_CHECKPOINT.md and MILESTONE_LEDGER.md
+  for the complete evidence.)
 
 ### AD-1P-5: Camera feedback and audio are declared future work, not implemented
 

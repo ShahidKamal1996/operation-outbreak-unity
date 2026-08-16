@@ -26,8 +26,8 @@
 |---|---|
 | 1C — 1O.5 (shooting, zombies, combat HUD, waves, targeting, gates, feedback, upgrades, sections, Runner, diagnostics, Carl) | IMPLEMENTED (see MILESTONE_LEDGER.md) |
 | Gate systems (1J series) | Development paused per milestone briefs. NOT resumed by 1P. |
-| **1P — weapon & combat feel foundation** | **IMPLEMENTED — AWAITING MANUAL UNITY QA** |
-| 1Q | NOT STARTED. `NEXT` must not advance past 1P until the manual Unity QA checklist is accepted by a human. |
+| **1P — weapon & combat feel foundation** | **VERIFIED** (2026-08-16 — project owner's local Unity QA; see "Manual Unity QA" below) |
+| 1Q | NOT STARTED. Milestone 1P is accepted, so 1Q is no longer blocked — but it must not begin until the project owner explicitly authorizes it. |
 
 ## What Milestone 1P delivered
 
@@ -63,27 +63,54 @@ integration architecture, player root authority, character animations (except th
 No final weapon models, no production art, no audio, no camera shake, no realtime
 per-shot lights were added.
 
-## Manual QA required
+## Manual Unity QA — RESULT: PASSED (Milestone 1P VERIFIED)
 
-Milestone 1P is **NOT verified by Arena implementation alone**. The 12-step manual
-Unity QA checklist from the milestone brief must be completed on device/editor:
+Milestone 1P was **verified by the project owner** in local Unity QA on 2026-08-16.
+Arena implementation alone is never treated as verification; this section records the
+owner's acceptance evidence:
 
-1. FIRE — muzzle feedback appears for each valid shot.
-2. PROJECTILE — clearly readable; trajectory/mechanics unchanged.
-3. HIT — impact feedback appears on actual hits.
-4. ENEMY REACTION — enemy communicates damage without gameplay movement changes.
-5. RAPID FIRING — no permanent muzzle flashes / impact objects / trails.
-6. ENEMY DEATH — hit feedback does not survive incorrectly after death.
-7. BASIC ENEMY — behaviour unchanged.
-8. RUNNER — behaviour unchanged.
-9. SECTION PROGRESSION — all 3 authored sections progress correctly.
-10. MISSION COMPLETE — fires exactly once.
-11. GAME OVER — behaviour remains valid.
-12. CONSOLE — no new exceptions/errors caused by combat feedback.
+**1. Unity EditMode Test Runner (Unity 6.5):**
+- 109 tests total / **109 passed** / **0 failed**.
 
-Additionally, re-run the EditMode test suite (`Window > General > Test Runner`) —
-the sandbox that implemented 1P has no Unity Editor, so the suite could not be executed
-there; it must be run in Unity (see ARCHITECTURE_DECISIONS.md AD-1P-4).
+**2. Full gameplay diagnostic run:**
+- Verdict: **PASS** — 39 checks total, 34 passed, **0 failed**, 5 warnings.
+- The 5 warnings concern the **existing RUNNER encounter/spawn-pressure behavior** and
+  are explicitly NOT Milestone 1P combat-feedback failures. They remain open as a
+  pre-existing tuning item for a future milestone and do not affect 1P acceptance.
+
+**3. Unity Console during the accepted gameplay run:**
+- 0 errors, 0 warnings.
+
+**4. Full gameplay recording manually reviewed — visually confirmed:**
+- muzzle/shot feedback works repeatedly
+- projectile trail/readability works
+- hit/impact feedback works
+- enemy hit flash/reaction works
+- rapid firing does not leave stuck feedback objects
+- enemy death and section progression remain functional
+- Carl animation remains functional
+- mission reaches Mission Complete normally
+
+**5. Pooled-feedback coroutine regression:**
+- RESOLVED. The "Coroutine couldn't be started because the game object is inactive"
+  failure found in the first QA pass was fixed in commit `2762433` (activation-order
+  fix) and its follow-up test corrections `a02c65b`; the corresponding regression tests
+  now pass locally.
+
+The 12-step checklist that was executed for this acceptance:
+
+1. FIRE — muzzle feedback appears for each valid shot. ✔
+2. PROJECTILE — clearly readable; trajectory/mechanics unchanged. ✔
+3. HIT — impact feedback appears on actual hits. ✔
+4. ENEMY REACTION — enemy communicates damage without gameplay movement changes. ✔
+5. RAPID FIRING — no permanent muzzle flashes / impact objects / trails. ✔
+6. ENEMY DEATH — hit feedback does not survive incorrectly after death. ✔
+7. BASIC ENEMY — behaviour unchanged. ✔
+8. RUNNER — behaviour unchanged. ✔
+9. SECTION PROGRESSION — all 3 authored sections progress correctly. ✔
+10. MISSION COMPLETE — fires exactly once. ✔
+11. GAME OVER — behaviour remains valid. ✔
+12. CONSOLE — no new exceptions/errors caused by combat feedback. ✔
 
 ## Known discrepancies reported during 1P
 
