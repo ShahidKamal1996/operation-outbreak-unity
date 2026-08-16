@@ -199,6 +199,12 @@
 - **WeaponController API change:** exactly one addition — read-only
   `CurrentTargetTransform`. No gameplay path reads it back; fire timing, targeting,
   projectile trajectory and cadence are untouched.
+- **QA fix #3 addendum:** `TurnToward` outputs raw degrees that may exceed ±180 (e.g.
+  181° for a -179° target) — Euler angles are periodic, so this is representationally
+  equivalent and drives the same orientation through `Quaternion.Euler`. The runtime
+  yaw maths was verified correct against the ±179/±170 wrap matrix; the failing
+  EditMode test was corrected to compare angular difference via `Mathf.DeltaAngle`
+  rather than raw floats. No runtime change was made.
 
 ## UNKNOWN / open questions
 

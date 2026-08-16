@@ -58,8 +58,78 @@ namespace OperationOutbreak.Tests
         [Test]
         public void TurnToward_TakesTheShortestPathAcrossTheWrap()
         {
-            Assert.AreEqual(-176f, ToonSoldierPresentationAim.TurnToward(179f, -179f, 5f, 0.5f), 0.0001f,
-                "From 179 to -179 the turn must go 3 degrees left, not 358 degrees right.");
+            // From 179 to -179 the shortest route is 2 degrees THROUGH the +-180 wrap,
+            // landing exactly on the target orientation. That orientation may come back
+            // as 181 (= -179 + 360): Euler angles are periodic, and 181 and -179 are the
+            // SAME orientation, so this test compares angular difference, never raw
+            // floats. A 358-degree "long way" would show up as |moved| > 180.
+            float result = ToonSoldierPresentationAim.TurnToward(179f, -179f, 5f, 0.5f);
+
+            AssertAngularlyEquivalent(-179f, result, 1e-3f,
+                "The result must BE the target orientation (181 is -179 + 360).");
+
+            float moved = Mathf.DeltaAngle(179f, result);
+            Assert.Less(Mathf.Abs(moved), 180f,
+                "The turn must take the 2-degree short way through the wrap, not the 358-degree long way.");
+            Assert.LessOrEqual(Mathf.Abs(moved), 5f + 1e-4f,
+                "A single step must never exceed maxDelta, whichever representation comes back.");
+        }
+
+        [Test]
+        public void TurnToward_WrapBoundaries_TakeTheShortDirectionAndRespectMaxDelta()
+        {
+            // Explicit boundary matrix from the QA brief. For each pair, assert:
+            //  - movement never exceeds maxDelta,
+            //  - movement is always the SHORT direction (never ~358 degrees),
+            //  - the result never moves AWAY from the target,
+            //  - when the target is reachable in one step, the result lands ON it.
+            float[,] cases =
+            {
+                { 179f, -179f },
+                { -179f, 179f },
+                { 170f, -170f },
+                { -170f, 170f },
+            };
+
+            for (int i = 0; i < cases.GetLength(0); i++)
+            {
+                float current = cases[i, 0];
+                float desired = cases[i, 1];
+
+                float result = ToonSoldierPresentationAim.TurnToward(current, desired, 5f, 0.5f);
+
+                float moved = Mathf.Abs(Mathf.DeltaAngle(current, result));
+                Assert.LessOrEqual(moved, 5f + 1e-4f,
+                    $"{current} -> {desired}: one step must never exceed maxDelta.");
+                Assert.Less(moved, 180f,
+                    $"{current} -> {desired}: must take the short direction, not the long way around.");
+
+                float remainingBefore = Mathf.Abs(Mathf.DeltaAngle(current, desired));
+                float remainingAfter = Mathf.Abs(Mathf.DeltaAngle(result, desired));
+                Assert.LessOrEqual(remainingAfter, remainingBefore + 1e-4f,
+                    $"{current} -> {desired}: the step must not move away from the target.");
+
+                if (remainingBefore <= 5f + 1e-4f)
+                {
+                    AssertAngularlyEquivalent(desired, result, 1e-3f,
+                        $"{current} -> {desired}: a reachable target must be hit exactly " +
+                        "(raw output may be the equivalent angle plus/minus 360).");
+                }
+            }
+        }
+
+        /// <summary>
+        /// Euler angles are periodic: values differing by 360 represent the same
+        /// orientation (181 == -179). Assertions must compare angular difference via
+        /// DeltaAngle, never raw floats.
+        /// </summary>
+        private static void AssertAngularlyEquivalent(
+            float expected, float actual, float tolerance, string message)
+        {
+            Assert.LessOrEqual(
+                Mathf.Abs(Mathf.DeltaAngle(expected, actual)),
+                tolerance,
+                message + $" (expected {expected}, got {actual})");
         }
 
         [Test]

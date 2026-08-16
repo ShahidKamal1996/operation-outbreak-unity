@@ -174,6 +174,14 @@ Character presentation replacement ONLY — zero gameplay changes:
      skinned mesh, so the muzzle now rides the animated rifle during idle/run/shoot.
      Carl/prototype fallback: binding is skipped when the soldier is inactive, leaving
      the muzzle exactly as authored. See AD-1P.5-6.
+9. **QA fix #3 (2026-08-17)** — EditMode `TurnToward_TakesTheShortestPathAcrossTheWrap`
+   failed. Investigation: the runtime `TurnToward` was CORRECT (from 179° to -179° it
+   turns 2° through the wrap and lands exactly on the target; the raw output 181° is the
+   same orientation as -179°). The TEST was wrong on two counts: its expected value
+   (-176°) was arithmetically incorrect, and it compared periodic angles with exact
+   float equality instead of angular difference. Production code unchanged; the test now
+   asserts via `Mathf.DeltaAngle` equivalence and a new boundary-matrix test pins
+   ±179/±170 wrap cases (short direction, maxDelta respected, no ~358° rotation).
 
 ## Manual Unity QA checklist for 1P.5
 
@@ -202,9 +210,9 @@ Character presentation replacement ONLY — zero gameplay changes:
 13. Console clean — no new errors or warnings.
 14. Carl fallback: re-enable via Tools > Operation Outbreak > Set Up Carl Player Visual
     — no broken references; the muzzle returns to its authored Weapon position.
-15. Full EditMode suite passes — expect **119/119** (112 previous + 7 new
-    `ToonSoldierPresentationTests`: aim maths, root-not-rotated invariant, muzzle
-    re-parent/fallback/no-duplicate-weapon).
+15. Full EditMode suite passes — expect **125/125** (previous 124 + 1 new
+    `TurnToward_WrapBoundaries_TakeTheShortDirectionAndRespectMaxDelta` regression;
+    the wrap test now compares angular equivalence, never raw Euler floats).
 
 ## Known discrepancies reported during 1P
 
