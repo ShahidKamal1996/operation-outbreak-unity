@@ -269,94 +269,132 @@ namespace OperationOutbreak.Tests
             Object.DestroyImmediate(muzzleObject);
         }
 
-        // ============================================= QA fix #4 - barrel tip resolution
+        // =================================== QA fix #6 - hand-cluster muzzle measurement
 
         [Test]
-        public void TryPickBarrelTipHandLocal_SelectsTheForwardMostVertex()
+        public void TryPickMuzzleFromHandCluster_SelectsTheMuzzleTipNotTheFace()
         {
             GameObject meshObject = new GameObject("MESH_Infantry");
-            GameObject rootObject = new GameObject("ToonSoldier_demo");
             GameObject handObject = new GameObject("Bip001 R Hand");
             handObject.transform.position = new Vector3(0.3f, 1.0f, 0.2f);
 
             try
             {
-                // Synthetic skinned point cloud: body points near the root, one far
-                // forward vertex representing the visible rifle barrel tip.
+                // Synthetic deformed point cloud reproducing the QA failure geometry:
+                // a hand-rigid rifle whose muzzle is the farthest hand-cluster vertex,
+                // and a helmet/face vertex that is further FORWARD but weighted to
+                // another bone. The old global forward-most heuristic picked the face;
+                // the hand-cluster filter must pick the muzzle.
                 Vector3[] vertices =
                 {
-                    new Vector3(0f, 0f, 0f),           // behind
-                    new Vector3(0.3f, 1.1f, 0.5f),     // body, near the hand
-                    new Vector3(-0.4f, 0.8f, 0.4f),    // side
-                    new Vector3(0.45f, 1.05f, 1.15f),  // barrel tip - forward-most
+                    new Vector3(0.3f, 1.0f, 0.2f),    // hand center itself
+                    new Vector3(0.31f, 1.02f, 0.5f),  // grip, near the hand (hand cluster)
+                    new Vector3(0.32f, 1.05f, 0.75f), // muzzle tip (hand cluster, farthest)
+                    new Vector3(0.30f, 1.60f, 1.40f), // helmet/face - global forward-most, NOT hand
                 };
 
-                bool found = WeaponMuzzleSocketBinder.TryPickBarrelTipHandLocal(
-                    vertices, meshObject.transform, rootObject.transform, handObject.transform,
-                    out Vector3 handLocalTip);
+                BoneWeight handWeight = new BoneWeight
+                {
+                    boneIndex0 = 1,
+                    weight0 = 1f,
+                };
+                BoneWeight otherWeight = new BoneWeight
+                {
+                    boneIndex0 = 0,
+                    weight0 = 1f,
+                };
+                BoneWeight[] weights =
+                {
+                    handWeight,  // hand center
+                    handWeight,  // grip
+                    handWeight,  // muzzle
+                    otherWeight, // helmet/face
+                };
 
-                Assert.IsTrue(found, "A non-empty mesh must yield a barrel tip.");
+                bool found = WeaponMuzzleSocketBinder.TryPickMuzzleFromHandCluster(
+                    vertices, weights, 1, meshObject.transform, handObject.transform,
+                    out Vector3 handLocalMuzzle);
 
-                // NOTE (QA fix #5): do NOT use exact Vector3 equality here. Unity's
-                // Vector3.Equals (since 2021.2) is exact per-component equality, but the
-                // measured tip passes through Transform.InverseTransformPoint (float4x4
-                // inverse math), so it differs from the decimal-constructed expected
-                // vector at the 1e-8..1e-6 level - both display as (0.15, 0.05, 0.95)
-                // in the Test Runner, yet are not bit-identical. The assertion therefore
-                // compares positional distance with a small epsilon.
-                Vector3 expectedTip = new Vector3(0.15f, 0.05f, 0.95f);
-                const float PositionTolerance = 1e-4f;
+                Assert.IsTrue(found, "The hand-rigid rifle cluster must yield a muzzle.");
 
+                Vector3 expected = new Vector3(0.02f, 0.05f, 0.55f);
                 Assert.LessOrEqual(
-                    Vector3.Distance(expectedTip, handLocalTip),
-                    PositionTolerance,
-                    "The measured tip must be the forward-most vertex in hand-local space " +
-                    $"(expected {expectedTip}, got {handLocalTip}). Tolerance {PositionTolerance} " +
-                    "absorbs float32 transform noise (~1e-6), not selection errors.");
+                    Vector3.Distance(expected, handLocalMuzzle),
+                    1e-4f,
+                    "The muzzle must come from the farthest hand-cluster vertex " +
+                    $"(expected {expected}, got {handLocalMuzzle}).");
 
-                // Selection-correctness guard: picking the nearest WRONG vertex (the
-                // side point at (-0.4, 0.8, 0.4)) would yield hand-local (-0.7, -0.2, 0.2),
-                // over 1.1 units away - the tolerance above cannot hide that.
-                Vector3 sideVertexHandLocal = new Vector3(-0.7f, -0.2f, 0.2f);
+                Vector3 faceHandLocal = new Vector3(0f, 0.6f, 1.2f);
                 Assert.Greater(
-                    Vector3.Distance(sideVertexHandLocal, handLocalTip),
-                    0.5f,
-                    "The tip must come from the forward-most vertex, not a body/side vertex.");
+                    Vector3.Distance(faceHandLocal, handLocalMuzzle),
+                    0.3f,
+                    "The measured muzzle must NOT be the face/helmet vertex - that was " +
+                    "exactly the QA failure the old global forward-most heuristic caused.");
             }
             finally
             {
                 Object.DestroyImmediate(meshObject);
-                Object.DestroyImmediate(rootObject);
                 Object.DestroyImmediate(handObject);
             }
         }
 
         [Test]
-        public void TryPickBarrelTipHandLocal_FailsGracefullyOnInvalidInput()
+        public void TryPickMuzzleFromHandCluster_FailsGracefullyOnInvalidInput()
         {
             GameObject meshObject = new GameObject("Mesh");
-            GameObject rootObject = new GameObject("Root");
             GameObject handObject = new GameObject("Hand");
+
+            BoneWeight[] oneWeight = { new BoneWeight { boneIndex0 = 1, weight0 = 1f } };
+            Vector3[] oneVertex = { Vector3.zero };
 
             try
             {
                 Assert.IsFalse(
-                    WeaponMuzzleSocketBinder.TryPickBarrelTipHandLocal(
-                        null, meshObject.transform, rootObject.transform, handObject.transform,
-                        out _),
+                    WeaponMuzzleSocketBinder.TryPickMuzzleFromHandCluster(
+                        null, oneWeight, 1, meshObject.transform, handObject.transform, out _),
                     "Null vertices must fail gracefully.");
                 Assert.IsFalse(
-                    WeaponMuzzleSocketBinder.TryPickBarrelTipHandLocal(
-                        new Vector3[0], meshObject.transform, rootObject.transform,
+                    WeaponMuzzleSocketBinder.TryPickMuzzleFromHandCluster(
+                        oneVertex, null, 1, meshObject.transform, handObject.transform, out _),
+                    "Null weights must fail gracefully.");
+                Assert.IsFalse(
+                    WeaponMuzzleSocketBinder.TryPickMuzzleFromHandCluster(
+                        oneVertex, new BoneWeight[0], 1, meshObject.transform,
                         handObject.transform, out _),
-                    "An empty vertex array must fail gracefully.");
+                    "A vertex/weight length mismatch must fail gracefully.");
+                Assert.IsFalse(
+                    WeaponMuzzleSocketBinder.TryPickMuzzleFromHandCluster(
+                        oneVertex, oneWeight, -1, meshObject.transform,
+                        handObject.transform, out _),
+                    "An unresolved hand bone index must fail gracefully.");
             }
             finally
             {
                 Object.DestroyImmediate(meshObject);
-                Object.DestroyImmediate(rootObject);
                 Object.DestroyImmediate(handObject);
             }
+        }
+
+        [Test]
+        public void IsHandRigid_RequiresDominantWeightOnTheHandBone()
+        {
+            BoneWeight handRigid = new BoneWeight { boneIndex0 = 1, weight0 = 1f };
+            BoneWeight mixed = new BoneWeight
+            {
+                boneIndex0 = 1, weight0 = 0.5f,
+                boneIndex1 = 2, weight1 = 0.5f,
+            };
+            BoneWeight other = new BoneWeight { boneIndex0 = 0, weight0 = 1f };
+
+            Assert.IsTrue(
+                WeaponMuzzleSocketBinder.IsHandRigid(handRigid, 1, 0.9f),
+                "A vertex fully weighted to the hand bone is hand-rigid.");
+            Assert.IsFalse(
+                WeaponMuzzleSocketBinder.IsHandRigid(mixed, 1, 0.9f),
+                "A vertex split across two bones must not count as hand-rigid rifle geometry.");
+            Assert.IsFalse(
+                WeaponMuzzleSocketBinder.IsHandRigid(other, 1, 0.9f),
+                "A vertex weighted to another bone (helmet/face) must be excluded.");
         }
 
         [Test]

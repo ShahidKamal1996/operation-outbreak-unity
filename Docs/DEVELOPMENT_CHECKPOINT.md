@@ -208,6 +208,20 @@ Character presentation replacement ONLY — zero gameplay changes:
     ~1.16 units away). TEST-ONLY fix: the assertion now uses
     `Vector3.Distance(expected, actual) <= 1e-4` plus a selection-correctness guard
     (nearest wrong candidate must be > 0.5 away). No production code changed.
+12. **QA fix #6 (2026-08-17)** — Play Mode QA showed the muzzle still at the face, above
+    the rifle. Deep FBX forensics found the real causes: (a) the package's rifle is a
+    tube of 153 vertices rigidly skinned (weight 1.0) to the Bip001 R Hand — the muzzle
+    is 53.4 cm from the hand along the tube; (b) in the BIND pose the rifle points
+    SIDEWAYS, so the bind-pose global forward-most vertex is the helmet/face (Head
+    cluster); (c) the one-shot bake ran in Start / early LateUpdate — before the
+    Animator had posed the idle animation — so it captured the bind pose and parked the
+    socket at the face. Fix: the muzzle is now measured FROM THE HAND CLUSTER, which is
+    pose-independent — the rifle is rigid on the hand, so the vertex farthest from the
+    hand among hand-dominated vertices (dominant bone weight = hand bone, ≥ 0.9) IS the
+    muzzle in every pose, at any animation time, bind pose included. The socket is
+    oriented so its +Z runs hand→muzzle, keeping the flash's authored forward offset on
+    the barrel line. The authored `barrelTipOffset` remains only as a last-resort
+    fallback when the mesh/weights are unavailable. See AD-1P.5-6.
 
 ## Manual Unity QA checklist for 1P.5
 
@@ -237,11 +251,9 @@ Character presentation replacement ONLY — zero gameplay changes:
 14. Carl fallback: re-enable via Tools > Operation Outbreak > Set Up Carl Player Visual
     — no broken references; the muzzle returns to its authored Weapon position
     (Unbind restores the original parent/local transform).
-15. Full EditMode suite passes — expect **128/128** (previous 125 + 3 new QA-fix-4
-    tests: forward-most barrel-tip selection, graceful measurement failure, and
-    Unbind restoring the muzzle to its original Weapon ownership; the barrel-tip
-    selection assertion now uses a 1e-4 positional tolerance — exact Vector3 equality
-    was invalid for values produced through Transform matrix math).
+15. Full EditMode suite passes — expect **129/129** (previous 128, minus the 2 tests of
+    the removed global forward-most heuristic, plus 3 new hand-cluster regression tests:
+    muzzle-selected-not-face, graceful failure, and dominant-hand-weight filtering).
 
 ## Known discrepancies reported during 1P
 

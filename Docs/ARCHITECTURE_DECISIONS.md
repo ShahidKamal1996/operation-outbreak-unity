@@ -225,6 +225,18 @@
   float32 transform noise (~1e-8..1e-6 at unit scale) — the two vectors display
   identically but are never bit-equal. Production selection logic was verified correct
   and is unchanged.
+- **QA fix #6 (hand-cluster muzzle measurement):** the global forward-most heuristic
+  is retired. FBX forensics proved the package's rifle is rigid on the Bip001 R Hand
+  (153 verts at skin weight 1.0; muzzle 53.4 cm from the hand) and that the bind pose
+  holds the rifle sideways — so the bind-pose (or pre-animation) global forward-most
+  vertex is the helmet/face, which is exactly where the socket landed. New rule: the
+  muzzle is the vertex FARTHEST FROM THE HAND among vertices whose dominant skin
+  weight is the hand bone (≥ 0.9, read from `sharedMesh.boneWeights` via the hand's
+  index in `renderer.bones`). Because the rifle is rigid on the hand, this selection
+  is pose-independent and immune to animation timing — it works in the bind pose, in
+  idle, run and shoot alike. The socket's +Z is aligned hand→muzzle so the muzzle
+  flash's authored forward offset stays on the barrel line; `barrelTipOffset` remains
+  as a documented last-resort fallback only.
 
 ## UNKNOWN / open questions
 

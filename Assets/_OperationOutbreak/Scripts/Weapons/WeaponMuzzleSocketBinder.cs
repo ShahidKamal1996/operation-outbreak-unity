@@ -3,40 +3,36 @@ using UnityEngine;
 namespace OperationOutbreak.Weapons
 {
     /// <summary>
-    /// Milestone 1P.5 QA fix #4 - binds the authoritative MuzzlePoint to the Toon
+    /// Milestone 1P.5 QA fix #6 - binds the authoritative MuzzlePoint to the Toon
     /// Soldier's visible rifle barrel tip, PRESENTATION-ONLY.
     ///
-    /// WHY THE PREVIOUS FIX WAS WRONG (QA: flash/projectile at head/upper-body):
-    /// the hand-local offset (0, 0, 0.6) was a guess. FBX forensics on
-    /// ToonSoldier_demo.FBX showed the real barrel tip sits roughly 1.25 m from the
-    /// right hand's bind origin in a rotated bone frame, so a naive hand-local offset
-    /// cannot land on the barrel. Additionally, if the Animator's humanoid bones were
-    /// not resolvable on the first bind attempt, the muzzle simply stayed at its
-    /// authored Weapon position - Player y=1 plus Weapon 0.25, i.e. head/upper-body
-    /// height, which is exactly what the QA screenshot showed.
+    /// WHY QA FIX #4/#5 WAS STILL WRONG (QA: projectile/muzzle at the face, above the
+    /// rifle): the binder measured the GLOBAL forward-most vertex of the baked mesh.
+    /// FBX forensics proved two facts that break that heuristic for this package:
+    ///   1. The rifle is a tube of 153 vertices rigidly skinned (weight 1.0) to the
+    ///      Bip001 R Hand bone; the muzzle is the tube's far end, 53.4 cm from the hand.
+    ///   2. In the BIND pose the rifle points SIDEWAYS, so the bind-pose global
+    ///      forward-most vertex is the HELMET/FACE (Head cluster) - and the one-shot
+    ///      bake ran in Start / early LateUpdate, BEFORE the Animator had posed the
+    ///      idle animation, capturing exactly the bind pose. The socket was then stuck
+    ///      at the face for the whole run.
     ///
-    /// FIX: the barrel tip is now MEASURED, not guessed. On bind, the soldier's
-    /// SkinnedMeshRenderer is baked (one-time cost), the vertex furthest forward along
-    /// the character root's facing (the visible barrel end - the package's rifle points
-    /// forward, FrontAxis +Z) is picked, and its position is converted into the right
-    /// hand's local space. A runtime socket ("ToonSoldierMuzzleSocket") is created
-    /// under the Right Hand bone and the EXISTING authoritative MuzzlePoint is parented
-    /// to it at the measured offset, so the muzzle rides the animated rifle during
-    /// idle/run/shoot with zero per-frame work.
-    ///
-    /// ROBUSTNESS:
-    ///   - Binding is attempted in Start plus a small bounded number of retry frames,
-    ///     covering late Animator/avatar initialization. No per-frame searches.
-    ///   - The authored <see cref="barrelTipOffset"/> remains as the fallback/override
-    ///     when measurement is unavailable or <see cref="useMeasuredBarrelTip"/> is off.
-    ///   - CARL FALLBACK: the muzzle's original parent/local transform is captured
-    ///     before any bind, and Unbind() restores it. Binding is skipped entirely when
-    ///     the soldier visual is inactive, so Carl/prototype keeps the muzzle exactly
-    ///     where the Weapon hierarchy authors it.
+    /// THE FIX - measure the muzzle from the hand cluster, not the global mesh:
+    /// because the rifle is RIGID on the R Hand, the muzzle is ALWAYS the vertex
+    /// farthest from the hand among vertices whose dominant skin weight belongs to the
+    /// hand bone - in the bind pose, in idle, in run, in shoot, at any animation time.
+    /// The measurement is therefore pose-independent and cannot be fooled by the
+    /// helmet/face regardless of when the bake happens:
+    ///   - bake the SkinnedMeshRenderer (any frame),
+    ///   - filter vertices by dominant bone weight (sharedMesh.boneWeights) == hand
+    ///     bone index with weight >= 0.9,
+    ///   - pick the filtered vertex farthest from the hand bone,
+    ///   - express it in hand-local space, create the socket there.
     ///
     /// CONTRACT: WeaponController and MuzzleFlashFeedback keep using the SAME
-    /// MuzzlePoint reference they already own. No duplicate muzzle, no duplicate
-    /// projectile system, no gameplay authority changes.
+    /// MuzzlePoint reference they already own. One authoritative muzzle, no duplicate
+    /// projectile authority. The authored barrelTipOffset remains only as a
+    /// last-resort fallback when the mesh/weights are unavailable.
     /// </summary>
     [DisallowMultipleComponent]
     public sealed class WeaponMuzzleSocketBinder : MonoBehaviour
@@ -52,12 +48,12 @@ namespace OperationOutbreak.Weapons
         [SerializeField] private Transform muzzlePoint;
 
         [Header("Barrel Tip Resolution (visual only)")]
-        [Tooltip("Measure the real rifle barrel tip from the deformed skinned mesh at " +
-                 "startup. Turn off to force the authored fallback offset below.")]
+        [Tooltip("Measure the real rifle muzzle from the hand-rigid rifle cluster at " +
+                 "startup (pose-independent). Turn off to force the authored fallback offset.")]
         [SerializeField] private bool useMeasuredBarrelTip = true;
 
-        [Tooltip("Fallback/override hand-local barrel-tip offset. Used only when " +
-                 "measurement is unavailable or disabled.")]
+        [Tooltip("Last-resort hand-local barrel-tip offset. Used only when the mesh or " +
+                 "its bone weights are unavailable.")]
         [SerializeField] private Vector3 barrelTipOffset = new Vector3(0f, 0f, 0.6f);
 
         [Tooltip("Optional hand-local rotation correction for the muzzle axis.")]
@@ -68,6 +64,9 @@ namespace OperationOutbreak.Weapons
                  "not resolvable on the first attempt (bounded; then it stops trying).")]
         [Min(0)]
         [SerializeField] private int bindRetryFrames = 2;
+
+        /// <summary>Dominant-weight threshold for a vertex to count as hand-rigid rifle geometry.</summary>
+        public const float RifleWeightThreshold = 0.9f;
 
         private Transform _socket;
         private bool _bound;
@@ -90,9 +89,86 @@ namespace OperationOutbreak.Weapons
         }
 
         /// <summary>
+        /// Pure helper (QA fix #6): true when the hand bone dominates the vertex - the
+        /// maximum of the four skin weights belongs to <paramref name="boneIndex"/> and
+        /// reaches the threshold. Static and side-effect free for EditMode tests.
+        /// </summary>
+        public static bool IsHandRigid(BoneWeight weights, int boneIndex, float threshold)
+        {
+            float w0 = weights.weight0, w1 = weights.weight1, w2 = weights.weight2, w3 = weights.weight3;
+            float max = Mathf.Max(w0, Mathf.Max(w1, Mathf.Max(w2, w3)));
+
+            if (max < Mathf.Max(0f, threshold))
+            {
+                return false;
+            }
+
+            if (w0 == max) return weights.boneIndex0 == boneIndex;
+            if (w1 == max) return weights.boneIndex1 == boneIndex;
+            if (w2 == max) return weights.boneIndex2 == boneIndex;
+            return weights.boneIndex3 == boneIndex;
+        }
+
+        /// <summary>
+        /// Pure helper (QA fix #6): picks the hand-rigid rifle vertex farthest from the
+        /// hand bone and returns its hand-local position. Because the rifle is rigid on
+        /// the hand, the farthest such vertex IS the muzzle in every pose - this is what
+        /// makes the measurement immune to the helmet/face that broke the previous
+        /// global forward-most heuristic.
+        /// </summary>
+        public static bool TryPickMuzzleFromHandCluster(
+            Vector3[] bakedVertices,
+            BoneWeight[] vertexWeights,
+            int handBoneIndex,
+            Transform meshTransform,
+            Transform hand,
+            out Vector3 handLocalMuzzle)
+        {
+            handLocalMuzzle = Vector3.zero;
+
+            if (bakedVertices == null || vertexWeights == null ||
+                bakedVertices.Length != vertexWeights.Length ||
+                meshTransform == null || hand == null || handBoneIndex < 0)
+            {
+                return false;
+            }
+
+            Vector3 handPosition = hand.position;
+            float bestDistanceSqr = -1f;
+            Vector3 bestWorld = Vector3.zero;
+            bool found = false;
+
+            for (int i = 0; i < bakedVertices.Length; i++)
+            {
+                if (!IsHandRigid(vertexWeights[i], handBoneIndex, RifleWeightThreshold))
+                {
+                    continue;
+                }
+
+                Vector3 world = meshTransform.TransformPoint(bakedVertices[i]);
+                float distanceSqr = (world - handPosition).sqrMagnitude;
+
+                if (distanceSqr > bestDistanceSqr)
+                {
+                    bestDistanceSqr = distanceSqr;
+                    bestWorld = world;
+                    found = true;
+                }
+            }
+
+            if (!found)
+            {
+                return false;
+            }
+
+            handLocalMuzzle = hand.InverseTransformPoint(bestWorld);
+            return true;
+        }
+
+        /// <summary>
         /// The single binding operation: parents the EXISTING muzzlePoint under the
-        /// socket and applies the socket-local barrel offset. Pure enough to unit test
-        /// with plain GameObjects - no Animator involved, no new objects created.
+        /// socket and applies the socket-local offset. Pure enough to unit test with
+        /// plain GameObjects - no Animator involved, no new objects created.
         /// </summary>
         public static void AttachMuzzleToSocket(
             Transform muzzlePoint, Transform socket, Vector3 localOffset, Vector3 localRotationEuler)
@@ -105,55 +181,6 @@ namespace OperationOutbreak.Weapons
             muzzlePoint.SetParent(socket, false);
             muzzlePoint.localPosition = localOffset;
             muzzlePoint.localRotation = Quaternion.Euler(localRotationEuler);
-        }
-
-        /// <summary>
-        /// Pure helper (QA fix #4): picks the vertex furthest forward along the
-        /// character root's facing - the visible rifle barrel end for this package -
-        /// and returns its position in the hand's local space. Static and side-effect
-        /// free so EditMode tests can pin the selection with synthetic point clouds.
-        /// </summary>
-        public static bool TryPickBarrelTipHandLocal(
-            Vector3[] vertices,
-            Transform meshTransform,
-            Transform characterRoot,
-            Transform hand,
-            out Vector3 handLocalTip)
-        {
-            handLocalTip = Vector3.zero;
-
-            if (vertices == null || vertices.Length == 0 ||
-                meshTransform == null || characterRoot == null || hand == null)
-            {
-                return false;
-            }
-
-            Vector3 rootPosition = characterRoot.position;
-            Vector3 rootForward = characterRoot.forward;
-            float bestDot = float.NegativeInfinity;
-            Vector3 bestWorld = Vector3.zero;
-            bool found = false;
-
-            foreach (Vector3 vertex in vertices)
-            {
-                Vector3 world = meshTransform.TransformPoint(vertex);
-                float dot = Vector3.Dot(world - rootPosition, rootForward);
-
-                if (dot > bestDot)
-                {
-                    bestDot = dot;
-                    bestWorld = world;
-                    found = true;
-                }
-            }
-
-            if (!found)
-            {
-                return false;
-            }
-
-            handLocalTip = hand.InverseTransformPoint(bestWorld);
-            return true;
         }
 
         private void Start()
@@ -223,8 +250,8 @@ namespace OperationOutbreak.Weapons
 
         /// <summary>
         /// Resolves the soldier's right hand through the humanoid avatar, measures the
-        /// real barrel tip from the deformed mesh when enabled, and binds the existing
-        /// muzzle to a socket at that position. Returns true when bound.
+        /// muzzle from the hand-rigid rifle cluster (pose-independent), and binds the
+        /// existing muzzle to a socket at that position. Returns true when bound.
         /// </summary>
         public bool TryBind()
         {
@@ -282,26 +309,41 @@ namespace OperationOutbreak.Weapons
                 _socket.SetParent(handBone, false);
             }
 
-            Vector3 offset = barrelTipOffset;
+            bool measured = useMeasuredBarrelTip && TryMeasureMuzzle(handBone, out Vector3 measuredOffset);
 
-            if (useMeasuredBarrelTip && TryMeasureBarrelTip(handBone, out Vector3 measured))
+            if (measured)
             {
-                offset = measured;
+                // Orient the socket so its +Z runs along the hand -> muzzle direction,
+                // keeping the muzzle flash's authored forward offset on the barrel line.
+                Vector3 safeDirection = measuredOffset.sqrMagnitude > 0.0001f
+                    ? measuredOffset.normalized
+                    : Vector3.forward;
+                _socket.localRotation = Quaternion.LookRotation(safeDirection);
+
+                // The muzzle lands exactly on the measured barrel tip; the authored
+                // rotation correction remains available as a final presentation tweak.
+                AttachMuzzleToSocket(muzzlePoint, _socket, Vector3.zero, barrelRotationEuler);
+            }
+            else
+            {
+                // Last-resort fallback: authored offset, identity socket orientation.
+                _socket.localRotation = Quaternion.identity;
+                AttachMuzzleToSocket(muzzlePoint, _socket, barrelTipOffset, barrelRotationEuler);
             }
 
-            AttachMuzzleToSocket(muzzlePoint, _socket, offset, barrelRotationEuler);
             _bound = true;
             return true;
         }
 
         /// <summary>
-        /// Bakes the soldier's skinned mesh once and measures the barrel tip: the vertex
-        /// furthest forward along the soldier root's facing, expressed in hand-local
-        /// space. Falls back to false when no skinned mesh exists.
+        /// Bakes the soldier's skinned mesh and measures the muzzle from the hand-rigid
+        /// rifle cluster. Pose-independent: the rifle is rigid on the hand, so the
+        /// farthest hand-dominated vertex is the muzzle in any pose, at any animation
+        /// time. Returns false when the mesh or its bone weights are unavailable.
         /// </summary>
-        private bool TryMeasureBarrelTip(Transform hand, out Vector3 handLocalTip)
+        private bool TryMeasureMuzzle(Transform hand, out Vector3 handLocalMuzzle)
         {
-            handLocalTip = barrelTipOffset;
+            handLocalMuzzle = barrelTipOffset;
 
             if (hand == null || soldierVisualRoot == null)
             {
@@ -320,7 +362,29 @@ namespace OperationOutbreak.Weapons
                 }
             }
 
-            if (renderer == null)
+            if (renderer == null || renderer.sharedMesh.boneWeights == null ||
+                renderer.sharedMesh.boneWeights.Length != renderer.sharedMesh.vertexCount)
+            {
+                return false;
+            }
+
+            // The hand bone index inside the renderer's bone array.
+            int handBoneIndex = -1;
+            Transform[] bones = renderer.bones;
+
+            if (bones != null)
+            {
+                for (int i = 0; i < bones.Length; i++)
+                {
+                    if (bones[i] == hand)
+                    {
+                        handBoneIndex = i;
+                        break;
+                    }
+                }
+            }
+
+            if (handBoneIndex < 0)
             {
                 return false;
             }
@@ -331,10 +395,14 @@ namespace OperationOutbreak.Weapons
             }
 
             renderer.BakeMesh(_bakeMesh);
-            Vector3[] vertices = _bakeMesh.vertices;
 
-            return TryPickBarrelTipHandLocal(
-                vertices, renderer.transform, soldierVisualRoot, hand, out handLocalTip);
+            return TryPickMuzzleFromHandCluster(
+                _bakeMesh.vertices,
+                renderer.sharedMesh.boneWeights,
+                handBoneIndex,
+                renderer.transform,
+                hand,
+                out handLocalMuzzle);
         }
     }
 }
