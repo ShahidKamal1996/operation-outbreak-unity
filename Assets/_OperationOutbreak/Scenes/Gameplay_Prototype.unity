@@ -1558,7 +1558,7 @@ MonoBehaviour:
   playerController: {fileID: 200005}
   playerHealth: {fileID: 200006}
   weaponController: {fileID: 210003}
-  animator: {fileID: 0}
+  animator: {fileID: 210005}
   idleSpeedThreshold: 0.15
   referenceMoveSpeed: 6
   speedDamping: 0.1
@@ -2447,7 +2447,7 @@ GameObject:
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
-  m_IsActive: 1
+  m_IsActive: 0
 --- !u!4 &200201
 Transform:
   m_ObjectHideFlags: 0
@@ -3617,6 +3617,10 @@ PrefabInstance:
       propertyPath: m_ApplyRootMotion
       value: 0
       objectReference: {fileID: 0}
+    - target: {fileID: 9500000, guid: c6acf3f29c109e4439950c8f6a85cb2b, type: 3}
+      propertyPath: m_Controller
+      value: 
+      objectReference: {fileID: 9100000, guid: b361d134cde740bea75ebf0c009d3e0d, type: 2}
     m_RemovedComponents: []
     m_RemovedGameObjects: []
     m_AddedGameObjects: []
@@ -3625,6 +3629,11 @@ PrefabInstance:
 --- !u!4 &1097152860 stripped
 Transform:
   m_CorrespondingSourceObject: {fileID: 400052, guid: c6acf3f29c109e4439950c8f6a85cb2b, type: 3}
+  m_PrefabInstance: {fileID: 1097152859}
+  m_PrefabAsset: {fileID: 0}
+--- !u!95 &210005 stripped
+Animator:
+  m_CorrespondingSourceObject: {fileID: 9500000, guid: c6acf3f29c109e4439950c8f6a85cb2b, type: 3}
   m_PrefabInstance: {fileID: 1097152859}
   m_PrefabAsset: {fileID: 0}
 --- !u!1 &1673838575

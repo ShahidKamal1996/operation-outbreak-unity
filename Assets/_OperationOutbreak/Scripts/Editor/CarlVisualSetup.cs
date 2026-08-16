@@ -31,6 +31,10 @@ namespace OperationOutbreak.EditorTools
         private const string CarlInstanceName = "Carl";
         private const string PrototypeVisualName = "PrototypeVisual";
 
+        /// <summary>Milestone 1P.5 - the Toon Soldier visual layer. Toggled off by this tool
+        /// when Carl is restored as the active presentation, never deleted.</summary>
+        private const string ToonSoldierVisualName = "ToonSoldierVisual";
+
         [MenuItem("Tools/Operation Outbreak/Set Up Carl Player Visual")]
         public static void SetUpCarlVisual()
         {
@@ -145,6 +149,17 @@ namespace OperationOutbreak.EditorTools
             var so = new SerializedObject(bridge);
             so.FindProperty("animator").objectReferenceValue = animator;
             so.ApplyModifiedPropertiesWithoutUndo();
+
+            // Milestone 1P.5 - fallback swap: Carl becomes the active presentation again,
+            // and the Toon Soldier visual (if present) is parked inactive. Idempotent -
+            // running the soldier tool afterwards reverses the toggle.
+            carlVisual.gameObject.SetActive(true);
+
+            Transform toonSoldierVisual = player.transform.Find(ToonSoldierVisualName);
+            if (toonSoldierVisual != null)
+            {
+                toonSoldierVisual.gameObject.SetActive(false);
+            }
 
             EditorUtility.SetDirty(player);
             UnityEditor.SceneManagement.EditorSceneManager.MarkSceneDirty(player.scene);
