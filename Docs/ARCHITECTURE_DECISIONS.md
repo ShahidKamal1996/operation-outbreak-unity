@@ -237,6 +237,29 @@
   idle, run and shoot alike. The socket's +Z is aligned hand→muzzle so the muzzle
   flash's authored forward offset stays on the barrel line; `barrelTipOffset` remains
   as a documented last-resort fallback only.
+- **QA fix #8/#9 (follow architecture + single weapon presentation):**
+  - **MuzzlePoint is never re-parented again.** It stays under the Weapon forever; a
+    runtime socket (`Right Hand → ToonSoldierMuzzleSocket`) carries the measured
+    muzzle pose and the muzzle FOLLOWS it each frame (binder Update at
+    `DefaultExecutionOrder(-100)`, before WeaponController.Update so shots spawn from
+    the current hand pose). This removes every SetParent from the deactivation path:
+    the "Cannot set the parent ... while activating or deactivating" Console error is
+    structurally impossible, the muzzle can never be orphaned, and the Carl/prototype
+    fallback is simply "stop following" — the muzzle's authored local pose under the
+    Weapon was never modified, so its world position snaps back automatically.
+  - **One visible weapon:** the obsolete prototype gun (`Weapon > WeaponModel`) is
+    hidden exactly when the Toon Soldier is active and bound
+    (`ShouldHidePrototypeWeapon`); the Carl/prototype fallback restores it. All logical
+    gameplay components (WeaponController, MuzzlePoint, MuzzleFlashFeedback) remain
+    untouched.
+  - **Deterministic FBX-derived socket constants:** the muzzle position and barrel
+    direction are now derived from the actual FBX rifle geometry (hand-rigid tube,
+    corrected matrix/axis conventions: vertices Z-up + `PreRotation −90°X`, column-major
+    link matrices). Result: hand-local muzzle **(0.543, −0.0327, 0.0765) m** (54.9 cm
+    from the hand) and barrel direction **(0.9885, −0.0595, 0.1392)**. These are
+    serialized as `fbxBarrelTipOffset`/`fbxBarrelDirection`; the default runtime path
+    recomputes the same quantity in Unity's exact frames from the hand-rigid cluster
+    (pose-independent). The old blind `barrelTipOffset (0,0,0.6)` was removed.
 
 ## UNKNOWN / open questions
 

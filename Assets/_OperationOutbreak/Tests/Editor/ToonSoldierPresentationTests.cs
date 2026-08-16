@@ -3,21 +3,33 @@ using OperationOutbreak.Player;
 using OperationOutbreak.Weapons;
 using UnityEditor;
 using UnityEngine;
+using UnityEngine.TestTools;
 
 namespace OperationOutbreak.Tests
 {
     /// <summary>
-    /// Milestone 1P.5 QA fix #2 - EditMode tests for the presentation-only aim and
-    /// muzzle binding. They pin the invariants the QA failures broke:
+    /// Milestone 1P.5 QA fixes #2-#9 - EditMode tests for the presentation-only aim and
+    /// muzzle follow. They pin the invariants the QA failures broke:
     ///   - visual aim rotates ONLY the presentation pivot, never the Player gameplay root;
     ///   - the pure yaw maths maps left/right/forward targets correctly and never jitters
     ///     or takes the long way around;
-    ///   - muzzle binding re-parents the EXISTING authoritative MuzzlePoint (same
-    ///     instance - no duplicate muzzle, no duplicate gameplay weapon) and skips
-    ///     cleanly when the soldier fallback is inactive or the rig is missing.
+    ///   - the muzzle FOLLOWS the soldier socket but is never re-parented (its parent
+    ///     under the Weapon never changes - single authority, no duplicates, no
+    ///     SetParent-during-deactivation errors);
+    ///   - the obsolete prototype weapon visual is hidden exactly when the Toon Soldier
+    ///     is active and bound, and restored for the Carl/prototype fallback.
+    /// The fixture-level TearDown fails any test during which Unity logs an unexpected
+    /// error - which is what would catch the "Cannot set the parent ... while activating
+    /// or deactivating" regression class permanently.
     /// </summary>
     public sealed class ToonSoldierPresentationTests
     {
+        [TearDown]
+        public void FailOnUnexpectedUnityErrors()
+        {
+            LogAssert.NoUnexpectedReceived();
+        }
+
         // ===================================================== aim maths (pure)
 
         [Test]
@@ -220,30 +232,57 @@ namespace OperationOutbreak.Tests
         }
 
         [Test]
-        public void AttachMuzzleToSocket_ReparentsTheExistingMuzzleWithoutAddingAnything()
+        // ============================================= QA fix #8/#9 - follow architecture
+
+        [Test]
+        public void WriteFollowPose_MovesTheSingleMuzzleToTheSocketWithoutChangingParent()
         {
-            GameObject socketObject = new GameObject("Bip001 R Hand");
+            GameObject weaponRoot = new GameObject("Weapon");
             GameObject muzzleObject = new GameObject("MuzzlePoint");
-            muzzleObject.transform.position = new Vector3(0f, 1.25f, 5f);
+            muzzleObject.transform.SetParent(weaponRoot.transform, false);
+            muzzleObject.transform.localPosition = new Vector3(0f, 0.25f, 0.75f);
 
-            Transform muzzle = muzzleObject.transform;
-            Vector3 offset = new Vector3(0f, 0f, 0.6f);
+            GameObject socketObject = new GameObject("ToonSoldierMuzzleSocket");
+            socketObject.transform.position = new Vector3(-0.9f, 1.15f, 4.2f);
+            socketObject.transform.rotation = Quaternion.Euler(0f, 33f, 0f);
 
-            WeaponMuzzleSocketBinder.AttachMuzzleToSocket(
-                muzzle, socketObject.transform, offset, Vector3.zero);
+            try
+            {
+                Transform originalParent = muzzleObject.transform.parent;
 
-            Assert.AreEqual(socketObject.transform, muzzle.parent,
-                "The EXISTING MuzzlePoint must be parented to the socket - no new muzzle.");
-            Assert.AreEqual(offset, muzzle.localPosition,
-                "The authored barrel-tip offset must be applied in socket-local space.");
-            Assert.AreEqual(Quaternion.identity, muzzle.localRotation);
-            Assert.IsNull(socketObject.GetComponent<WeaponController>(),
-                "Binding must never introduce a duplicate gameplay weapon authority.");
+                WeaponMuzzleSocketBinder.WriteFollowPose(
+                    muzzleObject.transform, socketObject.transform);
 
-            // Child first: the muzzle is parented to the socket, so the socket is
-            // destroyed last (DestroyImmediate twice on one object would log an error).
-            Object.DestroyImmediate(muzzleObject);
-            Object.DestroyImmediate(socketObject);
+                Assert.AreEqual(socketObject.transform.position, muzzleObject.transform.position,
+                    "The follow tick must place the muzzle exactly at the socket.");
+                Assert.AreEqual(socketObject.transform.rotation, muzzleObject.transform.rotation,
+                    "The follow tick must orient the muzzle exactly like the socket.");
+                Assert.AreEqual(originalParent, muzzleObject.transform.parent,
+                    "Follow must NEVER change the muzzle's parent - the single authoritative " +
+                    "MuzzlePoint stays owned by the Weapon (this is what removes the " +
+                    "SetParent-during-deactivation error class).");
+                Assert.IsNull(socketObject.GetComponent<WeaponController>(),
+                    "Binding must never introduce a duplicate gameplay weapon authority.");
+            }
+            finally
+            {
+                Object.DestroyImmediate(muzzleObject);
+                Object.DestroyImmediate(weaponRoot);
+                Object.DestroyImmediate(socketObject);
+            }
+        }
+
+        [Test]
+        public void ShouldHidePrototypeWeapon_HidesOnlyWhenSoldierActiveAndBound()
+        {
+            Assert.IsTrue(
+                WeaponMuzzleSocketBinder.ShouldHidePrototypeWeapon(true),
+                "With the Toon Soldier active and bound, the obsolete prototype gun must be " +
+                "hidden - the soldier's skinned rifle is the only visible weapon.");
+            Assert.IsFalse(
+                WeaponMuzzleSocketBinder.ShouldHidePrototypeWeapon(false),
+                "The Carl/prototype fallback must keep the old prototype gun visible, as it " +
+                "was before the Toon Soldier integration.");
         }
 
         [Test]
@@ -264,6 +303,30 @@ namespace OperationOutbreak.Tests
             Assert.IsFalse(bound, "An inactive soldier visual must not bind the muzzle.");
             Assert.IsNull(muzzleObject.transform.parent,
                 "The muzzle must keep its authored hierarchy position on fallback.");
+            Assert.IsFalse(binder.IsBound, "The binder must report itself unbound.");
+
+            Object.DestroyImmediate(soldierRoot);
+            Object.DestroyImmediate(muzzleObject);
+        }
+
+        [Test]
+        public void TryBind_WithActiveSoldierButNoAvatarFailsGracefully()
+        {
+            GameObject soldierRoot = new GameObject("ToonSoldier_demo");
+            GameObject muzzleObject = new GameObject("MuzzlePoint");
+            // No Animator / avatar on the soldier root: the humanoid rig is missing.
+
+            var binder = muzzleObject.AddComponent<WeaponMuzzleSocketBinder>();
+            var so = new SerializedObject(binder);
+            so.FindProperty("soldierVisualRoot").objectReferenceValue = soldierRoot.transform;
+            so.FindProperty("muzzlePoint").objectReferenceValue = muzzleObject.transform;
+            so.ApplyModifiedPropertiesWithoutUndo();
+
+            bool bound = binder.TryBind();
+
+            Assert.IsFalse(bound, "A missing humanoid avatar must refuse to bind.");
+            Assert.IsNull(muzzleObject.transform.parent,
+                "The muzzle must keep its authored hierarchy position.");
 
             Object.DestroyImmediate(soldierRoot);
             Object.DestroyImmediate(muzzleObject);
@@ -398,7 +461,7 @@ namespace OperationOutbreak.Tests
         }
 
         [Test]
-        public void Unbind_RestoresTheMuzzleToItsOriginalWeaponOwnership()
+        public void Unbind_IsSafeAndNeverReparentsTheMuzzle()
         {
             GameObject weaponRoot = new GameObject("Weapon");
             GameObject muzzleObject = new GameObject("MuzzlePoint");
@@ -410,33 +473,30 @@ namespace OperationOutbreak.Tests
             so.FindProperty("muzzlePoint").objectReferenceValue = muzzleObject.transform;
             so.ApplyModifiedPropertiesWithoutUndo();
 
-            GameObject socketObject = new GameObject("ToonSoldierMuzzleSocket");
-
             try
             {
-                // First attempt captures the original ownership (soldier root is null,
-                // so binding itself is refused - exactly the Carl fallback path).
+                // Soldier root is null -> binding is refused, exactly the Carl/prototype
+                // fallback path. TryBind internally runs the fallback Unbind.
                 binder.TryBind();
 
-                // Simulate a successful bind by hand.
-                WeaponMuzzleSocketBinder.AttachMuzzleToSocket(
-                    muzzleObject.transform, socketObject.transform, new Vector3(0f, 0f, 1f), Vector3.zero);
+                Assert.AreEqual(weaponRoot.transform, muzzleObject.transform.parent,
+                    "The muzzle's parent must never change - ownership stays with the Weapon.");
+                Assert.AreEqual(new Vector3(0f, 0.25f, 0.75f), muzzleObject.transform.localPosition,
+                    "The muzzle's authored local pose must stay intact (no restore needed).");
 
-                Assert.AreEqual(socketObject.transform, muzzleObject.transform.parent,
-                    "Precondition: muzzle bound under the soldier socket.");
-
+                // Repeated Unbind must be safe and idempotent. Any SetParent-during-
+                // deactivation error would be caught by the fixture TearDown LogAssert.
+                binder.Unbind();
                 binder.Unbind();
 
                 Assert.AreEqual(weaponRoot.transform, muzzleObject.transform.parent,
-                    "Unbind must restore the muzzle to the authored Weapon hierarchy (Carl fallback).");
-                Assert.AreEqual(new Vector3(0f, 0.25f, 0.75f), muzzleObject.transform.localPosition,
-                    "Unbind must restore the authored muzzle local transform.");
+                    "Repeated Unbind must never re-parent the muzzle.");
+                Assert.IsFalse(binder.IsBound, "Unbind must leave the binder unbound.");
             }
             finally
             {
                 Object.DestroyImmediate(muzzleObject);
                 Object.DestroyImmediate(weaponRoot);
-                Object.DestroyImmediate(socketObject);
             }
         }
 

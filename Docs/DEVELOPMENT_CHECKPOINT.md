@@ -233,6 +233,33 @@ Character presentation replacement ONLY — zero gameplay changes:
     call — semantically correct on every path; the out call overwrites it whenever
     measurement runs. Verified under real Roslyn: the old pattern reproduces CS0165 and
     the fixed file compiles with 0 errors. Runtime muzzle logic unchanged.
+14. **QA fix #8/#9 (2026-08-17)** — full weapon-presentation architecture correction.
+    QA showed the soldier carrying TWO weapon presentations (the old prototype gun —
+    `Weapon > WeaponModel`, a scaled cube with an enabled MeshRenderer — rendered
+    through the soldier) plus the Console error "Cannot set the parent of 'MuzzlePoint'
+    while activating or deactivating 'ToonSoldierMuzzleSocket'" from Unbind/OnDisable.
+    Fixes:
+    - **Duplicate presentation removed:** the binder now hides the prototype gun's
+      renderers exactly when the Toon Soldier is active AND bound
+      (`ShouldHidePrototypeWeapon`); the Carl/prototype fallback restores them as
+      before. All logical gameplay components (WeaponController, MuzzlePoint,
+      MuzzleFlashFeedback) are preserved untouched.
+    - **Follow architecture (no more re-parenting):** the MuzzlePoint stays owned by
+      the Weapon forever; a runtime socket under the animated Right Hand is created and
+      the muzzle FOLLOWS its world pose each frame (`DefaultExecutionOrder(-100)` so the
+      follow runs before WeaponController.Update — no 1-frame firing lag). Unbind only
+      stops following and destroys the socket — no SetParent exists on any deactivation
+      path, so the parenting Console error is structurally eliminated, the muzzle can
+      never be orphaned, and the Carl fallback is simply "stop following" (the muzzle's
+      authored local pose under the Weapon was never touched).
+    - **Deterministic FBX-derived socket:** the muzzle constants are now derived from
+      the actual rifle geometry (hand-rigid tube, 153 verts @ weight 1.0 on the R Hand):
+      hand-local muzzle position **(0.543, -0.0327, 0.0765) m**, barrel direction
+      **(0.9885, -0.0595, 0.1392)** (54.9 cm from the hand). These are serialized as
+      `fbxBarrelTipOffset`/`fbxBarrelDirection`; the default runtime path recomputes the
+      same quantity in Unity's exact frames from the hand-rigid cluster (pose-
+      independent). The old blind `barrelTipOffset (0,0,0.6)` was removed. See
+      AD-1P.5-6.
 
 ## Manual Unity QA checklist for 1P.5
 
@@ -262,9 +289,18 @@ Character presentation replacement ONLY — zero gameplay changes:
 14. Carl fallback: re-enable via Tools > Operation Outbreak > Set Up Carl Player Visual
     — no broken references; the muzzle returns to its authored Weapon position
     (Unbind restores the original parent/local transform).
-15. Full EditMode suite passes — expect **129/129** (previous 128, minus the 2 tests of
-    the removed global forward-most heuristic, plus 3 new hand-cluster regression tests:
-    muzzle-selected-not-face, graceful failure, and dominant-hand-weight filtering).
+15. Full EditMode suite passes — expect **132/132** (previous 129, minus the removed
+    re-parenting test, plus 4 new follow-architecture tests: single-muzzle follow
+    without parent change, prototype-weapon visibility decision, active-soldier-
+    without-avatar graceful failure, and the re-parenting-free Unbind safety test; the
+    fixture TearDown fails on any unexpected Unity error, pinning the parenting-error
+    class).
+16. Play Mode: verify the soldier's skinned rifle is the ONLY visible weapon (the old
+    prototype gun must be gone while the soldier is active), the projectile + muzzle
+    flash start at the visible rifle barrel opening, the muzzle follows the rifle
+    during idle/run/shoot and left/right aiming, exiting Play Mode / toggling the
+    soldier / restoring Carl produces NO "Cannot set the parent ... while activating
+    or deactivating" Console error, and the prototype gun reappears with Carl.
 
 ## Known discrepancies reported during 1P
 

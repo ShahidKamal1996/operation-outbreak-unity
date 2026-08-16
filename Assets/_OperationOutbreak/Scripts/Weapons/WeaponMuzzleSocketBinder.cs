@@ -3,38 +3,42 @@ using UnityEngine;
 namespace OperationOutbreak.Weapons
 {
     /// <summary>
-    /// Milestone 1P.5 QA fix #6 - binds the authoritative MuzzlePoint to the Toon
-    /// Soldier's visible rifle barrel tip, PRESENTATION-ONLY.
+    /// Milestone 1P.5 QA fix #8/#9 - full presentation correction for the Toon Soldier
+    /// weapon: one visible weapon, one authoritative muzzle, no teardown errors.
     ///
-    /// WHY QA FIX #4/#5 WAS STILL WRONG (QA: projectile/muzzle at the face, above the
-    /// rifle): the binder measured the GLOBAL forward-most vertex of the baked mesh.
-    /// FBX forensics proved two facts that break that heuristic for this package:
-    ///   1. The rifle is a tube of 153 vertices rigidly skinned (weight 1.0) to the
-    ///      Bip001 R Hand bone; the muzzle is the tube's far end, 53.4 cm from the hand.
-    ///   2. In the BIND pose the rifle points SIDEWAYS, so the bind-pose global
-    ///      forward-most vertex is the HELMET/FACE (Head cluster) - and the one-shot
-    ///      bake ran in Start / early LateUpdate, BEFORE the Animator had posed the
-    ///      idle animation, capturing exactly the bind pose. The socket was then stuck
-    ///      at the face for the whole run.
-    ///
-    /// THE FIX - measure the muzzle from the hand cluster, not the global mesh:
-    /// because the rifle is RIGID on the R Hand, the muzzle is ALWAYS the vertex
-    /// farthest from the hand among vertices whose dominant skin weight belongs to the
-    /// hand bone - in the bind pose, in idle, in run, in shoot, at any animation time.
-    /// The measurement is therefore pose-independent and cannot be fooled by the
-    /// helmet/face regardless of when the bake happens:
-    ///   - bake the SkinnedMeshRenderer (any frame),
-    ///   - filter vertices by dominant bone weight (sharedMesh.boneWeights) == hand
-    ///     bone index with weight >= 0.9,
-    ///   - pick the filtered vertex farthest from the hand bone,
-    ///   - express it in hand-local space, create the socket there.
+    /// WHAT CHANGED ARCHITECTURALLY:
+    ///   1. The MuzzlePoint is NEVER re-parented anymore. Instead it FOLLOWS the socket:
+    ///      a runtime socket ("ToonSoldierMuzzleSocket") is created under the animated
+    ///      Right Hand bone, and each frame (before WeaponController's Update, via
+    ///      DefaultExecutionOrder) the SAME authoritative MuzzlePoint is placed at the
+    ///      socket's world pose. This removes every SetParent call from the deactivation
+    ///      path and therefore structurally eliminates the Console error
+    ///      "Cannot set the parent of 'MuzzlePoint' while activating or deactivating
+    ///      'ToonSoldierMuzzleSocket'" - the muzzle's parent never changes, so it can
+    ///      never be orphaned, and the Carl/prototype fallback is simply "stop
+    ///      following" (the muzzle's authored local pose under the Weapon was never
+    ///      touched, so its world position snaps back automatically).
+    ///   2. The obsolete prototype weapon visual (Weapon > WeaponModel, a scaled cube)
+    ///      is hidden while the Toon Soldier is active and bound, so the soldier's own
+    ///      skinned rifle is the ONLY visible weapon. It is restored for the
+    ///      Carl/prototype fallback.
+    ///   3. The muzzle socket position/direction are no longer a runtime guessing game.
+    ///      FBX forensics proved the rifle is rigidly skinned (weight 1.0) to the
+    ///      Bip001 R Hand and derived the muzzle from the actual rifle geometry:
+    ///      hand-local offset (0.543, -0.033, 0.077) m and barrel direction
+    ///      (0.9885, -0.0595, 0.1392) - exposed as fbxBarrelTipOffset /
+    ///      fbxBarrelDirection. The default path (useMeasuredBarrelTip) recomputes the
+    ///      SAME quantity in Unity's runtime frames from the hand-rigid cluster, which
+    ///      is pose-independent (the rifle is rigid on the hand). The FBX-derived
+    ///      constants are the deterministic fallback and the documented evidence.
     ///
     /// CONTRACT: WeaponController and MuzzleFlashFeedback keep using the SAME
     /// MuzzlePoint reference they already own. One authoritative muzzle, no duplicate
-    /// projectile authority. The authored barrelTipOffset remains only as a
-    /// last-resort fallback when the mesh/weights are unavailable.
+    /// projectile authority, no gameplay changes.
     /// </summary>
     [DisallowMultipleComponent]
+    [DefaultExecutionOrder(-100)] // Follow runs BEFORE WeaponController.Update, so shots
+                                  // spawn from the up-to-date hand position (no 1-frame lag).
     public sealed class WeaponMuzzleSocketBinder : MonoBehaviour
     {
         [Header("Presentation Socket (Toon Soldier)")]
@@ -42,19 +46,32 @@ namespace OperationOutbreak.Weapons
                  "ToonSoldier_demoAvatar humanoid avatar.")]
         [SerializeField] private Transform soldierVisualRoot;
 
-        [Header("Gameplay Anchor (authority, never replaced)")]
-        [Tooltip("The existing WeaponController muzzle point. The SAME transform is " +
-                 "re-parented; no new muzzle object is created.")]
+        [Header("Gameplay Anchor (authority, never replaced, never re-parented)")]
+        [Tooltip("The existing WeaponController muzzle point. This transform stays under " +
+                 "the Weapon at all times; the binder only moves its world pose.")]
         [SerializeField] private Transform muzzlePoint;
 
+        [Header("Obsolete Prototype Weapon Visual")]
+        [Tooltip("Weapon > WeaponModel (the old prototype gun). Its renderers are hidden " +
+                 "while the Toon Soldier is active and bound, and restored for the " +
+                 "Carl/prototype fallback.")]
+        [SerializeField] private Transform prototypeWeaponRoot;
+
         [Header("Barrel Tip Resolution (visual only)")]
-        [Tooltip("Measure the real rifle muzzle from the hand-rigid rifle cluster at " +
-                 "startup (pose-independent). Turn off to force the authored fallback offset.")]
+        [Tooltip("Recompute the muzzle from the hand-rigid rifle cluster at startup " +
+                 "(pose-independent, Unity-frame exact). Turn off to use the FBX-derived " +
+                 "constants directly.")]
         [SerializeField] private bool useMeasuredBarrelTip = true;
 
-        [Tooltip("Last-resort hand-local barrel-tip offset. Used only when the mesh or " +
-                 "its bone weights are unavailable.")]
-        [SerializeField] private Vector3 barrelTipOffset = new Vector3(0f, 0f, 0.6f);
+        [Tooltip("FBX-derived muzzle position in the Right Hand's local frame (cm -> m), " +
+                 "measured from the actual rifle geometry: the tube's far end, 54.9 cm from " +
+                 "the hand.")]
+        [SerializeField] private Vector3 fbxBarrelTipOffset = new Vector3(0.543f, -0.0327f, 0.0765f);
+
+        [Tooltip("FBX-derived barrel outward direction in the Right Hand's local frame, " +
+                 "normalized. Used for the socket +Z orientation and as the fallback " +
+                 "direction.")]
+        [SerializeField] private Vector3 fbxBarrelDirection = new Vector3(0.9885f, -0.0595f, 0.1392f);
 
         [Tooltip("Optional hand-local rotation correction for the muzzle axis.")]
         [SerializeField] private Vector3 barrelRotationEuler = Vector3.zero;
@@ -72,11 +89,10 @@ namespace OperationOutbreak.Weapons
         private bool _bound;
         private int _retriesLeft;
         private Mesh _bakeMesh;
-        private bool _originalCaptured;
-        private Transform _originalParent;
-        private Vector3 _originalLocalPosition;
-        private Quaternion _originalLocalRotation;
-        private Vector3 _originalLocalScale;
+        private Renderer[] _prototypeRenderers;
+
+        /// <summary>True while the muzzle is following the soldier socket.</summary>
+        public bool IsBound => _bound;
 
         /// <summary>
         /// Pure decision: whether binding should happen. Split out so EditMode tests
@@ -86,6 +102,32 @@ namespace OperationOutbreak.Weapons
         public static bool ShouldBind(bool soldierActiveInHierarchy, bool hasAnimator, bool hasHandBone)
         {
             return soldierActiveInHierarchy && hasAnimator && hasHandBone;
+        }
+
+        /// <summary>
+        /// Pure decision (QA fix #8): the obsolete prototype weapon visual is hidden
+        /// exactly when the Toon Soldier presentation is active AND bound - the
+        /// soldier's skinned rifle is then the only visible weapon. The Carl/prototype
+        /// fallback keeps the old gun visible, as it always was.
+        /// </summary>
+        public static bool ShouldHidePrototypeWeapon(bool soldierActiveAndBound)
+        {
+            return soldierActiveAndBound;
+        }
+
+        /// <summary>
+        /// Pure helper: places the authoritative muzzle at the socket's world pose.
+        /// The muzzle's PARENT is never changed - this is what makes the follow
+        /// architecture immune to Unity's SetParent-during-deactivation restriction.
+        /// </summary>
+        public static void WriteFollowPose(Transform muzzle, Transform socket)
+        {
+            if (muzzle == null || socket == null)
+            {
+                return;
+            }
+
+            muzzle.SetPositionAndRotation(socket.position, socket.rotation);
         }
 
         /// <summary>
@@ -112,9 +154,8 @@ namespace OperationOutbreak.Weapons
         /// <summary>
         /// Pure helper (QA fix #6): picks the hand-rigid rifle vertex farthest from the
         /// hand bone and returns its hand-local position. Because the rifle is rigid on
-        /// the hand, the farthest such vertex IS the muzzle in every pose - this is what
-        /// makes the measurement immune to the helmet/face that broke the previous
-        /// global forward-most heuristic.
+        /// the hand, the farthest such vertex IS the muzzle in every pose - the same
+        /// quantity fbxBarrelTipOffset was derived from statically in the FBX.
         /// </summary>
         public static bool TryPickMuzzleFromHandCluster(
             Vector3[] bakedVertices,
@@ -165,31 +206,13 @@ namespace OperationOutbreak.Weapons
             return true;
         }
 
-        /// <summary>
-        /// The single binding operation: parents the EXISTING muzzlePoint under the
-        /// socket and applies the socket-local offset. Pure enough to unit test with
-        /// plain GameObjects - no Animator involved, no new objects created.
-        /// </summary>
-        public static void AttachMuzzleToSocket(
-            Transform muzzlePoint, Transform socket, Vector3 localOffset, Vector3 localRotationEuler)
-        {
-            if (muzzlePoint == null || socket == null)
-            {
-                return;
-            }
-
-            muzzlePoint.SetParent(socket, false);
-            muzzlePoint.localPosition = localOffset;
-            muzzlePoint.localRotation = Quaternion.Euler(localRotationEuler);
-        }
-
         private void Start()
         {
             _retriesLeft = Mathf.Max(0, bindRetryFrames);
             TryBind();
         }
 
-        private void LateUpdate()
+        private void Update()
         {
             // Bounded retries only: covers late Animator/avatar initialization, then
             // this method does nothing for the rest of the scene run.
@@ -198,46 +221,46 @@ namespace OperationOutbreak.Weapons
                 _retriesLeft--;
                 TryBind();
             }
+
+            if (_bound)
+            {
+                FollowSocketTick();
+            }
         }
 
         private void OnDisable()
         {
+            // QA fix #8: Unbind never re-parents the muzzle anymore - it only stops
+            // following and destroys the runtime socket - so it is safe to call from
+            // OnDisable / scene teardown / Play Mode exit. No SetParent happens on any
+            // deactivation path, which structurally removes the
+            // "Cannot set the parent ... while activating or deactivating" error.
             Unbind();
         }
 
         /// <summary>
-        /// Records the muzzle's current parent and local transform so it can be restored
-        /// later (Carl/prototype fallback). Called once, lazily, before the first bind.
+        /// Places the authoritative muzzle at the socket's current world pose. Runtime
+        /// caller: Update (before WeaponController.Update via DefaultExecutionOrder).
+        /// Public so EditMode tests can drive a single tick directly.
         /// </summary>
-        public void CaptureOriginalMuzzleState()
+        public void FollowSocketTick()
         {
-            _originalCaptured = true;
-            _originalParent = muzzlePoint != null ? muzzlePoint.parent : null;
-
-            if (muzzlePoint != null)
+            if (!_bound)
             {
-                _originalLocalPosition = muzzlePoint.localPosition;
-                _originalLocalRotation = muzzlePoint.localRotation;
-                _originalLocalScale = muzzlePoint.localScale;
+                return;
             }
+
+            WriteFollowPose(muzzlePoint, _socket);
         }
 
         /// <summary>
-        /// Restores the muzzle to its original weapon-hierarchy ownership and removes
-        /// the runtime socket. Safe to call at any time; afterwards the scene behaves
-        /// exactly as it did before this component ever bound anything. Restoring an
-        /// already-restored muzzle is a harmless no-op.
+        /// Stops following and removes the runtime socket. Does NOT re-parent the
+        /// muzzle (its authored parent/local pose under the Weapon were never touched),
+        /// so the muzzle's world position snaps back to the authored Weapon position -
+        /// exactly the Carl/prototype fallback behavior. Idempotent.
         /// </summary>
         public void Unbind()
         {
-            if (muzzlePoint != null && _originalCaptured && _originalParent != null)
-            {
-                muzzlePoint.SetParent(_originalParent, false);
-                muzzlePoint.localPosition = _originalLocalPosition;
-                muzzlePoint.localRotation = _originalLocalRotation;
-                muzzlePoint.localScale = _originalLocalScale;
-            }
-
             _bound = false;
 
             if (_socket != null)
@@ -246,23 +269,20 @@ namespace OperationOutbreak.Weapons
                 _socket = null;
                 Destroy(socketObject);
             }
+
+            ApplyPrototypeWeaponVisibility(false);
         }
 
         /// <summary>
-        /// Resolves the soldier's right hand through the humanoid avatar, measures the
-        /// muzzle from the hand-rigid rifle cluster (pose-independent), and binds the
-        /// existing muzzle to a socket at that position. Returns true when bound.
+        /// Resolves the soldier's right hand through the humanoid avatar, places the
+        /// socket at the rifle muzzle (measured hand-cluster offset, or the FBX-derived
+        /// constants as fallback), and starts the follow. Returns true when bound.
         /// </summary>
         public bool TryBind()
         {
             if (muzzlePoint == null)
             {
                 return false;
-            }
-
-            if (!_originalCaptured)
-            {
-                CaptureOriginalMuzzleState();
             }
 
             if (soldierVisualRoot == null)
@@ -288,13 +308,9 @@ namespace OperationOutbreak.Weapons
 
             if (!ShouldBind(soldierActive, hasAnimator, handBone != null))
             {
-                // Carl/prototype fallback: if a previous bind left the muzzle under the
-                // soldier, restore it to its authored weapon-hierarchy position.
-                if (_bound)
-                {
-                    Unbind();
-                }
-
+                // Carl/prototype fallback: stop following if we were bound. The muzzle
+                // needs no restoring - its authored pose under the Weapon is intact.
+                Unbind();
                 return false;
             }
 
@@ -309,51 +325,62 @@ namespace OperationOutbreak.Weapons
                 _socket.SetParent(handBone, false);
             }
 
-            // CS0165 guard (QA fix #7): an out variable declared inside a
-            // short-circuiting && expression is only definitely assigned when the
-            // whole expression is definitely evaluated. useMeasuredBarrelTip is a
-            // runtime bool, so the compiler cannot prove TryMeasureMuzzle ran -
-            // even inside if (measured), because flow analysis does not track the
-            // "measured == true => call executed" correlation. Initializing with
-            // barrelTipOffset is semantically correct for EVERY path: it is exactly
-            // the documented fallback the else-branch uses, and the out call
-            // overwrites it whenever measurement actually runs.
-            Vector3 measuredOffset = barrelTipOffset;
-            bool measured = useMeasuredBarrelTip && TryMeasureMuzzle(handBone, out measuredOffset);
+            // CS0165 guard (QA fix #7): the out variable must be definitely assigned.
+            // Initializing with the FBX-derived fallback is semantically correct for
+            // every path; the out call overwrites it whenever measurement runs.
+            Vector3 muzzleOffset = fbxBarrelTipOffset;
+            bool measured = useMeasuredBarrelTip && TryMeasureMuzzle(handBone, out muzzleOffset);
 
-            if (measured)
-            {
-                // Orient the socket so its +Z runs along the hand -> muzzle direction,
-                // keeping the muzzle flash's authored forward offset on the barrel line.
-                Vector3 safeDirection = measuredOffset.sqrMagnitude > 0.0001f
-                    ? measuredOffset.normalized
-                    : Vector3.forward;
-                _socket.localRotation = Quaternion.LookRotation(safeDirection);
+            Vector3 direction = measured
+                ? (muzzleOffset.sqrMagnitude > 0.0001f ? muzzleOffset.normalized : fbxBarrelDirection.normalized)
+                : fbxBarrelDirection.normalized;
 
-                // The muzzle lands exactly on the measured barrel tip; the authored
-                // rotation correction remains available as a final presentation tweak.
-                AttachMuzzleToSocket(muzzlePoint, _socket, Vector3.zero, barrelRotationEuler);
-            }
-            else
-            {
-                // Last-resort fallback: authored offset, identity socket orientation.
-                _socket.localRotation = Quaternion.identity;
-                AttachMuzzleToSocket(muzzlePoint, _socket, barrelTipOffset, barrelRotationEuler);
-            }
+            _socket.localPosition = muzzleOffset;
+            _socket.localRotation = Quaternion.LookRotation(direction) * Quaternion.Euler(barrelRotationEuler);
 
             _bound = true;
+            ApplyPrototypeWeaponVisibility(true);
             return true;
+        }
+
+        private void ApplyPrototypeWeaponVisibility(bool soldierActiveAndBound)
+        {
+            if (prototypeWeaponRoot == null)
+            {
+                return;
+            }
+
+            if (_prototypeRenderers == null)
+            {
+                _prototypeRenderers = prototypeWeaponRoot.GetComponentsInChildren<Renderer>(true);
+            }
+
+            if (_prototypeRenderers == null)
+            {
+                return;
+            }
+
+            bool hide = ShouldHidePrototypeWeapon(soldierActiveAndBound);
+
+            foreach (Renderer renderer in _prototypeRenderers)
+            {
+                if (renderer != null)
+                {
+                    renderer.enabled = !hide;
+                }
+            }
         }
 
         /// <summary>
         /// Bakes the soldier's skinned mesh and measures the muzzle from the hand-rigid
         /// rifle cluster. Pose-independent: the rifle is rigid on the hand, so the
         /// farthest hand-dominated vertex is the muzzle in any pose, at any animation
-        /// time. Returns false when the mesh or its bone weights are unavailable.
+        /// time. Returns false when the mesh or its bone weights are unavailable
+        /// (the FBX-derived constants are then used).
         /// </summary>
         private bool TryMeasureMuzzle(Transform hand, out Vector3 handLocalMuzzle)
         {
-            handLocalMuzzle = barrelTipOffset;
+            handLocalMuzzle = fbxBarrelTipOffset;
 
             if (hand == null || soldierVisualRoot == null)
             {
