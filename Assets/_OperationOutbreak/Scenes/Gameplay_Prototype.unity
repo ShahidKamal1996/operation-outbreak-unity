@@ -1441,6 +1441,7 @@ GameObject:
   - component: {fileID: 200005}
   - component: {fileID: 200006}
   - component: {fileID: 200007}
+  - component: {fileID: 200008}
   m_Layer: 0
   m_Name: Player
   m_TagString: Untagged
@@ -1564,6 +1565,22 @@ MonoBehaviour:
   speedDamping: 0.1
   minimumSecondsBetweenGunplay: 0.18
   minimumSecondsBetweenHitReactions: 0.4
+--- !u!114 &200008
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 200001}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: c6371f1ba8934405b7dea4c89c2ba1ab, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  weaponController: {fileID: 210003}
+  presentationPivot: {fileID: 496253820}
+  turnSpeedDegrees: 270
+  snapEpsilonDegrees: 0.5
 --- !u!1 &200010
 GameObject:
   m_ObjectHideFlags: 0
@@ -2474,6 +2491,7 @@ GameObject:
   - component: {fileID: 210002}
   - component: {fileID: 210003}
   - component: {fileID: 210004}
+  - component: {fileID: 210006}
   m_Layer: 0
   m_Name: Weapon
   m_TagString: Untagged
@@ -2535,6 +2553,22 @@ MonoBehaviour:
   weapon: {fileID: 210003}
   flashAnchor: {fileID: 210021}
   flashDuration: 0.09
+--- !u!114 &210006
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 210001}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: ab083ef6339946768f6e74ad643e954d, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  soldierVisualRoot: {fileID: 1097152860}
+  muzzlePoint: {fileID: 210021}
+  barrelTipOffset: {x: 0, y: 0, z: 0.6}
+  barrelRotationEuler: {x: 0, y: 0, z: 0}
 --- !u!1 &210010
 GameObject:
   m_ObjectHideFlags: 0
@@ -3554,7 +3588,7 @@ Transform:
   m_GameObject: {fileID: 496253819}
   serializedVersion: 2
   m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
-  m_LocalPosition: {x: 0, y: 0, z: 0}
+  m_LocalPosition: {x: 0, y: -1, z: 0}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children:

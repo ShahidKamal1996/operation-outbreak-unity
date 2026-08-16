@@ -65,6 +65,14 @@ namespace OperationOutbreak.Weapons
         /// </summary>
         public Transform MuzzlePoint => muzzlePoint;
 
+        /// <summary>
+        /// Milestone 1P.5 - read-only presentation accessor for the CURRENT combat
+        /// target's transform, so visual-facing systems (ToonSoldierPresentationAim)
+        /// can aim the character without duplicating AcquireTarget logic. Null when no
+        /// target is selected. Gameplay never reads this back.
+        /// </summary>
+        public Transform CurrentTargetTransform => _currentTarget != null ? _currentTarget.transform : null;
+
         private float _nextShotTime;
         private float _baseFireRate;
         private int _baseDamage;

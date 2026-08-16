@@ -154,6 +154,26 @@ Character presentation replacement ONLY — zero gameplay changes:
    automatically by `Set Up Toon Soldier Player Visual`) resolves the real
    `AnimationClip` sub-assets through AssetDatabase and re-author the controller with
    `UnityEditor.Animations` APIs. See ARCHITECTURE_DECISIONS.md AD-1P.5-1 addendum.
+8. **QA fix #2 (2026-08-17)** — animations play, but the soldier (a) floated above the
+   lane, (b) kept facing forward instead of aiming at left/right targets, and (c) fired
+   from a point away from the visible rifle. All three are presentation fixes:
+   - **Grounding** — FBX forensics (parsed `ToonSoldier_demo.FBX`: centimeter units,
+     Z-up, feet vertices at Z = 0.004 cm) prove the model's feet sit at the model origin,
+     so `ToonSoldierVisual.localPosition.y = -1` places them on the ground plane under
+     the Player root's y = 1 — the same proven offset Carl uses. `ToonSoldier_demo`
+     keeps its normalized transform.
+   - **Visual aim** — new `ToonSoldierPresentationAim` (Player root) reads the weapon's
+     new read-only `CurrentTargetTransform` and rotates ONLY `ToonSoldierVisual`'s yaw
+     toward the current combat target (smoothed, shortest-path, snap epsilon, back to
+     forward when no target). The gameplay Player root is never rotated; targeting and
+     firing are untouched.
+   - **Muzzle at the rifle** — new `WeaponMuzzleSocketBinder` (Weapon GO) re-parents the
+     EXISTING authoritative `MuzzlePoint` under the Toon Soldier's humanoid Right Hand
+     bone (resolved once via `Animator.GetBoneTransform`, zero per-frame work) with a
+     tunable hand-local `barrelTipOffset` (default 0,0,0.6). The rifle is part of the
+     skinned mesh, so the muzzle now rides the animated rifle during idle/run/shoot.
+     Carl/prototype fallback: binding is skipped when the soldier is inactive, leaving
+     the muzzle exactly as authored. See AD-1P.5-6.
 
 ## Manual Unity QA checklist for 1P.5
 
@@ -164,27 +184,27 @@ Character presentation replacement ONLY — zero gameplay changes:
    character will stay static exactly as in the failed QA run. Afterwards, commit the
    regenerated `ToonSoldier_Player.controller` file so the repository carries valid
    references.
-1. Toon Soldier visible instead of Carl.
-2. Character stands at correct height.
-3. Character faces correct direction.
-4. Idle animation works.
-5. Run animation works while moving.
-6. Shoot animation triggers while firing.
-7. Rapid fire does not freeze animator.
-8. Player root movement remains unchanged.
-9. Existing muzzle flash/projectile/hit feedback works.
-10. Existing weapon/projectile mechanics unchanged.
-11. All 3 mission sections complete normally.
-12. Mission Complete exactly once.
-13. Console has no new errors.
-14. Carl can be re-enabled as fallback without broken references (Tools > Operation
-    Outbreak > Set Up Carl Player Visual).
-15. Re-run EditMode suite: expect **112/112** — the 109 existing tests plus 3 new
-    Toon Soldier animator regression tests (`ToonSoldierAnimatorTests`). These pin the
-    QA failure: states must resolve real package clips, blend tree intact, bridge
-    parameters intact. They fail on purpose until step 0 (rebuild) has been run once.
-16. Optionally run `Tools > Operation Outbreak > Validate Toon Soldier Animator` and
-    confirm the console prints "validation PASSED".
+1. **Soldier feet visually contact the ground in idle** (no floating/sinking).
+2. **Soldier remains grounded while running.**
+3. Target in front → soldier faces forward.
+4. Target on left → soldier visibly turns/aims left.
+5. Target on right → soldier visibly turns/aims right.
+6. No visual jitter between targets.
+7. Projectile originates at the visible rifle barrel.
+8. Muzzle flash appears at the visible rifle barrel.
+9. Muzzle follows the rifle during idle/run/shoot animation.
+   - If the flash sits ahead/behind/off the barrel, tune the Weapon's
+     `WeaponMuzzleSocketBinder` → `barrelTipOffset` (and `barrelRotationEuler` if the
+     rifle axis differs). This is a presentation tuning field, never a gameplay value.
+10. Idle/run/shoot animations still work (controller rebuilt per step 0 above).
+11. Player movement/lane behavior unchanged (Player root never rotated).
+12. All 3 mission sections complete normally; Mission Complete exactly once.
+13. Console clean — no new errors or warnings.
+14. Carl fallback: re-enable via Tools > Operation Outbreak > Set Up Carl Player Visual
+    — no broken references; the muzzle returns to its authored Weapon position.
+15. Full EditMode suite passes — expect **119/119** (112 previous + 7 new
+    `ToonSoldierPresentationTests`: aim maths, root-not-rotated invariant, muzzle
+    re-parent/fallback/no-duplicate-weapon).
 
 ## Known discrepancies reported during 1P
 

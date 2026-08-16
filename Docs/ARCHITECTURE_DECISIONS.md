@@ -169,6 +169,37 @@
   the fix is a presentation offset on `ToonSoldierVisual` (or a future visual socket),
   reported to the owner for manual tuning — never a gameplay change.
 
+### AD-1P.5-6: Grounding, visual aim and muzzle binding are presentation-only (QA fix #2)
+
+- **Grounding — decision:** `ToonSoldierVisual.localPosition.y = -1`, leaving
+  `ToonSoldier_demo` at its normalized transform. The offset is NOT guessed: the
+  `ToonSoldier_demo.FBX` was parsed (binary FBX walker) — the file is centimeter-units,
+  Z-up, and the skinned mesh's lowest vertices sit at Z = 0.004 cm, i.e. the model's
+  feet are at the model origin. Under the Player root's authored y = 1, -1 places the
+  feet exactly on the lane surface — the same offset Carl's tool already establishes.
+- **Visual aim — decision:** `ToonSoldierPresentationAim` (Player root) reads the new
+  read-only `WeaponController.CurrentTargetTransform` (a presentation accessor; target
+  SELECTION stays inside WeaponController/EnemySpawner — no AcquireTarget duplication)
+  and rotates only `ToonSoldierVisual`'s yaw. Smoothed via a clamped degrees-per-second
+  turn plus snap epsilon (pure helpers `ComputePlanarYaw` / `TurnToward`, unit-tested),
+  shortest-path across the 180° wrap, returns to forward when no target. The gameplay
+  Player root is never written, so movement/lane/collision semantics are untouched.
+- **Muzzle at the rifle — decision:** `WeaponMuzzleSocketBinder` (Weapon GO) re-parents
+  the EXISTING authoritative `MuzzlePoint` under the soldier's humanoid Right Hand bone
+  (one-time `Animator.GetBoneTransform` resolution in Awake — no per-frame searches, no
+  Update loop) with a tunable hand-local `barrelTipOffset`. Rationale: the package's
+  `WeaponContainer` node is a vestigial root-level helper at the model's feet (proven by
+  the FBX node graph — parent `//RootNode`, translation ~9cm) and does NOT follow the
+  skeleton; the rifle is part of the skinned mesh and visually rides the hand, so the
+  hand bone is the only stable animated anchor. The hand-relative barrel offset is a
+  presentation tuning value (QA item: adjust if the flash is off the barrel).
+  Fallback: `ShouldBind` skips when the soldier is inactive or the animator/avatar/hand
+  is missing — Carl/prototype restores the muzzle to its authored Weapon position with
+  zero code changes. No duplicate weapon authority is created (unit-tested).
+- **WeaponController API change:** exactly one addition — read-only
+  `CurrentTargetTransform`. No gameplay path reads it back; fire timing, targeting,
+  projectile trajectory and cadence are untouched.
+
 ## UNKNOWN / open questions
 
 - Pre-1P architecture rationale for gates (1J series) could not be recovered (original
