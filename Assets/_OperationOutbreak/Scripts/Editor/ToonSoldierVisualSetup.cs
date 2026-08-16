@@ -41,6 +41,14 @@ namespace OperationOutbreak.EditorTools
         [MenuItem("Tools/Operation Outbreak/Set Up Toon Soldier Player Visual")]
         public static void SetUpToonSoldierVisual()
         {
+            // Milestone 1P.5 QA fix - rebuild the controller from REAL AnimationClip
+            // sub-assets before it is applied. This guarantees the animator never runs
+            // with unresolved motion references (the "Clip Count: 0" regression).
+            if (!ToonSoldierAnimationSetup.RebuildController())
+            {
+                return;
+            }
+
             GameObject player = GameObject.Find(PlayerName);
             if (player == null)
             {

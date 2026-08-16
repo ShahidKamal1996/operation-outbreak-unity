@@ -147,13 +147,23 @@ Character presentation replacement ONLY — zero gameplay changes:
    projectile origin, targeting and muzzle feedback remain owned by the existing
    `Weapon`/`MuzzlePoint` hierarchy. Rifle/muzzle visual alignment is a QA observation,
    not a gameplay fix.
+7. **QA fix (2026-08-16)** — first manual QA found the soldier static ("Clip Count: 0"):
+   the hand-authored controller's motion references guessed FBX sub-asset fileIDs that
+   the Toon Soldiers package does not use. The controller is now rebuilt by Unity itself:
+   `Tools > Operation Outbreak > Rebuild Toon Soldier Animator Controller` (also run
+   automatically by `Set Up Toon Soldier Player Visual`) resolves the real
+   `AnimationClip` sub-assets through AssetDatabase and re-author the controller with
+   `UnityEditor.Animations` APIs. See ARCHITECTURE_DECISIONS.md AD-1P.5-1 addendum.
 
 ## Manual Unity QA checklist for 1P.5
 
-Run the scene first (the committed YAML wires the soldier without extra steps; if the
-soldier is missing locally, run `Tools > Operation Outbreak > Set Up Toon Soldier Player
-Visual` and save the scene):
-
+0. **REQUIRED FIRST STEP — rebuild the controller on your machine:**
+   `Tools > Operation Outbreak > Rebuild Toon Soldier Animator Controller`
+   (or the full `Set Up Toon Soldier Player Visual`), then save the scene.
+   This regenerates the controller asset with real clip references — skip this and the
+   character will stay static exactly as in the failed QA run. Afterwards, commit the
+   regenerated `ToonSoldier_Player.controller` file so the repository carries valid
+   references.
 1. Toon Soldier visible instead of Carl.
 2. Character stands at correct height.
 3. Character faces correct direction.
@@ -169,7 +179,12 @@ Visual` and save the scene):
 13. Console has no new errors.
 14. Carl can be re-enabled as fallback without broken references (Tools > Operation
     Outbreak > Set Up Carl Player Visual).
-15. Re-run EditMode suite: expect 109/109 (no gameplay code changed in 1P.5).
+15. Re-run EditMode suite: expect **112/112** — the 109 existing tests plus 3 new
+    Toon Soldier animator regression tests (`ToonSoldierAnimatorTests`). These pin the
+    QA failure: states must resolve real package clips, blend tree intact, bridge
+    parameters intact. They fail on purpose until step 0 (rebuild) has been run once.
+16. Optionally run `Tools > Operation Outbreak > Validate Toon Soldier Animator` and
+    confirm the console prints "validation PASSED".
 
 ## Known discrepancies reported during 1P
 

@@ -121,6 +121,20 @@
   the HitReaction/Dead parameters exist (bridge contract, no console warnings) but have
   no states. A dead soldier parks on the idle pose. Enemy-side 1P hit feedback is
   unaffected. Documented rather than papered over.
+- **QA fix addendum (2026-08-16):** the first 1P.5 QA run reported "Animator states
+  active but the character does not animate, Clip Count: 0". Root cause: the controller
+  had been hand-authored as YAML with motion references that reused the internal clip
+  fileID observed in Carl's mixamo-derived FBXs; the Toon Soldiers package FBXs are
+  3ds-Max/Biped exports whose embedded AnimationClip sub-assets carry DIFFERENT internal
+  fileIDs. Unity loaded states and parameters (live-looking state machine) but resolved
+  zero clips. **New rule (binding):** never hand-author FBX sub-asset fileIDs in
+  controller YAML. The controller is now rebuilt in place by
+  `Tools > Operation Outbreak > Rebuild Toon Soldier Animator Controller`
+  (`ToonSoldierAnimationSetup`), which resolves the real `AnimationClip` sub-assets via
+  AssetDatabase and re-author the states/blend tree/transitions with
+  `UnityEditor.Animations` APIs — Unity generates every reference. The rebuild keeps the
+  asset GUID stable (the scene wires the controller by GUID) and is idempotent.
+  EditMode tests `ToonSoldierAnimatorTests` (3) pin the clip wiring from now on.
 
 ### AD-1P.5-2: Presentation swap is committed YAML + idempotent editor tools
 

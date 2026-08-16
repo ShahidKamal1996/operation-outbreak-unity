@@ -54,7 +54,7 @@
 | — | Mobile rendering baseline | IMPLEMENTED | 2026-08-14 | `35f8481` |
 | — | Gameplay post-processing baseline | IMPLEMENTED | 2026-08-14 | `f43af78` |
 | **1P** | **Weapon & combat feel foundation** | **VERIFIED** | 2026-08-14 → QA 2026-08-16 | commits on `arena/milestone-1p-weapon-combat-feel` (see git log) — owner QA: EditMode 109/109 PASS, gameplay diagnostics PASS (0 failures), recording reviewed |
-| **1P.5** | **Toon Soldier visual integration** | **IMPLEMENTED — AWAITING MANUAL UNITY QA** | 2026-08-16 | commits on `arena/milestone-1p5-toon-soldier-integration` — presentation-only swap: soldier active, Carl inactive fallback, existing bridge reused, URP material applied |
+| **1P.5** | **Toon Soldier visual integration** | **IMPLEMENTED — AWAITING MANUAL UNITY QA** | 2026-08-16 | commits on `arena/milestone-1p5-toon-soldier-integration` — presentation-only swap: soldier active, Carl inactive fallback, existing bridge reused, URP material applied. QA fix: controller rebuilt by editor tool from real clips (hand-authored FBX sub-asset fileIDs were invalid — "Clip Count: 0"); 3 regression tests added |
 | 1Q | NEXT | NOT STARTED — 1P is verified and no longer blocks; begin only when the owner authorizes | — | — |
 
 ## Notes
