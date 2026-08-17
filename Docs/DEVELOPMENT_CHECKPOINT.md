@@ -249,10 +249,9 @@ Production enemy VISUAL foundation only — zero enemy gameplay changes:
 15. LOD/prefab rendering produces no obvious errors.
 16. Player Toon Soldier remains unaffected (shooting, aim, muzzle, animations).
 17. Console remains clean.
-18. Full EditMode suite passes — expect **153/153** (151 previous − 1 removed
-    bounds-measurement test + 3 new QA-fix-#2 tests: deterministic FBX-derived
-    grounding pin, hit-flash cooldown gate, and the shared Death state name; the
-    controller tests require step 0 to have been run once).
+18. Full EditMode suite passes — expect **154/154** (153 previous + 1 new
+    QA-fix-#12B Toon Soldier animator persistence round-trip test; the controller
+    tests require step 0 to have been run once).
 
 ## What Milestone 1P.5 delivered
 
@@ -444,6 +443,20 @@ Character presentation replacement ONLY — zero gameplay changes:
       `SetTransformActiveByPath`), with a safe no-op when the mask has no "Hips"
       path. The animator test uses the same index-based lookup. Fix #12's layered
       design is unchanged.
+    - **QA fix #12B (2026-08-17) — Toon Soldier animator persistence:** Unity logged
+      "Controller 'ToonSoldier_Player': Statemachine for layer 'Shoot Layer' is
+      missing" after every editor/domain reload and scene restore, until the rebuild
+      tool was re-run. Root cause: the rebuild created the Shoot Layer's nested
+      `AnimatorStateMachine` IN MEMORY ONLY — it was never added as a controller
+      sub-asset, so the serialized layer kept `m_StateMachine: {fileID: 0}`. Fix:
+      `AssetDatabase.AddObjectToAsset(shootMachine, controller)` (+
+      `HideFlags.HideInHierarchy`) before `AddLayer`, and `ClearController` now also
+      removes orphaned nested state machines from previous rebuilds (never the base
+      layer's root). A new EditMode test performs the full persistence round-trip:
+      rebuild → SaveAssets → `ImportAsset(ForceUpdate)` → reacquire from disk →
+      assert both layers, the shoot state machine, its Empty/Gunplay states and the
+      mask all survive. The generated controller asset must be regenerated locally
+      once (step 0) and committed.
 
 ## Manual Unity QA checklist for 1P.5
 
@@ -474,12 +487,12 @@ Character presentation replacement ONLY — zero gameplay changes:
 14. Carl fallback: re-enable via Tools > Operation Outbreak > Set Up Carl Player Visual
     — no broken references; the muzzle returns to its authored Weapon position
     (Unbind restores the original parent/local transform).
-15. Full EditMode suite passes — expect **137/137** (legitimate [Test] methods
-    counted by inspection; QA fix #12 adds the four layered-shooting regression tests:
-    base-layer-has-no-Gunplay, upper-body masked shoot layer with Empty default, mask
-    excludes hips/legs, and Gunplay exit-transition back to Empty). The fixture
-    TearDown fails on any unexpected Unity error, pinning the parenting-error class.
-    The new animator tests require the step-0 rebuild to have been run once.
+15. Full EditMode suite passes — expect **154/154** (counted by inspection;
+    the QA fix #12B persistence round-trip test is included: rebuild → SaveAssets →
+    forced reimport → reacquire from disk → shoot layer state machine and contents
+    must survive). The animator tests require the step-0 rebuild to have been run
+    once, and the regenerated `ToonSoldier_Player.controller` (now with the Shoot
+    Layer state machine persisted as a sub-asset) must be committed.
 16. Play Mode: verify the soldier's skinned rifle is the ONLY visible weapon (the old
     prototype gun must be gone while the soldier is active), the projectile + muzzle
     flash start at the visible rifle barrel opening, the muzzle follows the rifle

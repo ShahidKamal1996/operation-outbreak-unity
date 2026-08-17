@@ -176,6 +176,17 @@ namespace OperationOutbreak.EditorTools
                 name = ShootLayerName,
             };
 
+            // QA fix #12B (persistence) - a LAYER state machine is a separate Unity
+            // object: it MUST be added as a sub-asset of the controller, otherwise it
+            // exists only in memory and the serialized layer keeps
+            // m_StateMachine: {fileID: 0}. That is exactly why Unity logged
+            // "Statemachine for layer 'Shoot Layer' is missing" after every
+            // editor/domain reload and scene restore. HideInHierarchy keeps it from
+            // appearing as a stray asset in the Project window (Unity's documented
+            // pattern for nested state machines).
+            shootMachine.hideFlags = HideFlags.HideInHierarchy;
+            AssetDatabase.AddObjectToAsset(shootMachine, controller);
+
             AnimatorControllerLayer shootLayer = new AnimatorControllerLayer
             {
                 name = ShootLayerName,
@@ -492,13 +503,22 @@ namespace OperationOutbreak.EditorTools
 
         private static void ClearController(AnimatorController controller)
         {
-            // Remove orphaned blend-tree sub-assets from previous rebuilds first.
+            // Remove orphaned sub-assets from previous rebuilds first (blend trees and
+            // nested layer state machines). The BASE layer's root state machine is an
+            // intrinsic part of the controller and must never be removed.
             Object[] existing = AssetDatabase.LoadAllAssetsAtPath(ControllerPath);
             if (existing != null)
             {
+                AnimatorStateMachine rootMachine =
+                    controller.layers.Length > 0 ? controller.layers[0].stateMachine : null;
+
                 foreach (Object asset in existing)
                 {
                     if (asset is BlendTree)
+                    {
+                        AssetDatabase.RemoveObjectFromAsset(asset);
+                    }
+                    else if (asset is AnimatorStateMachine && asset != rootMachine)
                     {
                         AssetDatabase.RemoveObjectFromAsset(asset);
                     }

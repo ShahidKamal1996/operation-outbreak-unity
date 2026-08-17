@@ -234,6 +234,71 @@ namespace OperationOutbreak.Tests
                 "blends back to locomotion when firing stops.");
         }
 
+        [Test]
+        public void RebuiltShootLayerStateMachinePersistsAcrossAssetReimport()
+        {
+            // QA fix #12B - persistence regression: the Shoot Layer's state machine is
+            // a separate Unity object and must be serialized as a CONTROLLER SUB-ASSET.
+            // The pre-fix tool left it in memory only, so the serialized layer kept
+            // m_StateMachine: {fileID: 0} and Unity logged "Statemachine for layer
+            // 'Shoot Layer' is missing" after every editor/domain reload or scene
+            // restore. This test rebuilds, saves, FORCES A REIMPORT (the asset is
+            // re-read from disk, not the in-memory object), reacquires it and asserts
+            // the layer, its state machine, its states and its mask all survive.
+            Assert.IsTrue(ToonSoldierAnimationSetup.RebuildController(),
+                "The rebuild must succeed.");
+
+            AssetDatabase.SaveAssets();
+            AssetDatabase.ImportAsset(
+                ToonSoldierAnimationSetup.ControllerPath, ImportAssetOptions.ForceUpdate);
+
+            AnimatorController reloaded = AssetDatabase.LoadAssetAtPath<AnimatorController>(
+                ToonSoldierAnimationSetup.ControllerPath);
+
+            Assert.IsNotNull(reloaded, "The controller must reacquire after reimport.");
+            Assert.GreaterOrEqual(reloaded.layers.Length, 2,
+                "Both layers must survive the reimport.");
+
+            AnimatorControllerLayer shootLayer = reloaded.layers[1];
+            Assert.IsNotNull(shootLayer.stateMachine,
+                "The Shoot Layer's state machine must survive reimport - it must be " +
+                "persisted as a controller sub-asset, not an in-memory object.");
+            Assert.IsNotNull(shootLayer.avatarMask,
+                "The Shoot Layer's upper-body mask must survive reimport.");
+
+            AnimatorStateMachine shootMachine = shootLayer.stateMachine;
+            Assert.IsNotNull(
+                FindState(shootMachine, ToonSoldierAnimationSetup.EmptyStateName),
+                "The Empty default state must survive reimport.");
+            Assert.IsNotNull(
+                FindState(shootMachine, ToonSoldierAnimationSetup.GunplayState),
+                "The Gunplay state must survive reimport.");
+            Assert.IsNotNull(shootMachine.defaultState,
+                "The shoot layer needs its default state after reimport.");
+            Assert.AreEqual(
+                ToonSoldierAnimationSetup.EmptyStateName,
+                shootMachine.defaultState.name,
+                "The shoot layer's default state must remain Empty after reimport.");
+
+            // The persisted nested machine must be listed among the asset's sub-objects.
+            bool nestedPersisted = false;
+            foreach (Object asset in AssetDatabase.LoadAllAssetsAtPath(
+                         ToonSoldierAnimationSetup.ControllerPath))
+            {
+                if (asset is AnimatorStateMachine machine &&
+                    machine.name == ToonSoldierAnimationSetup.ShootLayerName)
+                {
+                    nestedPersisted = true;
+                    break;
+                }
+            }
+
+            Assert.IsTrue(nestedPersisted,
+                "The Shoot Layer state machine must be a persisted sub-asset of the " +
+                "controller (AssetDatabase.AddObjectToAsset), otherwise the serialized " +
+                "asset cannot restore it after a reload.");
+        }
+
         /// <summary>
         /// QA fix #12A - resolves a mask transform path to its index (the index is the
         /// only addressing form Unity's AvatarMask transform APIs accept).

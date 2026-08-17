@@ -300,6 +300,14 @@
   own transform list first; nothing is hard-coded and a missing path is a safe no-op.
   The humanoid body-part APIs (`SetHumanoidBodyPartActive(AvatarMaskBodyPart, bool)`)
   were already correct and are unchanged.
+- **QA fix #12B correction (persistence):** a LAYER state machine is a separate Unity
+  object — it must be persisted as a controller sub-asset
+  (`AssetDatabase.AddObjectToAsset(stateMachine, controller)`, `HideInHierarchy`)
+  or the serialized layer keeps `m_StateMachine: {fileID: 0}` and Unity logs
+  "Statemachine for layer 'Shoot Layer' is missing" after every reload. Rule recorded:
+  nested `AnimatorStateMachine` objects created by controller-authoring tools are
+  ALWAYS added as sub-assets, and rebuild cleanup removes orphaned nested machines
+  (never the base root).
 
 ## Milestone 1Q decisions
 
