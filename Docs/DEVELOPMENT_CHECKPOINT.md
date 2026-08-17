@@ -296,6 +296,13 @@ Character presentation replacement ONLY — zero gameplay changes:
       parameters, aiming, muzzle binding and Carl fallback are all unchanged.
     Re-run `Tools > Operation Outbreak > Rebuild Toon Soldier Animator Controller`,
     then commit the regenerated controller AND the new mask asset. See AD-1P.5-7.
+    - **QA fix #12A (2026-08-17)** — compile correction: Unity's
+      `AvatarMask.SetTransformActive` / `GetTransformActive` take a transform INDEX,
+      not a bone-name string (3 × CS1503). The "Hips" exclusion now resolves the path
+      to its mask index via `GetTransformPath(i)` first (`FindTransformIndex` /
+      `SetTransformActiveByPath`), with a safe no-op when the mask has no "Hips"
+      path. The animator test uses the same index-based lookup. Fix #12's layered
+      design is unchanged.
 
 ## Manual Unity QA checklist for 1P.5
 

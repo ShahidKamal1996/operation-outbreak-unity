@@ -384,7 +384,13 @@ namespace OperationOutbreak.EditorTools
                     problems.Add("The shoot mask must NOT include the left leg - legs stay on the base layer.");
                 if (mask.GetHumanoidBodyPartActive(AvatarMaskBodyPart.RightLeg))
                     problems.Add("The shoot mask must NOT include the right leg - legs stay on the base layer.");
-                if (mask.GetTransformActive("Hips"))
+
+                // QA fix #12A - Unity's AvatarMask transform APIs take an INDEX, not a
+                // bone-name string. Resolve the path to its mask index first; when the
+                // mask does not contain a "Hips" path there is nothing to exclude, so
+                // only an ACTIVE hips transform is a problem.
+                int hipsIndex = FindTransformIndex(mask, "Hips");
+                if (hipsIndex >= 0 && mask.GetTransformActive(hipsIndex))
                     problems.Add("The shoot mask must NOT include the hips - the pelvis stays on the base layer.");
             }
 
@@ -440,10 +446,46 @@ namespace OperationOutbreak.EditorTools
             mask.SetHumanoidBodyPartActive(AvatarMaskBodyPart.RightFingers, false);
 
             // Body includes the hips; exclude them so the pelvis keeps the base-layer
-            // locomotion pose. Idempotent and safe to call on every rebuild.
-            mask.SetTransformActive("Hips", false);
+            // locomotion pose. QA fix #12A - the transform APIs take a mask INDEX, so
+            // the "Hips" path is resolved against the mask's transform list first; when
+            // the mask does not carry that path there is nothing to exclude. Idempotent
+            // and safe to call on every rebuild.
+            SetTransformActiveByPath(mask, "Hips", false);
 
             EditorUtility.SetDirty(mask);
+        }
+
+        /// <summary>
+        /// QA fix #12A - returns the mask index whose transform path equals
+        /// <paramref name="path"/>, or -1 when the mask does not contain it.
+        /// </summary>
+        private static int FindTransformIndex(AvatarMask mask, string path)
+        {
+            for (int i = 0; i < mask.transformCount; i++)
+            {
+                if (mask.GetTransformPath(i) == path)
+                {
+                    return i;
+                }
+            }
+
+            return -1;
+        }
+
+        /// <summary>
+        /// QA fix #12A - activates/deactivates a mask transform addressed by its
+        /// humanoid bone path. Unity's AvatarMask.SetTransformActive takes an INDEX,
+        /// not a string; the index is derived from the mask's own transform list, so
+        /// nothing is hard-coded and a missing path is a safe no-op.
+        /// </summary>
+        private static void SetTransformActiveByPath(AvatarMask mask, string path, bool active)
+        {
+            int index = FindTransformIndex(mask, path);
+
+            if (index >= 0)
+            {
+                mask.SetTransformActive(index, active);
+            }
         }
 
         // ------------------------------------------------------------------ helpers

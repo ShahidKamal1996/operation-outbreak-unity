@@ -184,8 +184,18 @@ namespace OperationOutbreak.Tests
                 "The mask must exclude the left leg - legs stay on the base layer.");
             Assert.IsFalse(mask.GetHumanoidBodyPartActive(AvatarMaskBodyPart.RightLeg),
                 "The mask must exclude the right leg - legs stay on the base layer.");
-            Assert.IsFalse(mask.GetTransformActive("Hips"),
-                "The mask must exclude the hips so the pelvis keeps the base-layer pose.");
+
+            // QA fix #12A - Unity's AvatarMask.GetTransformActive takes a mask INDEX,
+            // not a bone-name string. Resolve the "Hips" path to its mask index; when
+            // the mask carries that path it must be inactive, and when it does not
+            // carry the path there is nothing to exclude.
+            int hipsIndex = FindMaskTransformIndex(mask, "Hips");
+
+            if (hipsIndex >= 0)
+            {
+                Assert.IsFalse(mask.GetTransformActive(hipsIndex),
+                    "The mask must exclude the hips so the pelvis keeps the base-layer pose.");
+            }
         }
 
         [Test]
@@ -222,6 +232,23 @@ namespace OperationOutbreak.Tests
             Assert.IsTrue(hasExitToEmpty,
                 "Gunplay needs an exit-time transition back to Empty so the upper body " +
                 "blends back to locomotion when firing stops.");
+        }
+
+        /// <summary>
+        /// QA fix #12A - resolves a mask transform path to its index (the index is the
+        /// only addressing form Unity's AvatarMask transform APIs accept).
+        /// </summary>
+        private static int FindMaskTransformIndex(AvatarMask mask, string path)
+        {
+            for (int i = 0; i < mask.transformCount; i++)
+            {
+                if (mask.GetTransformPath(i) == path)
+                {
+                    return i;
+                }
+            }
+
+            return -1;
         }
 
         private static void AssertParameter(

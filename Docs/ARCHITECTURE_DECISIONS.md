@@ -294,6 +294,12 @@
 - **Contract preserved:** the bridge, parameters (Speed/IsMoving/Gunplay/
   HitReaction/Dead), aiming, muzzle follow and Carl fallback are unchanged. Root
   motion stays off; the player controller remains the movement authority.
+- **QA fix #12A correction:** Unity's AvatarMask transform APIs are index-based —
+  `SetTransformActive(int, bool)`, `GetTransformActive(int)`, `GetTransformPath(int)`
+  (paths are exposed per index). Bone-name strings must be resolved through the mask's
+  own transform list first; nothing is hard-coded and a missing path is a safe no-op.
+  The humanoid body-part APIs (`SetHumanoidBodyPartActive(AvatarMaskBodyPart, bool)`)
+  were already correct and are unchanged.
 
 ## UNKNOWN / open questions
 
