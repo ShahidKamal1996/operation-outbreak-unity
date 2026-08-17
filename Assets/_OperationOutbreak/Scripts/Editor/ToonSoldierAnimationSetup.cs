@@ -30,6 +30,20 @@ namespace OperationOutbreak.EditorTools
     ///   Tools > Operation Outbreak > Rebuild Toon Soldier Animator Controller
     ///   Tools > Operation Outbreak > Validate Toon Soldier Animator
     /// (Set Up Toon Soldier Player Visual also runs the rebuild automatically.)
+    ///
+    /// QA fix #12 - LAYERED SHOOTING: manual QA found that firing while moving froze
+    /// the soldier's legs (the character slid forward in a static shoot pose). Root
+    /// cause: the full-body shoot clip lived on the BASE Layer next to the locomotion
+    /// blend tree, so every Gunplay trigger replaced the locomotion state entirely.
+    /// The rebuild now produces a two-layer controller:
+    ///   - BASE Layer: NeutralStance (idle) and Locomotion (blend tree) ONLY - the
+    ///     legs are never interrupted by firing.
+    ///   - SHOOT Layer (weight 1, Override blending, upper-body AvatarMask): an Empty
+    ///     default state (passes the base-layer pose through when not firing) plus the
+    ///     Gunplay state (assault_combat_shoot). The mask limits the shoot influence
+    ///     to the torso/head/arms, keeping pelvis/hips and both legs on the Base Layer,
+    ///     and the exit-time transition blends the upper body smoothly back to
+    ///     locomotion when firing stops.
     /// </summary>
     public static class ToonSoldierAnimationSetup
     {
@@ -45,10 +59,16 @@ namespace OperationOutbreak.EditorTools
         public const string ShootFbxPath =
             "Assets/ToonSoldiers_demo/animation/assault_combat_shoot.FBX";
 
-        // State names shared with the validation utility and the EditMode tests.
+        /// <summary>QA fix #12 - upper-body avatar mask asset created/configured by the rebuild.</summary>
+        public const string UpperBodyMaskPath =
+            "Assets/_OperationOutbreak/Art/Animations/Player/ToonSoldier_UpperBodyMask.mask";
+
+        // State/layer names shared with the validation utility and the EditMode tests.
         public const string NeutralStanceState = "NeutralStance";
         public const string LocomotionState = "Locomotion";
         public const string GunplayState = "Gunplay";
+        public const string ShootLayerName = "Shoot Layer";
+        public const string EmptyStateName = "Empty";
 
         /// <summary>
         /// Resolves the AnimationClip embedded in an animation FBX by type scan, so the
@@ -125,11 +145,6 @@ namespace OperationOutbreak.EditorTools
             blendTree.AddChild(run, 0.85f);
             locomotion.motion = blendTree;
 
-            // FIRING - assault_combat_shoot (non-looping), AnyState trigger with
-            // self-transition allowed, exit-time return to idle/run at 80%.
-            AnimatorState gunplay = root.AddState(GunplayState, new Vector3(610f, 60f, 0f));
-            gunplay.motion = shoot;
-
             AnimatorStateTransition idleToRun = neutral.AddTransition(locomotion);
             idleToRun.hasExitTime = false;
             idleToRun.duration = 0.12f;
@@ -140,31 +155,67 @@ namespace OperationOutbreak.EditorTools
             runToIdle.duration = 0.12f;
             runToIdle.AddCondition(AnimatorConditionMode.IfNot, 0f, "IsMoving");
 
-            AnimatorStateTransition anyToGunplay = root.AddAnyStateTransition(gunplay);
+            // FIRING - assault_combat_shoot (non-looping). QA fix #12: the shoot clip
+            // moved OFF the base layer onto a dedicated upper-body layer, so firing can
+            // never replace or freeze the locomotion legs.
+
+            // Create (or reuse) the upper-body avatar mask: torso, head and arms only.
+            // Pelvis/hips and both legs stay on the Base Layer, driven by locomotion.
+            AvatarMask upperBodyMask = AssetDatabase.LoadAssetAtPath<AvatarMask>(UpperBodyMaskPath);
+            if (upperBodyMask == null)
+            {
+                upperBodyMask = new AvatarMask();
+                upperBodyMask.name = "ToonSoldier_UpperBodyMask";
+                AssetDatabase.CreateAsset(upperBodyMask, UpperBodyMaskPath);
+            }
+            ConfigureUpperBodyMask(upperBodyMask);
+
+            // Shoot layer: weight 1, Override blending, masked to the upper body.
+            AnimatorStateMachine shootMachine = new AnimatorStateMachine
+            {
+                name = ShootLayerName,
+            };
+
+            AnimatorControllerLayer shootLayer = new AnimatorControllerLayer
+            {
+                name = ShootLayerName,
+                stateMachine = shootMachine,
+                defaultWeight = 1f,
+                blendingMode = AnimatorLayerBlendingMode.Override,
+                avatarMask = upperBodyMask,
+            };
+            controller.AddLayer(shootLayer);
+
+            // Empty default state: under the mask, an empty state leaves the upper body
+            // in the base-layer pose, so idle/run show normally when not firing.
+            AnimatorState empty = shootMachine.AddState(EmptyStateName, new Vector3(290f, 60f, 0f));
+            shootMachine.defaultState = empty;
+
+            AnimatorState gunplay = shootMachine.AddState(GunplayState, new Vector3(610f, 60f, 0f));
+            gunplay.motion = shoot;
+
+            AnimatorStateTransition anyToGunplay = shootMachine.AddAnyStateTransition(gunplay);
             anyToGunplay.hasExitTime = false;
             anyToGunplay.duration = 0.05f;
             anyToGunplay.canTransitionToSelf = true;
             anyToGunplay.AddCondition(AnimatorConditionMode.If, 0f, "Gunplay");
             anyToGunplay.AddCondition(AnimatorConditionMode.IfNot, 0f, "Dead");
 
-            AnimatorStateTransition gunToRun = gunplay.AddTransition(locomotion);
-            gunToRun.hasExitTime = true;
-            gunToRun.exitTime = 0.8f;
-            gunToRun.duration = 0.08f;
-            gunToRun.AddCondition(AnimatorConditionMode.If, 0f, "IsMoving");
-
-            AnimatorStateTransition gunToIdle = gunplay.AddTransition(neutral);
-            gunToIdle.hasExitTime = true;
-            gunToIdle.exitTime = 0.8f;
-            gunToIdle.duration = 0.08f;
-            gunToIdle.AddCondition(AnimatorConditionMode.IfNot, 0f, "IsMoving");
+            // Smooth removal of the shooting influence when firing stops: exit at 90%
+            // of the clip and blend the upper body back over 0.15s. The legs were never
+            // touched, so locomotion continues uninterrupted throughout.
+            AnimatorStateTransition gunToEmpty = gunplay.AddTransition(empty);
+            gunToEmpty.hasExitTime = true;
+            gunToEmpty.exitTime = 0.9f;
+            gunToEmpty.duration = 0.15f;
 
             EditorUtility.SetDirty(controller);
             AssetDatabase.SaveAssets();
             Debug.Log(
-                "[1P.5 QA fix] Toon Soldier controller rebuilt with resolved clips: " +
-                $"idle='{idle.name}', run='{run.name}', shoot='{shoot.name}'. " +
-                "Save the scene and commit the regenerated controller asset.", controller);
+                "[1P.5 QA fix #12] Toon Soldier controller rebuilt: base layer = idle/locomotion, " +
+                $"shoot layer = upper-body masked gunplay. idle='{idle.name}', run='{run.name}', " +
+                $"shoot='{shoot.name}'. Save the scene and commit the regenerated controller asset " +
+                "and the new upper-body mask asset.", controller);
             return true;
         }
 
@@ -281,20 +332,118 @@ namespace OperationOutbreak.EditorTools
             }
 
             AnimatorState gunplay = FindState(root, GunplayState);
-            if (gunplay == null)
+            if (gunplay != null)
             {
-                problems.Add(GunplayState + " state missing.");
+                problems.Add(GunplayState + " must NOT live on the base layer anymore (QA fix #12) - " +
+                             "a full-body shoot state on the base layer freezes locomotion while firing.");
             }
-            else if (gunplay.motion == null)
+
+            // ---------------------------------------------------------------- shoot layer
+
+            if (controller.layers.Length < 2)
+            {
+                problems.Add("QA fix #12: the controller needs a second (shoot) layer.");
+                return problems;
+            }
+
+            AnimatorControllerLayer shootLayer = controller.layers[1];
+
+            if (shootLayer.name != ShootLayerName)
+            {
+                problems.Add($"Layer 1 should be '{ShootLayerName}', is '{shootLayer.name}'.");
+            }
+
+            if (shootLayer.blendingMode != AnimatorLayerBlendingMode.Override)
+            {
+                problems.Add("The shoot layer must use Override blending.");
+            }
+
+            if (shootLayer.defaultWeight < 0.99f)
+            {
+                problems.Add("The shoot layer weight must be 1 so firing always shows.");
+            }
+
+            if (shootLayer.avatarMask == null)
+            {
+                problems.Add("QA fix #12: the shoot layer is missing its upper-body AvatarMask - " +
+                             "without it the full-body shoot clip would override locomotion again.");
+            }
+            else
+            {
+                AvatarMask mask = shootLayer.avatarMask;
+
+                if (!mask.GetHumanoidBodyPartActive(AvatarMaskBodyPart.Body))
+                    problems.Add("The shoot mask must include the torso (Body part).");
+                if (!mask.GetHumanoidBodyPartActive(AvatarMaskBodyPart.Head))
+                    problems.Add("The shoot mask must include the head.");
+                if (!mask.GetHumanoidBodyPartActive(AvatarMaskBodyPart.LeftArm))
+                    problems.Add("The shoot mask must include the left arm.");
+                if (!mask.GetHumanoidBodyPartActive(AvatarMaskBodyPart.RightArm))
+                    problems.Add("The shoot mask must include the right arm.");
+                if (mask.GetHumanoidBodyPartActive(AvatarMaskBodyPart.LeftLeg))
+                    problems.Add("The shoot mask must NOT include the left leg - legs stay on the base layer.");
+                if (mask.GetHumanoidBodyPartActive(AvatarMaskBodyPart.RightLeg))
+                    problems.Add("The shoot mask must NOT include the right leg - legs stay on the base layer.");
+                if (mask.GetTransformActive("Hips"))
+                    problems.Add("The shoot mask must NOT include the hips - the pelvis stays on the base layer.");
+            }
+
+            AnimatorStateMachine shootMachine = shootLayer.stateMachine;
+
+            AnimatorState empty = FindState(shootMachine, EmptyStateName);
+            if (empty == null)
+            {
+                problems.Add("The shoot layer needs its Empty default state.");
+            }
+            else if (empty.motion != null)
+            {
+                problems.Add("The shoot layer Empty state must have no motion - it passes the " +
+                             "base-layer pose through when not firing.");
+            }
+
+            if (shootMachine.defaultState == null || shootMachine.defaultState != empty)
+            {
+                problems.Add("The shoot layer's default state must be the Empty state.");
+            }
+
+            AnimatorState shootGunplay = FindState(shootMachine, GunplayState);
+            if (shootGunplay == null)
+            {
+                problems.Add(GunplayState + " state missing from the shoot layer.");
+            }
+            else if (shootGunplay.motion == null)
             {
                 problems.Add(GunplayState + " has no motion.");
             }
-            else if (gunplay.motion != shoot)
+            else if (shootGunplay.motion != shoot)
             {
                 problems.Add(GunplayState + " motion does not resolve to the " + ShootFbxPath + " clip.");
             }
 
             return problems;
+        }
+
+        /// <summary>
+        /// QA fix #12 - configures the upper-body avatar mask: torso (Body), head and
+        /// both arms active; legs inactive; hips explicitly inactive so the pelvis and
+        /// both legs stay driven by the Base Layer locomotion while shooting.
+        /// </summary>
+        private static void ConfigureUpperBodyMask(AvatarMask mask)
+        {
+            mask.SetHumanoidBodyPartActive(AvatarMaskBodyPart.Body, true);
+            mask.SetHumanoidBodyPartActive(AvatarMaskBodyPart.Head, true);
+            mask.SetHumanoidBodyPartActive(AvatarMaskBodyPart.LeftArm, true);
+            mask.SetHumanoidBodyPartActive(AvatarMaskBodyPart.RightArm, true);
+            mask.SetHumanoidBodyPartActive(AvatarMaskBodyPart.LeftLeg, false);
+            mask.SetHumanoidBodyPartActive(AvatarMaskBodyPart.RightLeg, false);
+            mask.SetHumanoidBodyPartActive(AvatarMaskBodyPart.LeftFingers, false);
+            mask.SetHumanoidBodyPartActive(AvatarMaskBodyPart.RightFingers, false);
+
+            // Body includes the hips; exclude them so the pelvis keeps the base-layer
+            // locomotion pose. Idempotent and safe to call on every rebuild.
+            mask.SetTransformActive("Hips", false);
+
+            EditorUtility.SetDirty(mask);
         }
 
         // ------------------------------------------------------------------ helpers

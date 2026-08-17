@@ -278,6 +278,24 @@ Character presentation replacement ONLY — zero gameplay changes:
     when inactive (Carl fallback), evaluated every Update but writing renderers only
     on state change, so a slow or failed Animator bind can never leave the old gun
     visible. Two new EditMode tests drive the real renderer state for both cases.
+17. **QA fix #12 (2026-08-17)** — firing froze the soldier's locomotion: the
+    full-body shoot clip lived on the Animator BASE Layer next to the locomotion blend
+    tree, so every Gunplay trigger replaced the locomotion state and the legs locked
+    in the shoot pose while the code-driven player root kept moving. Fix — LAYERED
+    SHOOTING (controller authored by the rebuild tool, same workflow as QA fix #1):
+    - BASE Layer: NeutralStance (idle) + Locomotion blend tree ONLY — the legs are
+      never interrupted by firing.
+    - SHOOT Layer (weight 1, Override blending): `Gunplay` plays
+      `assault_combat_shoot` under an upper-body Avatar Mask
+      (`ToonSoldier_UpperBodyMask.mask` — torso/head/arms active; pelvis/hips, legs,
+      fingers excluded), with an **Empty default state** that passes the base-layer
+      pose through when not firing, and an exit-time (0.9, 0.15s blend) transition
+      back to Empty so the upper body smoothly returns to locomotion when firing
+      stops.
+    - Result: idle/run continue on the legs while the upper body shoots; the bridge,
+      parameters, aiming, muzzle binding and Carl fallback are all unchanged.
+    Re-run `Tools > Operation Outbreak > Rebuild Toon Soldier Animator Controller`,
+    then commit the regenerated controller AND the new mask asset. See AD-1P.5-7.
 
 ## Manual Unity QA checklist for 1P.5
 
@@ -286,8 +304,9 @@ Character presentation replacement ONLY — zero gameplay changes:
    (or the full `Set Up Toon Soldier Player Visual`), then save the scene.
    This regenerates the controller asset with real clip references — skip this and the
    character will stay static exactly as in the failed QA run. Afterwards, commit the
-   regenerated `ToonSoldier_Player.controller` file so the repository carries valid
-   references.
+   regenerated `ToonSoldier_Player.controller` file **and the new
+   `ToonSoldier_UpperBodyMask.mask` asset (+ its .meta)** so the repository carries
+   valid references.
 1. **Soldier feet visually contact the ground in idle** (no floating/sinking).
 2. **Soldier remains grounded while running.**
 3. Target in front → soldier faces forward.
@@ -307,10 +326,12 @@ Character presentation replacement ONLY — zero gameplay changes:
 14. Carl fallback: re-enable via Tools > Operation Outbreak > Set Up Carl Player Visual
     — no broken references; the muzzle returns to its authored Weapon position
     (Unbind restores the original parent/local transform).
-15. Full EditMode suite passes — expect **133/133** (legitimate [Test] methods
-    counted by inspection; QA fix #11 adds the two prototype-renderer state tests:
-    disabled while the soldier visual is active, restored when inactive). The fixture
+15. Full EditMode suite passes — expect **137/137** (legitimate [Test] methods
+    counted by inspection; QA fix #12 adds the four layered-shooting regression tests:
+    base-layer-has-no-Gunplay, upper-body masked shoot layer with Empty default, mask
+    excludes hips/legs, and Gunplay exit-transition back to Empty). The fixture
     TearDown fails on any unexpected Unity error, pinning the parenting-error class.
+    The new animator tests require the step-0 rebuild to have been run once.
 16. Play Mode: verify the soldier's skinned rifle is the ONLY visible weapon (the old
     prototype gun must be gone while the soldier is active), the projectile + muzzle
     flash start at the visible rifle barrel opening, the muzzle follows the rifle

@@ -271,6 +271,30 @@
     recomputes the same quantity in Unity's exact frames from the hand-rigid cluster
     (pose-independent). The old blind `barrelTipOffset (0,0,0.6)` was removed.
 
+### AD-1P.5-7: Layered shooting - locomotion and firing are separate animation layers (QA fix #12)
+
+- **Problem:** the full-body `assault_combat_shoot` clip lived on the Animator BASE
+  Layer next to the locomotion blend tree. Every Gunplay trigger swapped the whole
+  base layer into the shoot state, freezing the legs while the code-driven Player
+  root kept moving ("dragged" look).
+- **Decision:** two-layer controller, authored by the existing rebuild tool (never
+  hand-written YAML):
+  - **Base Layer:** `NeutralStance` (idle) + `Locomotion` blend tree only. The legs
+    are owned exclusively by this layer and are never interrupted by firing.
+  - **Shoot Layer** (weight 1, `Override` blending, avatar mask
+    `ToonSoldier_UpperBodyMask.mask`): `Gunplay` plays `assault_combat_shoot`;
+    the mask includes torso (Body), head and both arms and EXCLUDES the hips
+    (`SetTransformActive("Hips", false)`), legs and fingers, so the pelvis and legs
+    keep the base-layer pose. The layer's default state is **Empty** (no motion):
+    under the mask, an empty state passes the base-layer pose through, so idle/run
+    show normally when not firing (no T-pose, no freeze). `Gunplay -> Empty` is an
+    exit-time transition (0.9 / 0.15s) that smoothly blends the upper body back to
+    locomotion when firing stops; the AnyState trigger keeps self-transition enabled
+    for continuous auto-fire.
+- **Contract preserved:** the bridge, parameters (Speed/IsMoving/Gunplay/
+  HitReaction/Dead), aiming, muzzle follow and Carl fallback are unchanged. Root
+  motion stays off; the player controller remains the movement authority.
+
 ## UNKNOWN / open questions
 
 - Pre-1P architecture rationale for gates (1J series) could not be recovered (original
