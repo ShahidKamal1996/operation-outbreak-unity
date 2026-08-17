@@ -171,6 +171,17 @@ namespace OperationOutbreak.EditorTools
                 bridgeSo.FindProperty("zombie").objectReferenceValue =
                     contents.GetComponent<ZombieController>();
                 bridgeSo.FindProperty("animator").objectReferenceValue = animator;
+
+                // Milestone 1Q Bug 4 - cadence reference: derive the speed at which the
+                // walk clip's feet match world translation from the clip's own average
+                // speed, so the bridge's playback multiplier synchronizes the Walk
+                // animation with the code-driven movement. Fall back to 1.3 when the
+                // clip reports no measurable average speed.
+                AnimationClip walkClip = EnemyAnimationSetup.ResolveClip(EnemyAnimationSetup.WalkFbxPath);
+                float walkReference = walkClip != null && walkClip.averageSpeed > 0.01f
+                    ? walkClip.averageSpeed
+                    : 1.3f;
+                bridgeSo.FindProperty("walkReferenceSpeed").floatValue = walkReference;
                 bridgeSo.ApplyModifiedPropertiesWithoutUndo();
 
                 // Death presentation window for the production death clip.
@@ -184,10 +195,12 @@ namespace OperationOutbreak.EditorTools
                 }
 
                 PrefabUtility.SaveAsPrefabAsset(contents, ZombiePrefabPath);
+                AnimationClip walkClipForLog = EnemyAnimationSetup.ResolveClip(EnemyAnimationSetup.WalkFbxPath);
                 Debug.Log(
                     "[1Q] Basic Infected production visual ready. Avatar valid: " +
                     $"{(animator.avatar != null && animator.avatar.isValid)}, controller: " +
-                    $"{(controller != null ? controller.name : "MISSING")}, root motion: {animator.applyRootMotion}. " +
+                    $"{(controller != null ? controller.name : "MISSING")}, root motion: {animator.applyRootMotion}, " +
+                    $"walk cadence reference: {(walkClipForLog != null && walkClipForLog.averageSpeed > 0.01f ? walkClipForLog.averageSpeed.ToString("0.00") : "1.30 (fallback)")} u/s. " +
                     "Commit the modified Zombie_Prototype.prefab.", contents);
             }
             finally

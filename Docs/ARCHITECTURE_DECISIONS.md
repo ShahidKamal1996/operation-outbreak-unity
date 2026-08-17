@@ -349,6 +349,24 @@
   `ProductionVisualPosition/RotationEuler/Scale` are tool-level constants — QA
   verifies grounding/scale, never gameplay collision changes).
 
+### AD-1Q-5: Locomotion cadence is synchronized with a per-state speed parameter (Bug 4)
+
+- **Problem:** the Mixamo walk clip plays at its native cadence (~1.3 u/s worth of
+  foot motion) while ZombieController moves the enemy at the approved 2.5 u/s, so
+  the feet visibly slide.
+- **Decision:** a dedicated `LocomotionSpeedMultiplier` Animator float parameter
+  drives ONLY the Walk state's playback speed (`speedParameterActive` /
+  `speedParameter` on Walk). Idle, Attack and Death keep their authored fixed
+  speed, and `Animator.speed` is never touched — attack and death timing are
+  therefore unchanged by construction.
+- **Multiplier derivation:** `EnemyAnimationBridge.ComputeLocomotionSpeedMultiplier`
+  = `clamp(CurrentPlanarSpeed / walkReferenceSpeed, 0.5, 2.5)`. The reference is
+  NOT hand-guessed: the visual setup tool reads the walk clip's own
+  `averageSpeed` and serializes it onto the prefab bridge (fallback 1.3 when the
+  clip reports no measurable speed). Gameplay speed values are unchanged (still
+  pinned by tests); the future Runner variant reuses the identical mechanism at
+  higher speeds.
+
 ### AD-1Q-4: Death presentation delays only the visual, never the accounting
 
 - **Decision:** `ZombieController.DeathFeedback` now waits a serialized

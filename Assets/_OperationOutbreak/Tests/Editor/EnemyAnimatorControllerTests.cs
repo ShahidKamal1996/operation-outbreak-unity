@@ -47,6 +47,99 @@ namespace OperationOutbreak.Tests
             AssertParameter(controller, "Speed", AnimatorControllerParameterType.Float);
             AssertParameter(controller, "Attack", AnimatorControllerParameterType.Trigger);
             AssertParameter(controller, "Dead", AnimatorControllerParameterType.Bool);
+            AssertParameter(
+                controller,
+                EnemyAnimationBridge.LocomotionSpeedMultiplierParameter,
+                AnimatorControllerParameterType.Float);
+        }
+
+        [Test]
+        public void WalkStateIsDrivenByTheLocomotionMultiplier_OtherStatesAreNot()
+        {
+            // Bug 4 regression: only the Walk state's playback speed may be driven by
+            // the locomotion multiplier. Attack and Death must keep their authored
+            // fixed speed, otherwise their timing changes with movement speed.
+            AnimatorController controller = AssetDatabase.LoadAssetAtPath<AnimatorController>(
+                EnemyAnimationSetup.ControllerPath);
+
+            Assert.IsNotNull(controller, "Controller asset missing - run the rebuild tool.");
+
+            AnimatorStateMachine root = controller.layers[0].stateMachine;
+
+            AnimatorState walkState = FindState(root, EnemyAnimationSetup.WalkState);
+            Assert.IsNotNull(walkState, "Walk state missing.");
+            Assert.IsTrue(walkState.speedParameterActive,
+                "The Walk state must be driven by the locomotion speed multiplier " +
+                "(the Bug 4 foot-sliding fix).");
+            Assert.AreEqual(
+                EnemyAnimationBridge.LocomotionSpeedMultiplierParameter,
+                walkState.speedParameter,
+                "The Walk state's speed parameter must be LocomotionSpeedMultiplier.");
+
+            AnimatorState idleState = FindState(root, EnemyAnimationSetup.IdleState);
+            Assert.IsNotNull(idleState, "Idle state missing.");
+            Assert.IsFalse(idleState.speedParameterActive,
+                "Idle must not be driven by the locomotion multiplier.");
+
+            AnimatorState attackState = FindState(root, EnemyAnimationSetup.AttackState);
+            Assert.IsNotNull(attackState, "Attack state missing.");
+            Assert.IsFalse(attackState.speedParameterActive,
+                "Attack must not be driven by the locomotion multiplier - its timing is authored.");
+
+            AnimatorState deathState = FindState(root, EnemyAnimationSetup.DeathState);
+            Assert.IsNotNull(deathState, "Death state missing.");
+            Assert.IsFalse(deathState.speedParameterActive,
+                "Death must not be driven by the locomotion multiplier - its timing is authored.");
+        }
+
+        [Test]
+        public void ComputeLocomotionSpeedMultiplier_SynchronizesCadenceAndClamps()
+        {
+            // Pure bridge math: multiplier = planarSpeed / walkReference, clamped.
+            Assert.AreEqual(
+                2f,
+                EnemyAnimationBridge.ComputeLocomotionSpeedMultiplier(2.5f, 1.25f, 0.5f, 2.5f),
+                0.0001f,
+                "Gameplay 2.5 u/s against a 1.25 u/s walk reference must play the walk at 2x.");
+
+            Assert.AreEqual(
+                0.5f,
+                EnemyAnimationBridge.ComputeLocomotionSpeedMultiplier(0f, 1.25f, 0.5f, 2.5f),
+                0.0001f,
+                "Zero speed must clamp to the minimum multiplier (Walk is inactive anyway).");
+
+            Assert.AreEqual(
+                2.5f,
+                EnemyAnimationBridge.ComputeLocomotionSpeedMultiplier(10f, 1.25f, 0.5f, 2.5f),
+                0.0001f,
+                "Extreme speeds must clamp to the maximum multiplier.");
+
+            Assert.AreEqual(
+                0.5f,
+                EnemyAnimationBridge.ComputeLocomotionSpeedMultiplier(2.5f, 1.25f, 0.5f, 0.4f),
+                0.0001f,
+                "A misconfigured maximum below the minimum must clamp to the minimum.");
+
+            Assert.Greater(
+                EnemyAnimationBridge.ComputeLocomotionSpeedMultiplier(2.5f, 0f, 0.5f, 2.5f),
+                0f,
+                "A zero reference must be guarded - never divide by zero.");
+        }
+
+        [Test]
+        public void BasicInfectedAuthoredGameplaySpeedRemainsUnchanged()
+        {
+            // Bug 4 fix must NOT change gameplay movement speed - the multiplier is
+            // presentation only. The approved Basic value stays 2.5.
+            GameObject prototype = AssetDatabase.LoadAssetAtPath<GameObject>(
+                EnemyVisualSetup.ZombiePrefabPath);
+
+            Assert.IsNotNull(prototype, "Zombie_Prototype.prefab is missing.");
+
+            ZombieController zombie = prototype.GetComponent<ZombieController>();
+            Assert.IsNotNull(zombie, "ZombieController missing from the prefab.");
+            Assert.AreEqual(2.5f, zombie.MoveSpeed, 0.0001f,
+                "The approved Basic Infected gameplay speed (2.5) must not change.");
         }
 
         [Test]

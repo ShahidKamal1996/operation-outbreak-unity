@@ -1,5 +1,6 @@
 #if UNITY_EDITOR
 using System.Collections.Generic;
+using OperationOutbreak.Enemies;
 using UnityEditor;
 using UnityEditor.Animations;
 using UnityEngine;
@@ -110,6 +111,9 @@ namespace OperationOutbreak.EditorTools
             controller.AddParameter("Speed", AnimatorControllerParameterType.Float);
             controller.AddParameter("Attack", AnimatorControllerParameterType.Trigger);
             controller.AddParameter("Dead", AnimatorControllerParameterType.Bool);
+            controller.AddParameter(
+                EnemyAnimationBridge.LocomotionSpeedMultiplierParameter,
+                AnimatorControllerParameterType.Float);
 
             AnimatorStateMachine root = controller.layers[0].stateMachine;
 
@@ -122,6 +126,14 @@ namespace OperationOutbreak.EditorTools
             // is reserved for future Runner variants.
             AnimatorState walkState = root.AddState(WalkState, new Vector3(290f, 180f, 0f));
             walkState.motion = walk;
+
+            // Milestone 1Q Bug 4 - cadence sync: ONLY the Walk state's playback speed
+            // is driven by LocomotionSpeedMultiplier, computed by the bridge from the
+            // actual code-driven planar speed. Idle/Attack/Death keep their authored
+            // fixed speed, so attack and death timing are untouched, and the future
+            // Runner can reuse the same mechanism at higher speeds.
+            walkState.speedParameterActive = true;
+            walkState.speedParameter = EnemyAnimationBridge.LocomotionSpeedMultiplierParameter;
 
             AnimatorStateTransition idleToWalk = idleState.AddTransition(walkState);
             idleToWalk.hasExitTime = false;
@@ -229,6 +241,9 @@ namespace OperationOutbreak.EditorTools
             CheckParameter(problems, controller, "Speed", AnimatorControllerParameterType.Float);
             CheckParameter(problems, controller, "Attack", AnimatorControllerParameterType.Trigger);
             CheckParameter(problems, controller, "Dead", AnimatorControllerParameterType.Bool);
+            CheckParameter(problems, controller,
+                EnemyAnimationBridge.LocomotionSpeedMultiplierParameter,
+                AnimatorControllerParameterType.Float);
 
             if (controller.layers.Length == 0)
             {
@@ -262,9 +277,25 @@ namespace OperationOutbreak.EditorTools
             {
                 problems.Add(WalkState + " state missing.");
             }
-            else if (walkState.motion != walk)
+            else
             {
-                problems.Add(WalkState + " motion does not resolve to the " + WalkFbxPath + " clip.");
+                if (walkState.motion != walk)
+                {
+                    problems.Add(WalkState + " motion does not resolve to the " + WalkFbxPath + " clip.");
+                }
+
+                // Bug 4: cadence sync must be wired on the Walk state only.
+                if (!walkState.speedParameterActive)
+                {
+                    problems.Add(WalkState + " must be driven by the locomotion speed multiplier " +
+                                 "(speedParameterActive = true) or the feet slide against gameplay speed.");
+                }
+                else if (walkState.speedParameter != EnemyAnimationBridge.LocomotionSpeedMultiplierParameter)
+                {
+                    problems.Add(WalkState + " speed parameter should be '" +
+                                 EnemyAnimationBridge.LocomotionSpeedMultiplierParameter +
+                                 "', is '" + walkState.speedParameter + "'.");
+                }
             }
 
             // The run clip must stay reserved for future Runner variants.
@@ -307,6 +338,26 @@ namespace OperationOutbreak.EditorTools
                     problems.Add(DeathState + " must have no outgoing transitions - a dead enemy " +
                                  "must never animate back into locomotion or attack.");
                 }
+
+                // Bug 4: only the Walk state may be driven by the locomotion multiplier.
+                if (deathState.speedParameterActive)
+                {
+                    problems.Add(DeathState + " must NOT be driven by the locomotion speed " +
+                                 "multiplier - death timing is authored.");
+                }
+            }
+
+            AnimatorState idleCheck = FindState(root, IdleState);
+            if (idleCheck != null && idleCheck.speedParameterActive)
+            {
+                problems.Add(IdleState + " must NOT be driven by the locomotion speed multiplier.");
+            }
+
+            AnimatorState attackCheck = FindState(root, AttackState);
+            if (attackCheck != null && attackCheck.speedParameterActive)
+            {
+                problems.Add(AttackState + " must NOT be driven by the locomotion speed " +
+                             "multiplier - attack timing is authored.");
             }
 
             return problems;

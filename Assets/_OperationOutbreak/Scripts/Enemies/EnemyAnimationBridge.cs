@@ -41,15 +41,53 @@ namespace OperationOutbreak.Enemies
         public const string SpeedParameter = "Speed";
         public const string AttackParameter = "Attack";
         public const string DeadParameter = "Dead";
+        public const string LocomotionSpeedMultiplierParameter = "LocomotionSpeedMultiplier";
 
         private static readonly int SpeedHash = Animator.StringToHash(SpeedParameter);
         private static readonly int AttackHash = Animator.StringToHash(AttackParameter);
         private static readonly int DeadHash = Animator.StringToHash(DeadParameter);
+        private static readonly int LocomotionSpeedMultiplierHash = Animator.StringToHash(LocomotionSpeedMultiplierParameter);
+
+        [Header("Locomotion Cadence Sync (Milestone 1Q Bug 4)")]
+        [Tooltip("Gameplay speed (units/second) at which the walk clip's foot cadence " +
+                 "matches world translation. The setup tool derives this from the walk " +
+                 "clip's own average speed; tune here if QA still sees foot sliding.")]
+        [Min(0.1f)]
+        [SerializeField] private float walkReferenceSpeed = 1.3f;
+
+        [Tooltip("Clamp range for the locomotion playback multiplier, so extreme or " +
+                 "misconfigured speeds can never produce absurd animation playback.")]
+        [Min(0.1f)]
+        [SerializeField] private float minimumLocomotionMultiplier = 0.5f;
+        [Min(0.1f)]
+        [SerializeField] private float maximumLocomotionMultiplier = 2.5f;
 
         /// <summary>True once the death animation has been requested; latches all other animation off.</summary>
         public bool IsDeathLatched => _deathLatched;
 
         private bool _deathLatched;
+
+        /// <summary>
+        /// Pure helper (Bug 4): converts the code-driven planar speed into the Walk
+        /// state's playback multiplier so foot cadence matches world translation.
+        /// At zero speed the multiplier clamps to the minimum (the Walk state is not
+        /// active anyway); the reference is guarded so a misconfigured value can never
+        /// divide by zero. Static and side-effect free for EditMode tests.
+        /// </summary>
+        public static float ComputeLocomotionSpeedMultiplier(
+            float planarSpeed, float walkReferenceSpeed, float minimum, float maximum)
+        {
+            float safeMinimum = Mathf.Max(0.1f, minimum);
+            float safeMaximum = Mathf.Max(safeMinimum, maximum);
+
+            if (planarSpeed <= 0f)
+            {
+                return safeMinimum;
+            }
+
+            float reference = Mathf.Max(0.1f, walkReferenceSpeed);
+            return Mathf.Clamp(planarSpeed / reference, safeMinimum, safeMaximum);
+        }
 
         private void Awake()
         {
@@ -97,7 +135,18 @@ namespace OperationOutbreak.Enemies
             }
 
             float planarSpeed = zombie != null ? zombie.CurrentPlanarSpeed : 0f;
+
+            // State selection (Idle vs Walk) - unchanged from the 1Q foundation.
             animator.SetFloat(SpeedHash, planarSpeed);
+
+            // Bug 4 - cadence sync: drive ONLY the Walk state's playback speed from
+            // the actual code-driven translation speed. Attack and Death are not
+            // driven by this parameter (their states ignore it), and Animator.speed
+            // is never touched, so their timing stays authored.
+            animator.SetFloat(
+                LocomotionSpeedMultiplierHash,
+                ComputeLocomotionSpeedMultiplier(
+                    planarSpeed, walkReferenceSpeed, minimumLocomotionMultiplier, maximumLocomotionMultiplier));
         }
 
         private void HandleAttack(ZombieController source, int damage)
@@ -132,5 +181,14 @@ namespace OperationOutbreak.Enemies
             animator.SetFloat(SpeedHash, 0f);
             animator.SetBool(DeadHash, true);
         }
+
+#if UNITY_EDITOR
+        private void OnValidate()
+        {
+            walkReferenceSpeed = Mathf.Max(0.1f, walkReferenceSpeed);
+            minimumLocomotionMultiplier = Mathf.Max(0.1f, minimumLocomotionMultiplier);
+            maximumLocomotionMultiplier = Mathf.Max(minimumLocomotionMultiplier, maximumLocomotionMultiplier);
+        }
+#endif
     }
 }

@@ -146,31 +146,47 @@ Production enemy VISUAL foundation only — zero enemy gameplay changes:
    the pre-1Q behavior byte-for-byte when the tool never runs).
 5. **Movement rule** — the Animator has Apply Root Motion OFF; `ZombieController`
    remains the single movement authority (no animation-driven movement).
+6. **QA fix 1 — Bug 4 (2026-08-17)** — the walk animation played at native clip
+   speed (~1.3 u/s cadence) while gameplay moves at 2.5 u/s, so feet slid across the
+   ground. Fix: a new `LocomotionSpeedMultiplier` Animator float parameter now drives
+   ONLY the Walk state's playback speed (`speedParameterActive` on Walk; Idle, Attack
+   and Death keep their authored fixed speed, and `Animator.speed` is never touched).
+   `EnemyAnimationBridge.ComputeLocomotionSpeedMultiplier` derives the multiplier from
+   `CurrentPlanarSpeed` against a `walkReferenceSpeed` (clamped 0.5–2.5); the setup
+   tool derives the reference from the walk clip's own `averageSpeed` (fallback 1.3)
+   and writes it onto the prefab, so the future Runner variant reuses the same
+   mechanism at higher speeds. Gameplay speed is untouched (still pinned at 2.5 by
+   tests). Re-run `Tools > Operation Outbreak > Set Up Basic Infected Production
+   Visual` and commit the regenerated controller + prefab.
 
 ## Manual Unity QA checklist for 1Q
 
 0. **REQUIRED FIRST STEP — run `Tools > Operation Outbreak > Set Up Basic
-   Infected Production Visual`** (rebuilds the controller AND sets up the prefab),
-   save, and commit the regenerated `OO_BasicInfected.controller` plus the
-   modified `Zombie_Prototype.prefab`.
+   Infected Production Visual`** (rebuilds the controller with the cadence
+   multiplier AND sets up the prefab with the clip-derived walk reference), save,
+   and commit the regenerated `OO_BasicInfected.controller` plus the modified
+   `Zombie_Prototype.prefab`.
 1. Basic Infected spawns with the Stylized Zombie visual.
 2. Prototype enemy mesh is hidden (not rendered).
 3. Zombie walks while pursuing (idle when still).
-4. Zombie faces the player correctly.
-5. Zombie attack animation plays when attacking.
-6. Existing damage timing still works (unchanged).
-7. Zombie death animation plays once.
-8. Dead enemy cannot continue attacking.
-9. Mission kill/wave accounting remains correct (3 sections, 12 enemies, 9 BASIC / 3 RUNNER, Mission Complete exactly once).
-10. Multiple zombies animate independently.
-11. Enemy separation still works.
-12. Zombie feet/ground alignment looks correct (no floating/sinking).
-13. LOD/prefab rendering produces no obvious errors.
-14. Player Toon Soldier remains unaffected (shooting, aim, muzzle, animations).
-15. Console remains clean.
-16. Full EditMode suite passes — expect **144/144** (137 previous + 7 new
-    `EnemyAnimatorControllerTests`; the controller tests require step 0 to have
-    been run once).
+4. **Walk cadence sync (Bug 4): footstep/cycle cadence approximately matches the
+   translation speed — no obvious foot skating at normal pursuit speed.**
+5. Zombie faces the player correctly.
+6. Zombie attack animation plays when attacking (attack timing unchanged).
+7. Existing damage timing still works (unchanged).
+8. Zombie death animation plays once (death timing unchanged).
+9. Dead enemy cannot continue attacking.
+10. Mission kill/wave accounting remains correct (3 sections, 12 enemies, 9 BASIC / 3 RUNNER, Mission Complete exactly once).
+11. Multiple zombies animate independently.
+12. Enemy separation still works.
+13. Zombie feet/ground alignment looks correct (no floating/sinking).
+14. LOD/prefab rendering produces no obvious errors.
+15. Player Toon Soldier remains unaffected (shooting, aim, muzzle, animations).
+16. Console remains clean.
+17. Full EditMode suite passes — expect **147/147** (144 previous + 3 new
+    cadence-sync tests: Walk driven by the multiplier with Idle/Attack/Death
+    unaffected, multiplier pure-maths, and the approved 2.5 gameplay speed pin;
+    the controller tests require step 0 to have been run once).
 
 ## What Milestone 1P.5 delivered
 
