@@ -51,15 +51,28 @@ namespace OperationOutbreak.EditorTools
         public const string PrototypeVisualName = "Visual";
         public const string ZombieInstanceName = "StylizedZombie_01";
 
-        /// <summary>Presentation-only placement of the production visual child. Tune here
-        /// (never in gameplay) if QA finds the zombie floating/sinking or mis-rotated.</summary>
-        public static readonly Vector3 ProductionVisualPosition = Vector3.zero;
+        /// <summary>Presentation-only placement of the production visual child. X/Z stay 0;
+        /// Y is computed by the tool from the actual mesh geometry (see
+        /// TryComputeProductionGroundingOffsetY) so the feet sit on the lane.</summary>
+        public static readonly Vector3 ProductionVisualPosition = new Vector3(0f, 0f, 0f);
         public static readonly Vector3 ProductionVisualRotationEuler = Vector3.zero;
         public static readonly Vector3 ProductionVisualScale = Vector3.one;
 
-        /// <summary>Seconds the defeated production zombie stays visible so the death
-        /// animation can play. Written onto the prefab's ZombieController.</summary>
-        public const float ProductionDeathPresentationDuration = 1.15f;
+        /// <summary>
+        /// The enemy gameplay root sits at world Y = 1 (the spawner/ground convention),
+        /// with the lane surface at Y = 0. The production zombie's feet are near its own
+        /// model origin, so the visual must be lowered by one unit minus the measured
+        /// foot offset. This is the same convention Carl's setup tool establishes.
+        /// </summary>
+        public const float EnemyRootGroundHeight = 1f;
+
+        /// <summary>QA fix #1B (Bug 3) - extra seconds added after the death clip length,
+        /// so the animation visibly completes before the enemy deactivates.</summary>
+        public const float DeathPresentationMarginSeconds = 0.3f;
+
+        /// <summary>Fallback death presentation window used only when the death clip
+        /// cannot be resolved from the project at setup time.</summary>
+        public const float FallbackDeathPresentationDuration = 1.15f;
 
         /// <summary>
         /// Pure decision: the prototype visual is hidden exactly when the production
@@ -68,6 +81,65 @@ namespace OperationOutbreak.EditorTools
         public static bool ShouldHidePrototypeVisual(bool productionVisualActive)
         {
             return productionVisualActive;
+        }
+
+        /// <summary>
+        /// QA fix #1B (Bug 3) - deterministic death presentation window: the death
+        /// clip's full length plus a small safe margin. The old constant (1.15 s) was
+        /// shorter than the imported zombie death clip (~2.8-3.0 s), so the enemy was
+        /// deactivated mid-animation. The margin is clamped to a safe minimum.
+        /// </summary>
+        public static float ComputeDeathPresentationDuration(float clipLengthSeconds, float marginSeconds)
+        {
+            float safeMargin = Mathf.Max(0.1f, marginSeconds);
+            return Mathf.Max(0.05f, clipLengthSeconds) + safeMargin;
+        }
+
+        /// <summary>
+        /// QA fix #1B (Bug 1) - computes the deterministic grounding offset for the
+        /// production zombie: the lowest point of the instance's renderer bounds,
+        /// expressed in the instance root's local space, is pushed down so the feet
+        /// reach the lane surface (enemy root local Y = -EnemyRootGroundHeight).
+        /// Returns false when the instance has no renderers.
+        /// </summary>
+        public static bool TryComputeProductionGroundingOffsetY(GameObject zombieInstance, out float offsetY)
+        {
+            offsetY = 0f;
+
+            if (zombieInstance == null)
+            {
+                return false;
+            }
+
+            float lowestLocalY = float.MaxValue;
+            bool found = false;
+
+            foreach (Renderer renderer in zombieInstance.GetComponentsInChildren<Renderer>(true))
+            {
+                if (renderer == null)
+                {
+                    continue;
+                }
+
+                // Bounds are world-space AABBs; convert the min corner into the
+                // instance root's local space so the offset is root-relative.
+                float localY = zombieInstance.transform.InverseTransformPoint(renderer.bounds.min).y;
+
+                if (localY < lowestLocalY)
+                {
+                    lowestLocalY = localY;
+                    found = true;
+                }
+            }
+
+            if (!found)
+            {
+                return false;
+            }
+
+            // Feet at enemy-root-local -1 (the ground plane under the y=1 root).
+            offsetY = -EnemyRootGroundHeight - lowestLocalY;
+            return true;
         }
 
         [MenuItem("Tools/Operation Outbreak/Set Up Basic Infected Production Visual")]
@@ -119,6 +191,17 @@ namespace OperationOutbreak.EditorTools
                 zombie.transform.localPosition = Vector3.zero;
                 zombie.transform.localRotation = Quaternion.identity;
                 zombie.transform.localScale = Vector3.one;
+
+                // QA fix #1B (Bug 1) - deterministic grounding: the production visual
+                // is lowered until the zombie's lowest mesh point reaches the lane
+                // surface, derived from the ACTUAL instance geometry every run (never a
+                // blind guess). X/Z stay 0.
+                Vector3 productionVisualPosition = ProductionVisualPosition;
+                if (TryComputeProductionGroundingOffsetY(zombie, out float groundingY))
+                {
+                    productionVisualPosition.y = groundingY;
+                }
+                productionVisual.localPosition = productionVisualPosition;
 
                 // Animator: production controller, imported humanoid avatar, root motion OFF.
                 Animator animator = zombie.GetComponentInChildren<Animator>(true);
@@ -184,22 +267,34 @@ namespace OperationOutbreak.EditorTools
                 bridgeSo.FindProperty("walkReferenceSpeed").floatValue = walkReference;
                 bridgeSo.ApplyModifiedPropertiesWithoutUndo();
 
-                // Death presentation window for the production death clip.
+                // QA fix #1B (Bug 3) - death presentation window derived from the ACTUAL
+                // death clip length plus a safe margin, so the animation visibly
+                // completes before deactivation. The imported zombie death clip is
+                // ~2.8-3.0 s, far longer than the old 1.15 s constant that truncated it.
                 ZombieController zombieController = contents.GetComponent<ZombieController>();
                 if (zombieController != null)
                 {
+                    AnimationClip deathClip = EnemyAnimationSetup.ResolveClip(EnemyAnimationSetup.DeathFbxPath);
+                    float deathPresentation = deathClip != null
+                        ? ComputeDeathPresentationDuration(deathClip.length, DeathPresentationMarginSeconds)
+                        : FallbackDeathPresentationDuration;
+
                     var zombieSo = new SerializedObject(zombieController);
                     SerializedProperty duration = zombieSo.FindProperty("deathPresentationDuration");
-                    duration.floatValue = ProductionDeathPresentationDuration;
+                    duration.floatValue = deathPresentation;
                     zombieSo.ApplyModifiedPropertiesWithoutUndo();
                 }
 
                 PrefabUtility.SaveAsPrefabAsset(contents, ZombiePrefabPath);
                 AnimationClip walkClipForLog = EnemyAnimationSetup.ResolveClip(EnemyAnimationSetup.WalkFbxPath);
+                AnimationClip deathClipForLog = EnemyAnimationSetup.ResolveClip(EnemyAnimationSetup.DeathFbxPath);
+                bool grounded = TryComputeProductionGroundingOffsetY(zombie, out float groundingForLog);
                 Debug.Log(
                     "[1Q] Basic Infected production visual ready. Avatar valid: " +
                     $"{(animator.avatar != null && animator.avatar.isValid)}, controller: " +
                     $"{(controller != null ? controller.name : "MISSING")}, root motion: {animator.applyRootMotion}, " +
+                    $"grounding Y: {(grounded ? groundingForLog.ToString("0.000") : "n/a")}, " +
+                    $"death window: {(deathClipForLog != null ? (deathClipForLog.length + DeathPresentationMarginSeconds).ToString("0.00") : "n/a")} s, " +
                     $"walk cadence reference: {(walkClipForLog != null && walkClipForLog.averageSpeed > 0.01f ? walkClipForLog.averageSpeed.ToString("0.00") : "1.30 (fallback)")} u/s. " +
                     "Commit the modified Zombie_Prototype.prefab.", contents);
             }

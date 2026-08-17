@@ -349,6 +349,35 @@
   `ProductionVisualPosition/RotationEuler/Scale` are tool-level constants — QA
   verifies grounding/scale, never gameplay collision changes).
 
+### AD-1Q-6: Grounding, animation-safe hit feedback, and clip-derived death window (QA fix #1B)
+
+- **Bug 1 — grounding (deterministic, asset-derived):** the vendor zombie's lowest
+  vertex sits +0.536 cm above its model root (parsed from `StylizedZombie.fbx`,
+  Y 0.536–198.8 cm) while the enemy root rides at y = 1; the old zero offset left
+  the zombie floating a full unit. The setup tool now computes
+  `TryComputeProductionGroundingOffsetY` — the lowest renderer-bound point in
+  root-local space lowered to `-EnemyRootGroundHeight` (≈ −1.005 m) — and writes it
+  to `ProductionVisual.localPosition.y` every run. Never a blind guess, never a
+  gameplay-root/collider/lane change.
+- **Bug 2 — animation-safe hit feedback:** continuous fire spawned one overlapping
+  legacy `HitReaction` coroutine per bullet whose white/clear races flickered every
+  renderer (perceived as head/body vibration) and ran the prototype scale punch.
+  New rule: ONE restart-safe flash coroutine per enemy
+  (`StartHitFeedback`/`StopHitFeedback`), and the legacy transform punch applies
+  only when the PROTOTYPE visual is the active presentation
+  (`ShouldApplyLegacyTransformPunch`) — an Animator-driven skeleton must never
+  receive transform feedback. The prototype fallback keeps its legacy behavior
+  intact. The white material flash remains as the animation-safe hit readability.
+- **Bug 3 — death presentation:** the imported death clip is ~2.8–3.0 s (FBX take
+  LocalTime 2.97 s / ReferenceTime 2.80 s), far longer than the old 1.15 s
+  constant, so the enemy deactivated mid-animation after a final flash burst. The
+  tool now writes `deathPresentationDuration = clip.length + 0.3 s`
+  (`ComputeDeathPresentationDuration`); `TakeDamage` stops and clears hit feedback
+  at zero health; the bridge death latch blocks further Attack triggers
+  (`ShouldPlayAttackAnimation`); the Death state has no exits. Gameplay accounting
+  (`Died`, kill counting, section clear, mission completion) is unchanged — only
+  the visual deactivation is delayed.
+
 ### AD-1Q-5: Locomotion cadence is synchronized with a per-state speed parameter (Bug 4)
 
 - **Problem:** the Mixamo walk clip plays at its native cadence (~1.3 u/s worth of

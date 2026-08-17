@@ -112,6 +112,11 @@ namespace OperationOutbreak.Enemies
         private Renderer[] _renderers;
         private MaterialPropertyBlock _propertyBlock;
         private Vector3 _visualScale;
+
+        // QA fix #1B (Bug 2) - single restart-safe hit flash; a production visual
+        // reference cached once for the presentation decisions.
+        private Coroutine _hitFlashRoutine;
+        private Transform _productionVisual;
         // Allocated once per zombie; OverlapSphereNonAlloc keeps the chase loop allocation-free.
         private readonly Collider[] _nearbyColliders = new Collider[12];
 
@@ -122,6 +127,7 @@ namespace OperationOutbreak.Enemies
             _propertyBlock = new MaterialPropertyBlock();
             Transform visual = transform.Find("Visual");
             _visualScale = visual != null ? visual.localScale : Vector3.one;
+            _productionVisual = transform.Find("ProductionVisual");
             ResolvePlayerHealth();
         }
 
@@ -247,7 +253,7 @@ namespace OperationOutbreak.Enemies
             // Milestone 1O - notification only; the health maths above is already complete.
             DamageTaken?.Invoke(this, amount);
 
-            if (CurrentHealth > 0) StartCoroutine(HitReaction());
+            if (CurrentHealth > 0) StartHitFeedback();
             if (CurrentHealth == 0)
             {
                 if (!_deathNotified)
@@ -258,11 +264,54 @@ namespace OperationOutbreak.Enemies
 
                 _isDying = true;
 
-                // Milestone 1P - clear any white hit flash still on the corpse so death
-                // feedback starts from the authored material colours.
-                SetFlashColor(Color.clear);
+                // QA fix #1B (Bug 3) - stop and clear any running hit feedback before
+                // death feedback starts, so the death presentation is never polluted by
+                // hit flashes or legacy transform feedback.
+                StopHitFeedback();
                 StartCoroutine(DeathFeedback());
             }
+        }
+
+        /// <summary>
+        /// QA fix #1B (Bug 2) - pure decision: the legacy visual scale punch applies
+        /// only when the PROTOTYPE visual is the active presentation. The production
+        /// zombie is Animator-driven, so transform feedback would fight its skeleton
+        /// and read as vibration. The prototype fallback keeps its legacy behavior.
+        /// </summary>
+        public static bool ShouldApplyLegacyTransformPunch(bool productionVisualActive)
+        {
+            return !productionVisualActive;
+        }
+
+        /// <summary>
+        /// QA fix #1B (Bug 2) - starts (or restarts) the single hit flash. Under rapid
+        /// fire the pre-1B code started one overlapping coroutine per hit, whose
+        /// white/clear races flickered the whole zombie (perceived as head/body
+        /// vibration). One restart-safe coroutine means the flash stays a clean pulse.
+        /// </summary>
+        private void StartHitFeedback()
+        {
+            if (_hitFlashRoutine != null)
+            {
+                StopCoroutine(_hitFlashRoutine);
+            }
+
+            _hitFlashRoutine = StartCoroutine(HitReaction());
+        }
+
+        /// <summary>
+        /// Stops the running hit flash (if any) and restores the authored material
+        /// colours. Safe to call at any time, including after death.
+        /// </summary>
+        private void StopHitFeedback()
+        {
+            if (_hitFlashRoutine != null)
+            {
+                StopCoroutine(_hitFlashRoutine);
+                _hitFlashRoutine = null;
+            }
+
+            SetFlashColor(Color.clear);
         }
 
         /// <summary>
@@ -272,14 +321,19 @@ namespace OperationOutbreak.Enemies
         /// presentation-only - the authoritative transform, collider, chase logic, hit
         /// detection and attack range are never touched.
         ///
+        /// QA fix #1B (Bug 2): the legacy scale punch is applied only when the prototype
+        /// visual is the active presentation (<see cref="ShouldApplyLegacyTransformPunch"/>);
+        /// the production Animator-driven zombie receives only the animation-safe material
+        /// flash. The flash is a single restart-safe coroutine, so rapid hits can no
+        /// longer flicker the body.
+        ///
         /// Death safety: every frame checks _isDying, so a reaction that overlaps the
-        /// moment of death stops immediately, clears its flash and never writes the visual
-        /// scale again. DeathFeedback takes over the Visual scale from the authored base
-        /// scale, exactly as it did before 1P.
+        /// moment of death stops immediately and clears its flash.
         /// </summary>
         private System.Collections.IEnumerator HitReaction()
         {
             Transform visual = transform.Find("Visual");
+            bool punchVisual = visual != null && ShouldApplyLegacyTransformPunch(IsProductionVisualActive());
             SetFlashColor(Color.white);
 
             float elapsed = 0f;
@@ -295,7 +349,7 @@ namespace OperationOutbreak.Enemies
 
                 elapsed += Time.deltaTime;
 
-                if (visual != null)
+                if (punchVisual)
                 {
                     visual.localScale = _visualScale * ComputeHitPunchScale(elapsed / reactionDuration);
                 }
@@ -305,10 +359,19 @@ namespace OperationOutbreak.Enemies
 
             SetFlashColor(Color.clear);
 
-            if (visual != null)
+            if (punchVisual)
             {
                 visual.localScale = _visualScale;
             }
+        }
+
+        /// <summary>
+        /// QA fix #1B (Bug 2) - true when the production visual child exists and is
+        /// active in the hierarchy (the Animator-driven Stylized Zombie presentation).
+        /// </summary>
+        private bool IsProductionVisualActive()
+        {
+            return _productionVisual != null && _productionVisual.gameObject.activeInHierarchy;
         }
 
         private void SetFlashColor(Color color)

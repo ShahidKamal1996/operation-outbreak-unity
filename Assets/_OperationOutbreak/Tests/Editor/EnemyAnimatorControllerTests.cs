@@ -142,6 +142,103 @@ namespace OperationOutbreak.Tests
                 "The approved Basic Infected gameplay speed (2.5) must not change.");
         }
 
+        // ============================================ QA fix #1B (Bugs 1/2/3) regression
+
+        [Test]
+        public void ProductionGroundingOffset_GroundsTheLowestMeshPoint()
+        {
+            // Bug 1 regression: the deterministic grounding derivation must place the
+            // zombie's lowest mesh point on the lane (enemy root local Y = -1).
+            GameObject zombie = new GameObject("StylizedZombie_01");
+            GameObject meshObject = new GameObject("MESH");
+            meshObject.transform.SetParent(zombie.transform, false);
+
+            MeshFilter filter = meshObject.AddComponent<MeshFilter>();
+            meshObject.AddComponent<MeshRenderer>();
+
+            Mesh mesh = new Mesh
+            {
+                // Feet exactly at the instance-root origin: min Y = 0.
+                bounds = new Bounds(new Vector3(0f, 1f, 0f), new Vector3(1f, 2f, 1f)),
+            };
+            filter.sharedMesh = mesh;
+
+            try
+            {
+                bool computed = EnemyVisualSetup.TryComputeProductionGroundingOffsetY(
+                    zombie, out float offsetY);
+
+                Assert.IsTrue(computed, "A zombie instance with renderers must yield a grounding offset.");
+                Assert.AreEqual(-1f, offsetY, 0.01f,
+                    "Feet at the instance origin must be lowered one unit to the lane " +
+                    "under the enemy root's y=1 convention.");
+            }
+            finally
+            {
+                Object.DestroyImmediate(zombie);
+            }
+        }
+
+        [Test]
+        public void LegacyTransformPunchAppliesOnlyWithoutTheProductionVisual()
+        {
+            // Bug 2 regression: the Animator-driven production zombie must not receive
+            // legacy transform feedback (scale punch) that fights its skeleton. The
+            // prototype fallback keeps the legacy behavior.
+            Assert.IsFalse(
+                ZombieController.ShouldApplyLegacyTransformPunch(true),
+                "With the production visual active, the legacy scale punch must be off " +
+                "(transform feedback vibrates an Animator-driven skeleton).");
+            Assert.IsTrue(
+                ZombieController.ShouldApplyLegacyTransformPunch(false),
+                "The prototype fallback keeps its legacy hit punch.");
+        }
+
+        [Test]
+        public void AttackAnimationIsBlockedAfterDeathLatch()
+        {
+            // Bug 3 regression: a dead enemy must never generate attack presentation.
+            Assert.IsFalse(
+                EnemyAnimationBridge.ShouldPlayAttackAnimation(true, true),
+                "A death-latched enemy must not trigger the attack animation.");
+            Assert.IsFalse(
+                EnemyAnimationBridge.ShouldPlayAttackAnimation(false, false),
+                "Without an Animator there is nothing to trigger.");
+            Assert.IsTrue(
+                EnemyAnimationBridge.ShouldPlayAttackAnimation(false, true),
+                "A live enemy with an Animator must be able to trigger the attack animation.");
+        }
+
+        [Test]
+        public void DeathPresentationDurationCoversTheDeathClipWithMargin()
+        {
+            // Bug 3 regression: the old 1.15 s constant truncated the ~2.8-3.0 s death
+            // clip. The presentation window must be clip length + margin.
+            Assert.AreEqual(
+                3.1f,
+                EnemyVisualSetup.ComputeDeathPresentationDuration(2.8f, 0.3f),
+                0.0001f,
+                "The window must be the clip length plus the margin.");
+
+            Assert.AreEqual(
+                2.9f,
+                EnemyVisualSetup.ComputeDeathPresentationDuration(2.8f, 0f),
+                0.0001f,
+                "A zero margin must clamp to the safe minimum (0.1).");
+
+            AnimationClip death = EnemyAnimationSetup.ResolveClip(EnemyAnimationSetup.DeathFbxPath);
+
+            if (death != null)
+            {
+                float window = EnemyVisualSetup.ComputeDeathPresentationDuration(
+                    death.length, EnemyVisualSetup.DeathPresentationMarginSeconds);
+
+                Assert.GreaterOrEqual(window, death.length + 0.1f,
+                    "The configured death window must outlast the imported death clip " +
+                    $"({death.length:0.00} s) so the animation visibly completes.");
+            }
+        }
+
         [Test]
         public void StateMotionsResolveToTheMixamoClips()
         {

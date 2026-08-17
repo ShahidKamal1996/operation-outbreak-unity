@@ -149,9 +149,20 @@ namespace OperationOutbreak.Enemies
                     planarSpeed, walkReferenceSpeed, minimumLocomotionMultiplier, maximumLocomotionMultiplier));
         }
 
+        /// <summary>
+        /// Pure helper (QA fix #1B Bug 3): the attack animation may play only while the
+        /// enemy is NOT death-latched and an Animator exists. Static and side-effect
+        /// free so EditMode tests can pin the "dead enemy cannot generate attack
+        /// presentation" invariant without a scene.
+        /// </summary>
+        public static bool ShouldPlayAttackAnimation(bool deathLatched, bool hasAnimator)
+        {
+            return !deathLatched && hasAnimator;
+        }
+
         private void HandleAttack(ZombieController source, int damage)
         {
-            if (_deathLatched || animator == null)
+            if (!ShouldPlayAttackAnimation(_deathLatched, animator != null))
             {
                 return;
             }
