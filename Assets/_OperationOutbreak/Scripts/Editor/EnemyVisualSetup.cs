@@ -260,9 +260,12 @@ namespace OperationOutbreak.EditorTools
                 // speed, so the bridge's playback multiplier synchronizes the Walk
                 // animation with the code-driven movement. Fall back to 1.3 when the
                 // clip reports no measurable average speed.
+                // QA fix #1C - AnimationClip.averageSpeed is a Vector3 (average
+                // root-motion velocity) in Unity, so the cadence reference is its
+                // MAGNITUDE, never the vector compared with a float.
                 AnimationClip walkClip = EnemyAnimationSetup.ResolveClip(EnemyAnimationSetup.WalkFbxPath);
-                float walkReference = walkClip != null && walkClip.averageSpeed > 0.01f
-                    ? walkClip.averageSpeed
+                float walkReference = walkClip != null && walkClip.averageSpeed.magnitude > 0.01f
+                    ? walkClip.averageSpeed.magnitude
                     : 1.3f;
                 bridgeSo.FindProperty("walkReferenceSpeed").floatValue = walkReference;
                 bridgeSo.ApplyModifiedPropertiesWithoutUndo();
@@ -295,7 +298,7 @@ namespace OperationOutbreak.EditorTools
                     $"{(controller != null ? controller.name : "MISSING")}, root motion: {animator.applyRootMotion}, " +
                     $"grounding Y: {(grounded ? groundingForLog.ToString("0.000") : "n/a")}, " +
                     $"death window: {(deathClipForLog != null ? (deathClipForLog.length + DeathPresentationMarginSeconds).ToString("0.00") : "n/a")} s, " +
-                    $"walk cadence reference: {(walkClipForLog != null && walkClipForLog.averageSpeed > 0.01f ? walkClipForLog.averageSpeed.ToString("0.00") : "1.30 (fallback)")} u/s. " +
+                    $"walk cadence reference: {(walkClipForLog != null && walkClipForLog.averageSpeed.magnitude > 0.01f ? walkClipForLog.averageSpeed.magnitude.ToString("0.00") : "1.30 (fallback)")} u/s. " +
                     "Commit the modified Zombie_Prototype.prefab.", contents);
             }
             finally

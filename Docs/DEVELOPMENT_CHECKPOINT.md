@@ -186,6 +186,12 @@ Production enemy VISUAL foundation only — zero enemy gameplay changes:
      trigger (`ShouldPlayAttackAnimation`), and the Death state remains terminal
      (no exits). Kill/section/mission accounting is unchanged — `Died` still fires
      immediately at zero health.
+8. **QA fix #1C (2026-08-17)** — compile correction: Unity's
+    `AnimationClip.averageSpeed` is a **Vector3** (average root-motion velocity), not a
+    float; the tool compared it directly with `0.01f` (2 × CS0019). The cadence
+    reference now uses `averageSpeed.magnitude` — the scalar speed the clip's root
+    actually travels at, which is what the Walk-cadence multiplier divides by. Bug 4
+    behavior is identical.
 
 ## Manual Unity QA checklist for 1Q
 

@@ -392,7 +392,9 @@
   = `clamp(CurrentPlanarSpeed / walkReferenceSpeed, 0.5, 2.5)`. The reference is
   NOT hand-guessed: the visual setup tool reads the walk clip's own
   `averageSpeed` and serializes it onto the prefab bridge (fallback 1.3 when the
-  clip reports no measurable speed). Gameplay speed values are unchanged (still
+  clip reports no measurable speed). QA fix #1C: `AnimationClip.averageSpeed` is a
+  Vector3 in Unity (average root-motion velocity), so the tool uses its
+  `.magnitude` as the cadence scalar. Gameplay speed values are unchanged (still
   pinned by tests); the future Runner variant reuses the identical mechanism at
   higher speeds.
 
