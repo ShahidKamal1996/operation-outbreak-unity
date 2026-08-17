@@ -36,6 +36,14 @@ namespace OperationOutbreak.Enemies
         [SerializeField] private int maxHealth = 3;
         [SerializeField] private bool deactivateOnDefeat = true;
 
+        [Header("Death Presentation (Milestone 1Q)")]
+        [Tooltip("Seconds the defeated enemy stays visible before deactivation, so a " +
+                 "production death animation can play. The default (0.38) reproduces the " +
+                 "pre-1Q prototype behavior exactly; the enemy visual setup tool raises it " +
+                 "for the production zombie.")]
+        [Min(0.05f)]
+        [SerializeField] private float deathPresentationDuration = 0.38f;
+
         public int CurrentHealth { get; private set; }
         public bool IsAlive => CurrentHealth > 0;
         public event Action<ZombieController> Died;
@@ -84,6 +92,15 @@ namespace OperationOutbreak.Enemies
         /// actually reached the player without polling anything.
         /// </summary>
         public event Action<ZombieController, int> DamagedPlayer;
+
+        /// <summary>
+        /// Milestone 1Q - read-only presentation view of this enemy's planar movement
+        /// speed (units/second), refreshed by the gameplay movement code each Update.
+        /// The enemy animation bridge maps it onto its locomotion parameter. Zero while
+        /// suspended, dying or standing at attack range. Writing is impossible; the
+        /// movement authority stays in this component.
+        /// </summary>
+        public float CurrentPlanarSpeed { get; private set; }
 
         private bool _deathNotified;
 
@@ -141,6 +158,10 @@ namespace OperationOutbreak.Enemies
 
         private void Update()
         {
+            // Milestone 1Q - presentation readout: zero unless the movement block below
+            // actually moves the enemy this frame.
+            CurrentPlanarSpeed = 0f;
+
             if (_combatSuspended || _isDying || !IsAlive || playerTarget == null)
             {
                 return;
@@ -169,6 +190,11 @@ namespace OperationOutbreak.Enemies
                     transform.rotation = Quaternion.LookRotation(chaseDirection, Vector3.up);
                 }
             }
+
+            // Milestone 1Q - presentation readout of the velocity actually applied
+            // (including separation drift), so the animation walk plays when the enemy
+            // is genuinely moving and stands still at attack range.
+            CurrentPlanarSpeed = movement.magnitude;
 
             if (inAttackRange && Time.time >= _nextAttackTime && _playerHealth != null && _playerHealth.IsAlive)
             {
@@ -299,13 +325,17 @@ namespace OperationOutbreak.Enemies
         {
             Transform visual = transform.Find("Visual");
             float elapsed = 0f;
-            const float deathDuration = 0.38f;
-            while (elapsed < deathDuration)
+
+            // Milestone 1Q - the wait now uses the serialized presentation duration
+            // (default 0.38 = the pre-1Q prototype behavior). Death ACCOUNTING is
+            // unchanged: the Died event still fires immediately at zero health, so kill
+            // counting, section clear and mission completion timing are untouched.
+            while (elapsed < deathPresentationDuration)
             {
                 elapsed += Time.deltaTime;
                 if (visual != null)
                 {
-                    float progress = elapsed / deathDuration;
+                    float progress = elapsed / deathPresentationDuration;
                     visual.localScale = Vector3.Lerp(_visualScale, _visualScale * 0.12f, progress);
                     visual.localRotation = Quaternion.Euler(progress * 55f, 0f, 0f);
                 }
@@ -329,6 +359,7 @@ namespace OperationOutbreak.Enemies
             attackDamage = Mathf.Max(1, attackDamage);
             attackInterval = Mathf.Max(0.01f, attackInterval);
             maxHealth = Mathf.Max(1, maxHealth);
+            deathPresentationDuration = Mathf.Max(0.05f, deathPresentationDuration);
         }
 #endif
     }

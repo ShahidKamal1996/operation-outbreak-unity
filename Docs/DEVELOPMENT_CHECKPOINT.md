@@ -27,8 +27,9 @@
 | 1C — 1O.5 (shooting, zombies, combat HUD, waves, targeting, gates, feedback, upgrades, sections, Runner, diagnostics, Carl) | IMPLEMENTED (see MILESTONE_LEDGER.md) |
 | Gate systems (1J series) | Development paused per milestone briefs. NOT resumed by 1P. |
 | **1P — weapon & combat feel foundation** | **VERIFIED** (2026-08-16 — project owner's local Unity QA; see "Manual Unity QA" below) |
-| **1P.5 — Toon Soldier visual integration** | **IMPLEMENTED — AWAITING MANUAL UNITY QA** (2026-08-16) |
-| 1Q | NOT STARTED. Milestone 1P is accepted, so 1Q is no longer blocked — but it must not begin until the project owner explicitly authorizes it. |
+| **1P.5 — Toon Soldier visual integration** | **VERIFIED** (owner QA 2026-08-17: EditMode 137/137, animations/aim/grounding/muzzle all accepted) |
+| **1Q — production enemy foundation (Basic Infected)** | **IMPLEMENTED — AWAITING MANUAL UNITY QA** (2026-08-17) |
+| 1R | NOT STARTED — begin only when the project owner authorizes it after 1Q QA. |
 
 ## What Milestone 1P delivered
 
@@ -112,6 +113,64 @@ The 12-step checklist that was executed for this acceptance:
 10. MISSION COMPLETE — fires exactly once. ✔
 11. GAME OVER — behaviour remains valid. ✔
 12. CONSOLE — no new exceptions/errors caused by combat feedback. ✔
+
+## What Milestone 1Q delivered
+
+Production enemy VISUAL foundation only — zero enemy gameplay changes:
+
+1. **Enemy presentation bridge** — `EnemyAnimationBridge` (one-way
+   gameplay → animator, mirroring the 1O.5/1P.5 player bridge): reads the new
+   read-only `ZombieController.CurrentPlanarSpeed`, observes the existing
+   `DamagedPlayer` (→ Attack trigger) and `Died` (→ Dead latch + death anim)
+   events, enforces root motion OFF. Deleting the bridge leaves the enemy fully
+   playable on the prototype visual.
+2. **Reusable enemy controller** — `Art/Animations/Enemies/OO_BasicInfected.controller`,
+   authored by Unity via `Tools > Operation Outbreak > Rebuild Basic Infected
+   Animator Controller` (the project's no-hand-authored-FBX-fileIDs rule):
+   params Speed/Attack/Dead; states Idle (zombie idle), Walk (zombie walk),
+   Attack (zombie attack; AnyState trigger, exit-time return by Speed),
+   Death (zombie death; no exits). The zombie run clip stays RESERVED for
+   future Runner variants — it is not part of Basic Infected locomotion.
+3. **Production visual setup tool** — `Tools > Operation Outbreak > Set Up Basic
+   Infected Production Visual` edits the `Zombie_Prototype.prefab` asset
+   idempotently: instantiates `StylizedZombie_01` under a new `ProductionVisual`
+   child, assigns the controller + `StylizedZombieAvatar` (root motion OFF,
+   AlwaysAnimate), hides the prototype `Visual` renderers (never deleted — the
+   safe fallback), wires the bridge, and raises `deathPresentationDuration` to
+   1.15 s so the death clip plays before deactivation. If the production prefab
+   is missing the tool aborts and the prototype keeps working.
+4. **Death presentation** — gameplay accounting is untouched (`Died` still fires
+   immediately at zero health; kill counting, section clear and mission
+   completion timing are identical). Only the GameObject deactivation is
+   delayed by the serialized `deathPresentationDuration` (default 0.38 s =
+   the pre-1Q behavior byte-for-byte when the tool never runs).
+5. **Movement rule** — the Animator has Apply Root Motion OFF; `ZombieController`
+   remains the single movement authority (no animation-driven movement).
+
+## Manual Unity QA checklist for 1Q
+
+0. **REQUIRED FIRST STEP — run `Tools > Operation Outbreak > Set Up Basic
+   Infected Production Visual`** (rebuilds the controller AND sets up the prefab),
+   save, and commit the regenerated `OO_BasicInfected.controller` plus the
+   modified `Zombie_Prototype.prefab`.
+1. Basic Infected spawns with the Stylized Zombie visual.
+2. Prototype enemy mesh is hidden (not rendered).
+3. Zombie walks while pursuing (idle when still).
+4. Zombie faces the player correctly.
+5. Zombie attack animation plays when attacking.
+6. Existing damage timing still works (unchanged).
+7. Zombie death animation plays once.
+8. Dead enemy cannot continue attacking.
+9. Mission kill/wave accounting remains correct (3 sections, 12 enemies, 9 BASIC / 3 RUNNER, Mission Complete exactly once).
+10. Multiple zombies animate independently.
+11. Enemy separation still works.
+12. Zombie feet/ground alignment looks correct (no floating/sinking).
+13. LOD/prefab rendering produces no obvious errors.
+14. Player Toon Soldier remains unaffected (shooting, aim, muzzle, animations).
+15. Console remains clean.
+16. Full EditMode suite passes — expect **144/144** (137 previous + 7 new
+    `EnemyAnimatorControllerTests`; the controller tests require step 0 to have
+    been run once).
 
 ## What Milestone 1P.5 delivered
 

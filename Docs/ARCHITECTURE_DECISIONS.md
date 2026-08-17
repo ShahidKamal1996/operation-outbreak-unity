@@ -301,6 +301,63 @@
   The humanoid body-part APIs (`SetHumanoidBodyPartActive(AvatarMaskBodyPart, bool)`)
   were already correct and are unchanged.
 
+## Milestone 1Q decisions
+
+### AD-1Q-1: Enemy animation is a one-way presentation bridge, mirroring the player bridge
+
+- **Decision:** `EnemyAnimationBridge` (on the enemy prefab root) reads the new
+  read-only `ZombieController.CurrentPlanarSpeed` and observes the EXISTING
+  gameplay events `DamagedPlayer` (→ Attack trigger) and `Died` (→ Dead latch).
+  It never moves the enemy, applies no damage and feeds nothing back into
+  gameplay; deleting it leaves the prototype visual fully playable.
+- **Why:** the 1O.5/1P.5 player contract ("gameplay raises events for its own
+  reasons; presentation observes without write-back") is the proven pattern, and
+  the 1Q brief demands gameplay state stay separate from visuals. No new
+  gameplay authority was introduced; `ZombieController` remains the single
+  movement/attack/health authority.
+
+### AD-1Q-2: The enemy controller is authored by Unity, never hand-written
+
+- **Decision:** `OO_BasicInfected.controller` is built in place by
+  `Tools > Operation Outbreak > Rebuild Basic Infected Animator Controller`
+  (`EnemyAnimationSetup`), resolving the Mixamo clips via AssetDatabase and
+  authoring states/transitions with UnityEditor.Animations APIs — the binding
+  rule from 1P.5 QA fix #1 (never hand-author FBX sub-asset fileIDs).
+- **State machine:** Speed (float) / Attack (trigger) / Dead (bool) — the exact
+  `EnemyAnimationBridge` contract. Idle (default) ↔ Walk on Speed > 0.1;
+  Attack via AnyState trigger (self-transition allowed, exit-time return to
+  Idle/Walk by Speed); Death via AnyState with NO exits. The zombie run clip is
+  deliberately unwired and validated absent: it is reserved for future Runner
+  variants and must not redefine Basic Infected locomotion.
+- **Root motion:** OFF, enforced in the bridge's Awake and by the setup tool —
+  gameplay is the only movement authority.
+
+### AD-1Q-3: Production visual is installed by an idempotent prefab-editing tool
+
+- **Decision:** `Tools > Operation Outbreak > Set Up Basic Infected Production
+  Visual` (`EnemyVisualSetup`) edits the `Zombie_Prototype.prefab` ASSET through
+  `PrefabUtility.LoadPrefabContents/SaveAsPrefabAsset` (the FBX-instantiation
+  pattern from 1O.5/1P.5). It instantiates `StylizedZombie_01` under a new
+  `ProductionVisual` child, assigns controller + `StylizedZombieAvatar`
+  (AlwaysAnimate), hides the prototype `Visual` renderers (never deleted) and
+  wires the bridge.
+- **Fallback:** if the production prefab cannot be resolved the tool aborts and
+  modifies nothing — the prototype visual keeps working, so gameplay/debugging
+  can never break. The prototype prefab keeps its ZombieController and Visual
+  child regardless (pinned by an EditMode test).
+- **Placement:** production child at identity transform, scale 1 (tuning fields
+  `ProductionVisualPosition/RotationEuler/Scale` are tool-level constants — QA
+  verifies grounding/scale, never gameplay collision changes).
+
+### AD-1Q-4: Death presentation delays only the visual, never the accounting
+
+- **Decision:** `ZombieController.DeathFeedback` now waits a serialized
+  `deathPresentationDuration` (default 0.38 s = the pre-1Q behavior
+  byte-for-byte; the setup tool raises it to 1.15 s on the prefab so the death
+  clip plays). The `Died` event, kill counting, `EnemySpawner` bookkeeping,
+  section clear and mission completion all still fire IMMEDIATELY at zero
+  health — only the GameObject deactivation is delayed. No ragdoll physics.
+
 ## UNKNOWN / open questions
 
 - Pre-1P architecture rationale for gates (1J series) could not be recovered (original
