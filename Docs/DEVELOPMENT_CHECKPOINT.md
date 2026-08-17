@@ -260,6 +260,24 @@ Character presentation replacement ONLY — zero gameplay changes:
       same quantity in Unity's exact frames from the hand-rigid cluster (pose-
       independent). The old blind `barrelTipOffset (0,0,0.6)` was removed. See
       AD-1P.5-6.
+15. **QA fix #10 (2026-08-17)** — compile error CS0579 (Duplicate 'Test' attribute) in
+    `ToonSoldierPresentationTests.cs`: the QA fix #8/#9 edit left a stray `[Test]`
+    attribute above the follow-architecture section comment, so two `[Test]`
+    attributes applied to the same `WriteFollowPose_...` method. One line removed; no
+    test was deleted or disabled, and no production behavior changed. Verified with a
+    real Roslyn compile of the actual test + binder + aim files (0 errors).
+16. **QA fix #11 (2026-08-17)** — Play Mode QA showed the old prototype gun STILL
+    visible over the soldier. Root cause: the scene serialized
+    `prototypeWeaponRoot: {fileID: 210010}` — the WeaponModel **GameObject** — into a
+    **Transform**-typed field. Unity only resolves Transform fields from `!u!4`
+    Transform fileIDs (WeaponModel's is `210011`), so the reference deserialized to
+    null and every hide call returned at its first guard. Fixes: (a) the scene now
+    points at `{fileID: 210011}` (WeaponModel's Transform); (b) the hide logic is
+    decoupled from muzzle binding — `RefreshPrototypeWeaponVisibility()` hides the
+    prototype gun whenever the Toon Soldier visual layer is ACTIVE and restores it
+    when inactive (Carl fallback), evaluated every Update but writing renderers only
+    on state change, so a slow or failed Animator bind can never leave the old gun
+    visible. Two new EditMode tests drive the real renderer state for both cases.
 
 ## Manual Unity QA checklist for 1P.5
 
@@ -289,11 +307,10 @@ Character presentation replacement ONLY — zero gameplay changes:
 14. Carl fallback: re-enable via Tools > Operation Outbreak > Set Up Carl Player Visual
     — no broken references; the muzzle returns to its authored Weapon position
     (Unbind restores the original parent/local transform).
-15. Full EditMode suite passes — expect **131/131** (legitimate [Test] methods
-    counted by inspection: previous 129, minus the removed re-parenting test, plus 4
-    new follow-architecture tests; the QA fix #10 stray duplicate attribute is
-    removed and no legitimate test was lost). The fixture TearDown fails on any
-    unexpected Unity error, pinning the parenting-error class.
+15. Full EditMode suite passes — expect **133/133** (legitimate [Test] methods
+    counted by inspection; QA fix #11 adds the two prototype-renderer state tests:
+    disabled while the soldier visual is active, restored when inactive). The fixture
+    TearDown fails on any unexpected Unity error, pinning the parenting-error class.
 16. Play Mode: verify the soldier's skinned rifle is the ONLY visible weapon (the old
     prototype gun must be gone while the soldier is active), the projectile + muzzle
     flash start at the visible rifle barrel opening, the muzzle follows the rifle

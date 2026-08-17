@@ -19,9 +19,14 @@ namespace OperationOutbreak.Weapons
     ///      following" (the muzzle's authored local pose under the Weapon was never
     ///      touched, so its world position snaps back automatically).
     ///   2. The obsolete prototype weapon visual (Weapon > WeaponModel, a scaled cube)
-    ///      is hidden while the Toon Soldier is active and bound, so the soldier's own
-    ///      skinned rifle is the ONLY visible weapon. It is restored for the
-    ///      Carl/prototype fallback.
+    ///      is hidden whenever the Toon Soldier visual layer is ACTIVE - independently
+    ///      of muzzle binding success (QA fix #11: the hide must not depend on the
+    ///      Animator resolving, otherwise a bind failure leaves the old gun visible).
+    ///      It is restored when the soldier visual is inactive (Carl/prototype
+    ///      fallback). The scene reference prototypeWeaponRoot must point at
+    ///      WeaponModel's TRANSFORM (fileID 210011), not its GameObject (210010):
+    ///      Transform fields only resolve from Transform fileIDs, and a null reference
+    ///      was the QA fix #11 root cause.
     ///   3. The muzzle socket position/direction are no longer a runtime guessing game.
     ///      FBX forensics proved the rifle is rigidly skinned (weight 1.0) to the
     ///      Bip001 R Hand and derived the muzzle from the actual rifle geometry:
@@ -90,6 +95,7 @@ namespace OperationOutbreak.Weapons
         private int _retriesLeft;
         private Mesh _bakeMesh;
         private Renderer[] _prototypeRenderers;
+        private bool _prototypeWeaponHidden;
 
         /// <summary>True while the muzzle is following the soldier socket.</summary>
         public bool IsBound => _bound;
@@ -105,14 +111,17 @@ namespace OperationOutbreak.Weapons
         }
 
         /// <summary>
-        /// Pure decision (QA fix #8): the obsolete prototype weapon visual is hidden
-        /// exactly when the Toon Soldier presentation is active AND bound - the
-        /// soldier's skinned rifle is then the only visible weapon. The Carl/prototype
-        /// fallback keeps the old gun visible, as it always was.
+        /// Pure decision (QA fix #8, refined in #11): the obsolete prototype weapon
+        /// visual is hidden whenever the Toon Soldier VISUAL LAYER is active - the
+        /// soldier's skinned rifle is then the only visible weapon. This is decoupled
+        /// from muzzle binding: hiding must not depend on the Animator/hand resolving,
+        /// otherwise a bind failure leaves the old gun visible (the QA fix #11
+        /// runtime failure mode). The Carl/prototype fallback (soldier visual
+        /// inactive) keeps the old gun visible, as it always was.
         /// </summary>
-        public static bool ShouldHidePrototypeWeapon(bool soldierActiveAndBound)
+        public static bool ShouldHidePrototypeWeapon(bool soldierVisualActive)
         {
-            return soldierActiveAndBound;
+            return soldierVisualActive;
         }
 
         /// <summary>
@@ -209,6 +218,11 @@ namespace OperationOutbreak.Weapons
         private void Start()
         {
             _retriesLeft = Mathf.Max(0, bindRetryFrames);
+
+            // QA fix #11: the prototype gun's visibility is applied immediately and
+            // independently of binding, so a slow or failed bind can never leave the
+            // old gun visible while the Toon Soldier presentation is active.
+            RefreshPrototypeWeaponVisibility();
             TryBind();
         }
 
@@ -226,6 +240,10 @@ namespace OperationOutbreak.Weapons
             {
                 FollowSocketTick();
             }
+
+            // The soldier visual may be toggled (Carl/prototype fallback) at any time;
+            // keep the prototype gun's visibility in sync. Writes only on state change.
+            RefreshPrototypeWeaponVisibility();
         }
 
         private void OnDisable()
@@ -258,6 +276,10 @@ namespace OperationOutbreak.Weapons
         /// muzzle (its authored parent/local pose under the Weapon were never touched),
         /// so the muzzle's world position snaps back to the authored Weapon position -
         /// exactly the Carl/prototype fallback behavior. Idempotent.
+        /// The prototype gun's visibility is deliberately NOT touched here: the Update
+        /// refresh keeps it in sync with the soldier visual's active state, so a
+        /// bind-failure Unbind can no longer re-enable the old gun while the soldier
+        /// is still the active presentation (the QA fix #11 failure mode).
         /// </summary>
         public void Unbind()
         {
@@ -269,8 +291,6 @@ namespace OperationOutbreak.Weapons
                 _socket = null;
                 Destroy(socketObject);
             }
-
-            ApplyPrototypeWeaponVisibility(false);
         }
 
         /// <summary>
@@ -339,11 +359,33 @@ namespace OperationOutbreak.Weapons
             _socket.localRotation = Quaternion.LookRotation(direction) * Quaternion.Euler(barrelRotationEuler);
 
             _bound = true;
-            ApplyPrototypeWeaponVisibility(true);
             return true;
         }
 
-        private void ApplyPrototypeWeaponVisibility(bool soldierActiveAndBound)
+        /// <summary>
+        /// QA fix #11 - keeps the prototype gun's visibility in sync with the soldier
+        /// visual layer: hidden while ToonSoldierVisual is active (the soldier's
+        /// skinned rifle is the only visible weapon), restored when it is inactive
+        /// (Carl/prototype fallback). Independent of muzzle binding, evaluated cheaply
+        /// every Update but writing renderers only on state change. Public so EditMode
+        /// tests can drive it directly.
+        /// </summary>
+        public void RefreshPrototypeWeaponVisibility()
+        {
+            bool soldierActive = soldierVisualRoot != null &&
+                                 soldierVisualRoot.gameObject.activeInHierarchy;
+            bool shouldHide = ShouldHidePrototypeWeapon(soldierActive);
+
+            if (_prototypeWeaponHidden == shouldHide)
+            {
+                return;
+            }
+
+            _prototypeWeaponHidden = shouldHide;
+            SetPrototypeRenderersEnabled(!shouldHide);
+        }
+
+        private void SetPrototypeRenderersEnabled(bool visible)
         {
             if (prototypeWeaponRoot == null)
             {
@@ -360,13 +402,11 @@ namespace OperationOutbreak.Weapons
                 return;
             }
 
-            bool hide = ShouldHidePrototypeWeapon(soldierActiveAndBound);
-
             foreach (Renderer renderer in _prototypeRenderers)
             {
                 if (renderer != null)
                 {
-                    renderer.enabled = !hide;
+                    renderer.enabled = visible;
                 }
             }
         }

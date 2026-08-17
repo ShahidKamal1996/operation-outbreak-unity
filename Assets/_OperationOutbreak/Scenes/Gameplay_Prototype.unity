@@ -2567,7 +2567,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: 
   soldierVisualRoot: {fileID: 1097152860}
   muzzlePoint: {fileID: 210021}
-  prototypeWeaponRoot: {fileID: 210010}
+  prototypeWeaponRoot: {fileID: 210011}
   useMeasuredBarrelTip: 1
   fbxBarrelTipOffset: {x: 0.543, y: -0.0327, z: 0.0765}
   fbxBarrelDirection: {x: 0.9885, y: -0.0595, z: 0.1392}

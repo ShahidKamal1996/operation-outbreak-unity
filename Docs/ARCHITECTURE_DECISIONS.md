@@ -248,10 +248,20 @@
     fallback is simply "stop following" — the muzzle's authored local pose under the
     Weapon was never modified, so its world position snaps back automatically.
   - **One visible weapon:** the obsolete prototype gun (`Weapon > WeaponModel`) is
-    hidden exactly when the Toon Soldier is active and bound
-    (`ShouldHidePrototypeWeapon`); the Carl/prototype fallback restores it. All logical
-    gameplay components (WeaponController, MuzzlePoint, MuzzleFlashFeedback) remain
-    untouched.
+    hidden whenever the Toon Soldier VISUAL LAYER is active
+    (`ShouldHidePrototypeWeapon`), independent of muzzle binding; the Carl/prototype
+    fallback restores it. All logical gameplay components (WeaponController,
+    MuzzlePoint, MuzzleFlashFeedback) remain untouched.
+  - **QA fix #11 correction:** the first implementation serialized
+    `prototypeWeaponRoot` with the WeaponModel **GameObject** fileID (210010) into a
+    Transform-typed field. Unity resolves Transform fields only from `!u!4` Transform
+    fileIDs, so the reference was null at runtime and the hide never executed. The
+    scene now uses WeaponModel's Transform (210011). Rule recorded: scene YAML
+    references must match the field's component type exactly (GameObject `!u!1` vs
+    Transform `!u!4` vs MonoBehaviour `!u!114`/stripped). Additionally, visibility
+    was decoupled from bind success (`RefreshPrototypeWeaponVisibility`, write-on-
+    change each Update) so a slow/failed Animator bind can never leave the old gun
+    visible while the soldier presentation is active.
   - **Deterministic FBX-derived socket constants:** the muzzle position and barrel
     direction are now derived from the actual FBX rifle geometry (hand-rigid tube,
     corrected matrix/axis conventions: vertices Z-up + `PreRotation −90°X`, column-major

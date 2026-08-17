@@ -276,12 +276,85 @@ namespace OperationOutbreak.Tests
         {
             Assert.IsTrue(
                 WeaponMuzzleSocketBinder.ShouldHidePrototypeWeapon(true),
-                "With the Toon Soldier active and bound, the obsolete prototype gun must be " +
+                "With the Toon Soldier visual active, the obsolete prototype gun must be " +
                 "hidden - the soldier's skinned rifle is the only visible weapon.");
             Assert.IsFalse(
                 WeaponMuzzleSocketBinder.ShouldHidePrototypeWeapon(false),
                 "The Carl/prototype fallback must keep the old prototype gun visible, as it " +
                 "was before the Toon Soldier integration.");
+        }
+
+        [Test]
+        public void RefreshPrototypeWeaponVisibility_DisablesRendererWhileSoldierActive()
+        {
+            // Reproduces the QA fix #11 runtime failure: a scene with the soldier visual
+            // active and the obsolete prototype gun renderer enabled. The binder must
+            // disable the renderer even though muzzle binding is NOT involved at all.
+            GameObject soldierRoot = new GameObject("ToonSoldier_demo"); // active
+            GameObject weaponModel = new GameObject("WeaponModel");
+            MeshRenderer renderer = weaponModel.AddComponent<MeshRenderer>();
+
+            var binder = new GameObject("Binder").AddComponent<WeaponMuzzleSocketBinder>();
+            var so = new SerializedObject(binder);
+            so.FindProperty("soldierVisualRoot").objectReferenceValue = soldierRoot.transform;
+            so.FindProperty("prototypeWeaponRoot").objectReferenceValue = weaponModel.transform;
+            so.ApplyModifiedPropertiesWithoutUndo();
+
+            try
+            {
+                Assert.IsTrue(renderer.enabled, "Precondition: the prototype renderer starts enabled.");
+
+                binder.RefreshPrototypeWeaponVisibility();
+
+                Assert.IsFalse(renderer.enabled,
+                    "With the Toon Soldier visual active, the prototype gun's renderer must be " +
+                    "disabled - this is the exact runtime failure QA fix #11 reported.");
+            }
+            finally
+            {
+                Object.DestroyImmediate(binder.gameObject);
+                Object.DestroyImmediate(weaponModel);
+                Object.DestroyImmediate(soldierRoot);
+            }
+        }
+
+        [Test]
+        public void RefreshPrototypeWeaponVisibility_RestoresRendererWhenSoldierInactive()
+        {
+            // Carl/prototype fallback: the soldier visual layer is inactive, so the old
+            // prototype gun must become visible again.
+            GameObject soldierRoot = new GameObject("ToonSoldier_demo");
+            soldierRoot.SetActive(false);
+
+            GameObject weaponModel = new GameObject("WeaponModel");
+            MeshRenderer renderer = weaponModel.AddComponent<MeshRenderer>();
+
+            var binder = new GameObject("Binder").AddComponent<WeaponMuzzleSocketBinder>();
+            var so = new SerializedObject(binder);
+            so.FindProperty("soldierVisualRoot").objectReferenceValue = soldierRoot.transform;
+            so.FindProperty("prototypeWeaponRoot").objectReferenceValue = weaponModel.transform;
+            so.ApplyModifiedPropertiesWithoutUndo();
+
+            try
+            {
+                // First apply the hide (as if the soldier had been active), then toggle.
+                soldierRoot.SetActive(true);
+                binder.RefreshPrototypeWeaponVisibility();
+                Assert.IsFalse(renderer.enabled, "Precondition: hidden while the soldier is active.");
+
+                soldierRoot.SetActive(false);
+                binder.RefreshPrototypeWeaponVisibility();
+
+                Assert.IsTrue(renderer.enabled,
+                    "When the soldier visual is inactive (Carl/prototype fallback), the " +
+                    "prototype gun's renderer must be restored.");
+            }
+            finally
+            {
+                Object.DestroyImmediate(binder.gameObject);
+                Object.DestroyImmediate(weaponModel);
+                Object.DestroyImmediate(soldierRoot);
+            }
         }
 
         [Test]
