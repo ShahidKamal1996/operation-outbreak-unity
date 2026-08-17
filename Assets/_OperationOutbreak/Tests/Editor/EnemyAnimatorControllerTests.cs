@@ -145,38 +145,64 @@ namespace OperationOutbreak.Tests
         // ============================================ QA fix #1B (Bugs 1/2/3) regression
 
         [Test]
-        public void ProductionGroundingOffset_GroundsTheLowestMeshPoint()
+        public void ProductionGroundingOffsetIsTheDeterministicFbxDerivedValue()
         {
-            // Bug 1 regression: the deterministic grounding derivation must place the
-            // zombie's lowest mesh point on the lane (enemy root local Y = -1).
-            GameObject zombie = new GameObject("StylizedZombie_01");
-            GameObject meshObject = new GameObject("MESH");
-            meshObject.transform.SetParent(zombie.transform, false);
+            // QA fix #2 regression: the grounding offset must be the DETERMINISTIC,
+            // FBX-derived value (-1.005), never a runtime bounds measurement. The
+            // bounds-based approach read the vendor prefab's editor/reference pose and
+            // produced a wrong offset (-0.628 in the QA run), leaving the animated
+            // feet floating. The FBX truth: lowest mesh vertex at +0.536 cm above the
+            // model root, enemy root at y=1, lane at y=0 -> offset = -(1 + 0.00536).
+            Assert.AreEqual(
+                -1.005f,
+                EnemyVisualSetup.ProductionVisualGroundingOffsetY,
+                0.001f,
+                "The production grounding offset must stay the deterministic FBX-derived " +
+                "value. Changing it must come with a re-measured FBX rationale.");
+        }
 
-            MeshFilter filter = meshObject.AddComponent<MeshFilter>();
-            meshObject.AddComponent<MeshRenderer>();
+        [Test]
+        public void HitFlashCooldown_GatesTheFlashRate()
+        {
+            // QA fix #2 regression: the flash strobe under auto-fire (restart per hit)
+            // read as body vibration. The pure gate must allow the first flash, block
+            // flashes inside the cooldown window, and allow again after it.
+            Assert.IsTrue(
+                ZombieController.ShouldStartHitFlash(10f, 10f),
+                "At exactly the allowed time the flash may start.");
 
-            Mesh mesh = new Mesh
-            {
-                // Feet exactly at the instance-root origin: min Y = 0.
-                bounds = new Bounds(new Vector3(0f, 1f, 0f), new Vector3(1f, 2f, 1f)),
-            };
-            filter.sharedMesh = mesh;
+            float nextAllowed = 10f + 0.35f;
 
-            try
-            {
-                bool computed = EnemyVisualSetup.TryComputeProductionGroundingOffsetY(
-                    zombie, out float offsetY);
+            Assert.IsFalse(
+                ZombieController.ShouldStartHitFlash(10.3f, nextAllowed),
+                "Inside the cooldown window the flash must be suppressed.");
+            Assert.IsTrue(
+                ZombieController.ShouldStartHitFlash(10.4f, nextAllowed),
+                "After the cooldown the next flash may start.");
+        }
 
-                Assert.IsTrue(computed, "A zombie instance with renderers must yield a grounding offset.");
-                Assert.AreEqual(-1f, offsetY, 0.01f,
-                    "Feet at the instance origin must be lowered one unit to the lane " +
-                    "under the enemy root's y=1 convention.");
-            }
-            finally
-            {
-                Object.DestroyImmediate(zombie);
-            }
+        [Test]
+        public void DeathStateNameIsSharedBetweenBridgeAndController()
+        {
+            // QA fix #2 regression: the bridge's direct death crossfade targets the
+            // state NAME hash, so the tool's Death state and the bridge constant must
+            // never drift apart.
+            Assert.AreEqual(
+                "Death",
+                EnemyAnimationBridge.DeathStateName,
+                "The shared Death state name must remain 'Death'.");
+
+            AnimatorController controller = AssetDatabase.LoadAssetAtPath<AnimatorController>(
+                EnemyAnimationSetup.ControllerPath);
+
+            Assert.IsNotNull(controller, "Controller asset missing - run the rebuild tool.");
+
+            AnimatorState deathState = FindState(
+                controller.layers[0].stateMachine, EnemyAnimationBridge.DeathStateName);
+
+            Assert.IsNotNull(deathState,
+                "The controller's Death state must use the shared bridge name so the " +
+                "direct crossfade targets it.");
         }
 
         [Test]

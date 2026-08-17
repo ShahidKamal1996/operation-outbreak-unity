@@ -351,32 +351,40 @@
 
 ### AD-1Q-6: Grounding, animation-safe hit feedback, and clip-derived death window (QA fix #1B)
 
-- **Bug 1 — grounding (deterministic, asset-derived):** the vendor zombie's lowest
+- **Bug 1 — grounding (deterministic, FBX-derived):** the vendor zombie's lowest
   vertex sits +0.536 cm above its model root (parsed from `StylizedZombie.fbx`,
   Y 0.536–198.8 cm) while the enemy root rides at y = 1; the old zero offset left
-  the zombie floating a full unit. The setup tool now computes
-  `TryComputeProductionGroundingOffsetY` — the lowest renderer-bound point in
-  root-local space lowered to `-EnemyRootGroundHeight` (≈ −1.005 m) — and writes it
-  to `ProductionVisual.localPosition.y` every run. Never a blind guess, never a
+  the zombie floating a full unit. QA fix #2: the renderer-bounds measurement was
+  removed (it read the vendor's EDITOR/reference pose, not the animated idle
+  stance — the QA run measured -0.628 and feet still floated). The tool now
+  applies the static FBX-derived offset `ProductionVisualGroundingOffsetY =
+  -(1 + 0.00536) = -1.005` every run. Deterministic, pose-independent, never a
   gameplay-root/collider/lane change.
 - **Bug 2 — animation-safe hit feedback:** continuous fire spawned one overlapping
   legacy `HitReaction` coroutine per bullet whose white/clear races flickered every
   renderer (perceived as head/body vibration) and ran the prototype scale punch.
-  New rule: ONE restart-safe flash coroutine per enemy
-  (`StartHitFeedback`/`StopHitFeedback`), and the legacy transform punch applies
-  only when the PROTOTYPE visual is the active presentation
-  (`ShouldApplyLegacyTransformPunch`) — an Animator-driven skeleton must never
-  receive transform feedback. The prototype fallback keeps its legacy behavior
-  intact. The white material flash remains as the animation-safe hit readability.
+  New rule: ONE flash coroutine per enemy (`StartHitFeedback`/`StopHitFeedback`),
+  the legacy transform punch applies only when the PROTOTYPE visual is the active
+  presentation (`ShouldApplyLegacyTransformPunch`), and — QA fix #2 — a hit-flash
+  COOLDOWN (`hitFlashCooldownSeconds` = 0.35, gated by `ShouldStartHitFlash`)
+  prevents the flash from restarting per bullet, so sustained auto-fire produces
+  one readable pulse per window instead of a fire-rate strobe. The prototype
+  fallback keeps its legacy behavior; the white material flash remains the
+  animation-safe hit readability.
 - **Bug 3 — death presentation:** the imported death clip is ~2.8–3.0 s (FBX take
   LocalTime 2.97 s / ReferenceTime 2.80 s), far longer than the old 1.15 s
   constant, so the enemy deactivated mid-animation after a final flash burst. The
   tool now writes `deathPresentationDuration = clip.length + 0.3 s`
   (`ComputeDeathPresentationDuration`); `TakeDamage` stops and clears hit feedback
-  at zero health; the bridge death latch blocks further Attack triggers
-  (`ShouldPlayAttackAnimation`); the Death state has no exits. Gameplay accounting
-  (`Died`, kill counting, section clear, mission completion) is unchanged — only
-  the visual deactivation is delayed.
+  BEFORE raising `Died`; the bridge death latch blocks further Attack triggers
+  (`ShouldPlayAttackAnimation`); the Death state has no exits. QA fix #2: the
+  bridge additionally performs a DIRECT `CrossFadeInFixedTime` into the Death
+  state (name shared via `EnemyAnimationBridge.DeathStateName`, also used by the
+  controller tool) so the death clip starts immediately even if a same-frame
+  `AnyState → Attack` self-transition races the parameter-driven one, and freezes
+  the locomotion multiplier at 1. Gameplay accounting (`Died`, kill counting,
+  section clear, mission completion) is unchanged — only the visual deactivation
+  is delayed.
 
 ### AD-1Q-5: Locomotion cadence is synchronized with a per-state speed parameter (Bug 4)
 

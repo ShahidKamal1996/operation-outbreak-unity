@@ -52,8 +52,8 @@ namespace OperationOutbreak.EditorTools
         public const string ZombieInstanceName = "StylizedZombie_01";
 
         /// <summary>Presentation-only placement of the production visual child. X/Z stay 0;
-        /// Y is computed by the tool from the actual mesh geometry (see
-        /// TryComputeProductionGroundingOffsetY) so the feet sit on the lane.</summary>
+        /// Y uses <see cref="ProductionVisualGroundingOffsetY"/> - a DETERMINISTIC,
+        /// FBX-derived value, never a runtime bounds measurement (see QA fix #2).</summary>
         public static readonly Vector3 ProductionVisualPosition = new Vector3(0f, 0f, 0f);
         public static readonly Vector3 ProductionVisualRotationEuler = Vector3.zero;
         public static readonly Vector3 ProductionVisualScale = Vector3.one;
@@ -65,6 +65,26 @@ namespace OperationOutbreak.EditorTools
         /// foot offset. This is the same convention Carl's setup tool establishes.
         /// </summary>
         public const float EnemyRootGroundHeight = 1f;
+
+        /// <summary>
+        /// QA fix #2 (Bug: still floating) - DETERMINISTIC grounding offset.
+        ///
+        /// WHY NOT MEASURE RENDERER BOUNDS: QA fix #1B derived the offset from the
+        /// vendor prefab's renderer bounds inside prefab-contents, where the mesh is in
+        /// its EDITOR/REFERENCE pose (the vendor ships a crouched cartoon pose). At
+        /// runtime the Animator drives the Mixamo idle stance, whose foot height differs
+        /// from that editor pose - so the measured offset (-0.628 in the QA run) left
+        /// the animated feet floating.
+        ///
+        /// THE STABLE SOURCE OF TRUTH: the vendor FBX itself. Its lowest mesh vertex
+        /// sits at +0.536 cm ABOVE the model root (parsed from StylizedZombie.fbx;
+        /// Unity imports cm->m with useFileUnits), and retargeted Mixamo idle feet sit
+        /// at the humanoid reference height - effectively the model root. With the
+        /// enemy root at y=1 and the lane at y=0, the visual must therefore sit at
+        /// y = -(1 + 0.00536) = -1.005. This value is static, pose-independent and
+        /// applied unconditionally by the tool on every run.
+        /// </summary>
+        public const float ProductionVisualGroundingOffsetY = -1.005f;
 
         /// <summary>QA fix #1B (Bug 3) - extra seconds added after the death clip length,
         /// so the animation visibly completes before the enemy deactivates.</summary>
@@ -93,53 +113,6 @@ namespace OperationOutbreak.EditorTools
         {
             float safeMargin = Mathf.Max(0.1f, marginSeconds);
             return Mathf.Max(0.05f, clipLengthSeconds) + safeMargin;
-        }
-
-        /// <summary>
-        /// QA fix #1B (Bug 1) - computes the deterministic grounding offset for the
-        /// production zombie: the lowest point of the instance's renderer bounds,
-        /// expressed in the instance root's local space, is pushed down so the feet
-        /// reach the lane surface (enemy root local Y = -EnemyRootGroundHeight).
-        /// Returns false when the instance has no renderers.
-        /// </summary>
-        public static bool TryComputeProductionGroundingOffsetY(GameObject zombieInstance, out float offsetY)
-        {
-            offsetY = 0f;
-
-            if (zombieInstance == null)
-            {
-                return false;
-            }
-
-            float lowestLocalY = float.MaxValue;
-            bool found = false;
-
-            foreach (Renderer renderer in zombieInstance.GetComponentsInChildren<Renderer>(true))
-            {
-                if (renderer == null)
-                {
-                    continue;
-                }
-
-                // Bounds are world-space AABBs; convert the min corner into the
-                // instance root's local space so the offset is root-relative.
-                float localY = zombieInstance.transform.InverseTransformPoint(renderer.bounds.min).y;
-
-                if (localY < lowestLocalY)
-                {
-                    lowestLocalY = localY;
-                    found = true;
-                }
-            }
-
-            if (!found)
-            {
-                return false;
-            }
-
-            // Feet at enemy-root-local -1 (the ground plane under the y=1 root).
-            offsetY = -EnemyRootGroundHeight - lowestLocalY;
-            return true;
         }
 
         [MenuItem("Tools/Operation Outbreak/Set Up Basic Infected Production Visual")]
@@ -192,15 +165,13 @@ namespace OperationOutbreak.EditorTools
                 zombie.transform.localRotation = Quaternion.identity;
                 zombie.transform.localScale = Vector3.one;
 
-                // QA fix #1B (Bug 1) - deterministic grounding: the production visual
-                // is lowered until the zombie's lowest mesh point reaches the lane
-                // surface, derived from the ACTUAL instance geometry every run (never a
-                // blind guess). X/Z stay 0.
+                // QA fix #2 (Bug: still floating) - DETERMINISTIC grounding: the
+                // production visual is lowered by the static FBX-derived offset
+                // (see ProductionVisualGroundingOffsetY). The pre-#2 bounds measurement
+                // read the vendor's EDITOR pose, not the animated runtime stance, so it
+                // produced a wrong value. X/Z stay 0.
                 Vector3 productionVisualPosition = ProductionVisualPosition;
-                if (TryComputeProductionGroundingOffsetY(zombie, out float groundingY))
-                {
-                    productionVisualPosition.y = groundingY;
-                }
+                productionVisualPosition.y = ProductionVisualGroundingOffsetY;
                 productionVisual.localPosition = productionVisualPosition;
 
                 // Animator: production controller, imported humanoid avatar, root motion OFF.
@@ -291,12 +262,11 @@ namespace OperationOutbreak.EditorTools
                 PrefabUtility.SaveAsPrefabAsset(contents, ZombiePrefabPath);
                 AnimationClip walkClipForLog = EnemyAnimationSetup.ResolveClip(EnemyAnimationSetup.WalkFbxPath);
                 AnimationClip deathClipForLog = EnemyAnimationSetup.ResolveClip(EnemyAnimationSetup.DeathFbxPath);
-                bool grounded = TryComputeProductionGroundingOffsetY(zombie, out float groundingForLog);
                 Debug.Log(
                     "[1Q] Basic Infected production visual ready. Avatar valid: " +
                     $"{(animator.avatar != null && animator.avatar.isValid)}, controller: " +
                     $"{(controller != null ? controller.name : "MISSING")}, root motion: {animator.applyRootMotion}, " +
-                    $"grounding Y: {(grounded ? groundingForLog.ToString("0.000") : "n/a")}, " +
+                    $"grounding Y: {ProductionVisualGroundingOffsetY:0.000} (deterministic FBX-derived), " +
                     $"death window: {(deathClipForLog != null ? (deathClipForLog.length + DeathPresentationMarginSeconds).ToString("0.00") : "n/a")} s, " +
                     $"walk cadence reference: {(walkClipForLog != null && walkClipForLog.averageSpeed.magnitude > 0.01f ? walkClipForLog.averageSpeed.magnitude.ToString("0.00") : "1.30 (fallback)")} u/s. " +
                     "Commit the modified Zombie_Prototype.prefab.", contents);

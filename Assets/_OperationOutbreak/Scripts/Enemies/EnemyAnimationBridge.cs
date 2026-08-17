@@ -43,10 +43,18 @@ namespace OperationOutbreak.Enemies
         public const string DeadParameter = "Dead";
         public const string LocomotionSpeedMultiplierParameter = "LocomotionSpeedMultiplier";
 
+        /// <summary>
+        /// QA fix #2 - the controller's Death STATE name, shared with the
+        /// controller-authoring tool so the bridge's direct death crossfade always
+        /// targets the real state.
+        /// </summary>
+        public const string DeathStateName = "Death";
+
         private static readonly int SpeedHash = Animator.StringToHash(SpeedParameter);
         private static readonly int AttackHash = Animator.StringToHash(AttackParameter);
         private static readonly int DeadHash = Animator.StringToHash(DeadParameter);
         private static readonly int LocomotionSpeedMultiplierHash = Animator.StringToHash(LocomotionSpeedMultiplierParameter);
+        private static readonly int DeathStateHash = Animator.StringToHash(DeathStateName);
 
         [Header("Locomotion Cadence Sync (Milestone 1Q Bug 4)")]
         [Tooltip("Gameplay speed (units/second) at which the walk clip's foot cadence " +
@@ -187,10 +195,20 @@ namespace OperationOutbreak.Enemies
             }
 
             // Death outranks everything: clear a queued Attack trigger so it cannot
-            // consume the transition after death.
+            // consume the transition after death, freeze the locomotion inputs, and
+            // latch the Dead parameter.
             animator.ResetTrigger(AttackHash);
             animator.SetFloat(SpeedHash, 0f);
+            animator.SetFloat(LocomotionSpeedMultiplierHash, 1f);
             animator.SetBool(DeadHash, true);
+
+            // QA fix #2 - DIRECT death entry: crossfade straight into the Death state
+            // in addition to the parameter-driven AnyState transition. This guarantees
+            // the death clip starts immediately even if a same-frame Attack
+            // self-transition or any other transition conflict would otherwise delay
+            // or swallow the parameter-driven one. The Death state has no exits, so
+            // the crossfade is terminal.
+            animator.CrossFadeInFixedTime(DeathStateHash, 0.1f, 0);
         }
 
 #if UNITY_EDITOR

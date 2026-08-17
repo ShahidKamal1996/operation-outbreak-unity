@@ -44,6 +44,13 @@ namespace OperationOutbreak.Enemies
         [Min(0.05f)]
         [SerializeField] private float deathPresentationDuration = 0.38f;
 
+        [Header("Hit Feedback (Milestone 1Q QA fix #2)")]
+        [Tooltip("Minimum seconds between two hit flashes. Sustained auto-fire hits the " +
+                 "enemy far faster than a flash can complete, so without this cooldown the " +
+                 "white/base strobe runs at the fire rate and reads as body vibration.")]
+        [Min(0f)]
+        [SerializeField] private float hitFlashCooldownSeconds = 0.35f;
+
         public int CurrentHealth { get; private set; }
         public bool IsAlive => CurrentHealth > 0;
         public event Action<ZombieController> Died;
@@ -117,6 +124,8 @@ namespace OperationOutbreak.Enemies
         // reference cached once for the presentation decisions.
         private Coroutine _hitFlashRoutine;
         private Transform _productionVisual;
+        // QA fix #2 - the earliest Time.time at which the next hit flash may start.
+        private float _nextHitFlashAllowedTime;
         // Allocated once per zombie; OverlapSphereNonAlloc keeps the chase loop allocation-free.
         private readonly Collider[] _nearbyColliders = new Collider[12];
 
@@ -253,9 +262,24 @@ namespace OperationOutbreak.Enemies
             // Milestone 1O - notification only; the health maths above is already complete.
             DamageTaken?.Invoke(this, amount);
 
-            if (CurrentHealth > 0) StartHitFeedback();
+            if (CurrentHealth > 0)
+            {
+                // QA fix #2 - cooldown-gated flash: at most one pulse per window, so
+                // sustained fire produces a readable pulse instead of a 5 Hz strobe.
+                if (ShouldStartHitFlash(Time.time, _nextHitFlashAllowedTime))
+                {
+                    _nextHitFlashAllowedTime = Time.time + Mathf.Max(0f, hitFlashCooldownSeconds);
+                    StartHitFeedback();
+                }
+            }
+
             if (CurrentHealth == 0)
             {
+                // QA fix #2 - death ordering: kill ALL hit presentation BEFORE the
+                // death event fires, so the Animator receives a clean Dead latch with
+                // no flash/punch still running.
+                StopHitFeedback();
+
                 if (!_deathNotified)
                 {
                     _deathNotified = true;
@@ -263,11 +287,6 @@ namespace OperationOutbreak.Enemies
                 }
 
                 _isDying = true;
-
-                // QA fix #1B (Bug 3) - stop and clear any running hit feedback before
-                // death feedback starts, so the death presentation is never polluted by
-                // hit flashes or legacy transform feedback.
-                StopHitFeedback();
                 StartCoroutine(DeathFeedback());
             }
         }
@@ -281,6 +300,18 @@ namespace OperationOutbreak.Enemies
         public static bool ShouldApplyLegacyTransformPunch(bool productionVisualActive)
         {
             return !productionVisualActive;
+        }
+
+        /// <summary>
+        /// QA fix #2 (Bug: vibration under fire) - pure decision: a hit flash may start
+        /// only after the cooldown since the previous one. Auto-fire hits at ~5 Hz; a
+        /// flash restarted per hit strobes white/base at the fire rate, which reads as
+        /// head/body vibration on the bright production zombie. One pulse per cooldown
+        /// window keeps the feedback readable without the strobe.
+        /// </summary>
+        public static bool ShouldStartHitFlash(float now, float nextAllowedTime)
+        {
+            return now >= nextAllowedTime;
         }
 
         /// <summary>
@@ -423,6 +454,7 @@ namespace OperationOutbreak.Enemies
             attackInterval = Mathf.Max(0.01f, attackInterval);
             maxHealth = Mathf.Max(1, maxHealth);
             deathPresentationDuration = Mathf.Max(0.05f, deathPresentationDuration);
+            hitFlashCooldownSeconds = Mathf.Max(0f, hitFlashCooldownSeconds);
         }
 #endif
     }

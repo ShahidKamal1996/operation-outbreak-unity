@@ -55,7 +55,9 @@ namespace OperationOutbreak.EditorTools
         public const string IdleState = "Idle";
         public const string WalkState = "Walk";
         public const string AttackState = "Attack";
-        public const string DeathState = "Death";
+        // QA fix #2 - the Death state name is shared with EnemyAnimationBridge so the
+        // bridge's direct death crossfade always targets the real state.
+        public const string DeathState = EnemyAnimationBridge.DeathStateName;
 
         /// <summary>Locomotion threshold: Speed at or above this selects Walk.</summary>
         public const float WalkSpeedThreshold = 0.1f;

@@ -192,16 +192,40 @@ Production enemy VISUAL foundation only — zero enemy gameplay changes:
     reference now uses `averageSpeed.magnitude` — the scalar speed the clip's root
     actually travels at, which is what the Walk-cadence multiplier divides by. Bug 4
     behavior is identical.
+9. **QA fix #2 (2026-08-17) — floating, vibration and death still unresolved:**
+   - **Grounding:** QA fix #1B's renderer-bounds measurement read the vendor prefab's
+     EDITOR/REFERENCE pose (the vendor ships a crouched cartoon pose), not the animated
+     Mixamo idle stance — the QA run measured -0.628 and the feet still floated. Fix:
+     the tool now applies a DETERMINISTIC, FBX-derived offset
+     (`ProductionVisualGroundingOffsetY = -1.005`): the vendor mesh's lowest vertex
+     sits at +0.536 cm above the model root (parsed from `StylizedZombie.fbx`), the
+     enemy root rides at y=1 and the lane is y=0, so −(1 + 0.00536) grounds the
+     retargeted idle feet. Static, pose-independent, applied every run; the bounds
+     calculation is removed entirely.
+   - **Vibration:** the "restart-safe" flash still restarted a new white pulse on
+     every bullet, so the white/base strobe ran at the fire rate (~5 Hz) — the
+     vibration. Fix: a hit-flash cooldown (`hitFlashCooldownSeconds` = 0.35) gates new
+     flashes (`ShouldStartHitFlash`), producing one readable pulse per window instead
+     of a strobe.
+   - **Death:** the parameter-driven `AnyState → Death` transition could be raced by
+     the same-frame `AnyState → Attack` self-transition, and hit feedback could still
+     be mid-pulse when `Died` fired. Fix: `TakeDamage` now stops ALL hit feedback
+     BEFORE raising `Died`; the bridge latches Death, freezes Speed and the
+     locomotion multiplier, and additionally performs a DIRECT
+     `CrossFadeInFixedTime` into the Death state (name shared via
+     `EnemyAnimationBridge.DeathStateName`, used by the controller tool too), so the
+     death clip starts immediately and cannot be swallowed. Death has no exits, so the
+     crossfade is terminal.
 
 ## Manual Unity QA checklist for 1Q
 
 0. **REQUIRED FIRST STEP — run `Tools > Operation Outbreak > Set Up Basic
    Infected Production Visual`** (rebuilds the controller with the cadence
-   multiplier, applies the derived grounding offset, and writes the clip-derived
-   walk reference + death window onto the prefab), save, and commit the
-   regenerated `OO_BasicInfected.controller` plus the modified
+   multiplier, applies the DETERMINISTIC FBX-derived grounding offset −1.005, and
+   writes the clip-derived walk reference + death window onto the prefab), save,
+   and commit the regenerated `OO_BasicInfected.controller` plus the modified
    `Zombie_Prototype.prefab`. The tool's console log reports grounding Y
-   (expect ≈ -1.005), death window (≈ 3.1 s) and walk cadence reference.
+   (expect -1.005), death window (≈ 3.1 s) and walk cadence reference.
 1. Basic Infected spawns with the Stylized Zombie visual.
 2. **Feet sit on the lane** — no floating, no significant sinking.
 3. Prototype enemy mesh is hidden (not rendered).
@@ -212,9 +236,11 @@ Production enemy VISUAL foundation only — zero enemy gameplay changes:
 7. Zombie attack animation plays when attacking (attack timing unchanged).
 8. Existing damage timing still works (unchanged).
 9. **Continuous bullets produce readable hit feedback with NO head/body
-   vibration** (Bug 2 fix).
-10. **Death animation visibly plays once to completion** (Bug 3 fix: ~2.8 s clip
-    + 0.3 s margin), uninterrupted, then the zombie deactivates.
+   vibration** (QA fix #2: cooldown-gated flash — one pulse per ~0.35 s, no
+   fire-rate strobe).
+10. **Death animation visibly plays once to completion** (QA fix #2: direct
+    crossfade into the terminal Death state; ~2.8 s clip + 0.3 s margin window),
+    uninterrupted, then the zombie deactivates.
 11. Dead enemy cannot move or attack.
 12. Mission kill/wave accounting remains correct (3 sections, 12 enemies,
     9 BASIC / 3 RUNNER, Mission Complete exactly once).
@@ -223,10 +249,10 @@ Production enemy VISUAL foundation only — zero enemy gameplay changes:
 15. LOD/prefab rendering produces no obvious errors.
 16. Player Toon Soldier remains unaffected (shooting, aim, muzzle, animations).
 17. Console remains clean.
-18. Full EditMode suite passes — expect **151/151** (147 previous + 4 new
-    QA-fix-#1B tests: deterministic grounding derivation, production-vs-prototype
-    legacy punch gate, death-latch attack-presentation gate, and clip-derived
-    death window; the controller tests require step 0 to have been run once).
+18. Full EditMode suite passes — expect **153/153** (151 previous − 1 removed
+    bounds-measurement test + 3 new QA-fix-#2 tests: deterministic FBX-derived
+    grounding pin, hit-flash cooldown gate, and the shared Death state name; the
+    controller tests require step 0 to have been run once).
 
 ## What Milestone 1P.5 delivered
 
