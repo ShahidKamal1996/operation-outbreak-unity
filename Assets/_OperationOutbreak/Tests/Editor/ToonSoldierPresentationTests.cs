@@ -231,7 +231,6 @@ namespace OperationOutbreak.Tests
                 "Missing hand bone must never bind.");
         }
 
-        [Test]
         // ============================================= QA fix #8/#9 - follow architecture
 
         [Test]

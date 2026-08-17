@@ -289,12 +289,11 @@ Character presentation replacement ONLY — zero gameplay changes:
 14. Carl fallback: re-enable via Tools > Operation Outbreak > Set Up Carl Player Visual
     — no broken references; the muzzle returns to its authored Weapon position
     (Unbind restores the original parent/local transform).
-15. Full EditMode suite passes — expect **132/132** (previous 129, minus the removed
-    re-parenting test, plus 4 new follow-architecture tests: single-muzzle follow
-    without parent change, prototype-weapon visibility decision, active-soldier-
-    without-avatar graceful failure, and the re-parenting-free Unbind safety test; the
-    fixture TearDown fails on any unexpected Unity error, pinning the parenting-error
-    class).
+15. Full EditMode suite passes — expect **131/131** (legitimate [Test] methods
+    counted by inspection: previous 129, minus the removed re-parenting test, plus 4
+    new follow-architecture tests; the QA fix #10 stray duplicate attribute is
+    removed and no legitimate test was lost). The fixture TearDown fails on any
+    unexpected Unity error, pinning the parenting-error class.
 16. Play Mode: verify the soldier's skinned rifle is the ONLY visible weapon (the old
     prototype gun must be gone while the soldier is active), the projectile + muzzle
     flash start at the visible rifle barrel opening, the muzzle follows the rifle
