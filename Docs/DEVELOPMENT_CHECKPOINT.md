@@ -343,6 +343,30 @@ Production enemy VISUAL foundation only — zero enemy gameplay changes:
     clip finished AND grounded Y reached; the production-only 0.15 s hold and the
     4 s safety timeout remain; collider lifecycle (fix #7), standing grounding
     (−1.005), walk cadence, materials and all gameplay are untouched.
+17. **QA fix #11 (2026-08-19) — final pose calibration: sample the true near-end
+    pose + small contact margin:** QA confirmed the fix #10 motion was natural
+    but the final lying pose rested slightly ABOVE the road. Diagnosis: the
+    fix #10 calibration sampled the death pose at normalized 0.95 — slightly too
+    early, so the serialized `deathGroundedVisualY` was derived from a pose that
+    is not yet the true final resting pose (the clip keeps changing vertically
+    through its tail). Fix (setup-time calibration only — the death-time-driven
+    architecture is unchanged, no runtime measurement, no settle):
+    - the calibration sample moved to `DeathPoseMeasurementNormalizedTime =
+      0.999` (1.0 minus a tiny epsilon — the last evaluable instant, the true
+      near-end pose);
+    - the setup tool now samples a VERTICAL PROFILE (0.95 / 0.99 / 0.999),
+      bakes the skinned mesh at each pose and logs each lowest corpse world Y,
+      so the tail's vertical movement is directly visible in the console;
+    - a small configurable DOWNWARD contact margin
+      (`deathGroundingContactMargin`, default `0.02`, clamped to [0, 0.05] by
+      `ClampDeathGroundingContactMargin`) is serialized alongside and subtracted
+      at runtime from the measured Y (`ApplyDeathGroundingContactMargin`) — the
+      corpse prefers a very slight contact with the road over visible hovering,
+      and can never sink deeply. The blend target, the completion gate and the
+      misconfiguration warning all use the margin-adjusted final Y.
+    Re-run `Tools > Operation Outbreak > Set Up Basic Infected Production
+    Visual` and commit the regenerated prefab (the measured Y and the vertical
+    profile are in the console log).
 9. **QA fix #2 (2026-08-17) — floating, vibration and death still unresolved:**
    - **Grounding:** QA fix #1B's renderer-bounds measurement read the vendor prefab's
      EDITOR/REFERENCE pose (the vendor ships a crouched cartoon pose), not the animated
@@ -374,14 +398,17 @@ Production enemy VISUAL foundation only — zero enemy gameplay changes:
    Infected Production Visual`** (rebuilds the controller with the cadence
    multiplier, applies the DETERMINISTIC FBX-derived grounding offset −1.005,
    assigns the source-controlled OO URP zombie materials to every production
-   renderer, measures the near-final death pose ONCE and writes the stable final
-   death grounded Y + grounding window (0.25 → 0.85) and the clip-derived walk
-   reference + death window onto the prefab), save, and commit the regenerated
+   renderer, measures the near-final death pose (vertical profile 0.95/0.99/0.999,
+   calibration at the true near-end pose t=0.999) and writes the stable final
+   death grounded Y + the small contact margin (0.02) + grounding window
+   (0.25 → 0.85) and the clip-derived walk reference + death window onto the
+   prefab), save, and commit the regenerated
    `OO_BasicInfected.controller` plus the modified `Zombie_Prototype.prefab`. The
-   tool's console log reports grounding Y (-1.005), the measured final death
-   grounded Y (or the documented fallback −1.5 with a warning), death window
-   (≈ 3.1 s), death state resolution, assigned renderer count and walk cadence
-   reference.
+   tool's console log reports grounding Y (-1.005), the vertical profile (lowest
+   corpse world Y per sample — the QA fix #11 diagnosis), the measured final
+   death grounded Y + contact margin (or the documented fallback −1.5 with a
+   warning), death window (≈ 3.1 s), death state resolution, assigned renderer
+   count and walk cadence reference.
 1. Basic Infected spawns with the Stylized Zombie visual.
 2. **Correct textures/materials appear — NO magenta/pink** (OO URP materials
    active on LOD0 and LOD1).
@@ -409,12 +436,14 @@ Production enemy VISUAL foundation only — zero enemy gameplay changes:
 12b. **The lowering happens DURING the fall** (QA fix #10): the corpse blends
      from the standing Y to the final grounded Y as a smoothstep of the Death
      clip's normalized time (0.25 → 0.85), so the final lying pose is ALREADY
-     resting on the road when the animation ends. The desired sequence is:
-     upright → killed → falls → body naturally approaches the road → final lying
-     pose touches the road → corpse stays completely still on the road briefly →
-     disappears. There must be NO hover-then-sink ("sinking in water") and NEVER
-     an upward pop. After the clip ends the visual is written no further — fully
-     stationary.
+     resting on the road when the animation ends. **Final pose calibration
+     (QA fix #11):** the final lying pose must very slightly CONTACT the road —
+     prefer a tiny intersection over any visible hovering, and never a deep
+     sink. The desired sequence is: upright → killed → falls → body naturally
+     approaches the road → final lying pose contacts the road → corpse stays
+     completely still briefly → disappears. There must be NO hover-then-sink
+     ("sinking in water") and NEVER an upward pop. After the clip ends the
+     visual is written no further — fully stationary.
 12c. **Dead collider disabled:** the CapsuleCollider turns off at death and the
      next spawned enemy has it enabled again (QA fix #7).
 12d. **Corpse disappears only AFTER the grounded pose is reached:** the enemy
@@ -429,16 +458,15 @@ Production enemy VISUAL foundation only — zero enemy gameplay changes:
 16. LOD/prefab rendering produces no obvious errors (both LODs textured).
 17. Player Toon Soldier remains unaffected (shooting, aim, muzzle, animations).
 18. Console remains clean.
-19. Full EditMode suite passes — expect **184/184** (179 previous; QA fix #10
-    REPLACED the 6 obsolete settle tests with 6 death-time-driven tests — blend
-    start gate, final-Y-reached-by-end gate, downward-only per-frame clamp
-    simulation, stops-changing-after-target, standing-Y-retained-until-window-
-    opens, blend-ends-exactly-on-final-Y — and ADDED 5: grounding-driven-by-
-    normalized-time matrix, smoothstep ease-in/out shape, reflection-pinned
-    no-post-animation-settle-path, documented fallback default, and the
-    window-completes-before-the-clip-finish-gate pin; the two world-delta maths
-    tests remain as setup-time measurement pins; the controller tests require
-    step 0 to have been run once).
+19. Full EditMode suite passes — expect **187/187** (184 previous; QA fix #11
+    ADDED 3: true-near-end calibration-sample pin (≥0.99, <1.0, ordered profile
+    ending on the calibration sample), downward-only-and-small contact margin
+    (clamp + application matrix), and final-Y-stays-at-or-below-measured-Y
+    (near-end vs early-sample scenario + margin + standing −1.005 pin); the
+    no-post-animation-settle-path reflection test now also pins the allowed
+    death-time-driven path; the fallback-default test additionally pins the
+    contact-margin default 0.02; the controller tests require step 0 to have
+    been run once).
 
 ## What Milestone 1P.5 delivered
 

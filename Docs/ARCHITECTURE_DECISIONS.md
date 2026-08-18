@@ -512,6 +512,27 @@
   only when the setup measurement is unavailable, and a misconfigured value can
   never lift the corpse (downward-only clamp).
 
+### AD-1Q-9: The final grounded Y is calibrated at the true near-end pose with a small contact margin (QA fix #11)
+
+- **Decision:** the fix #10 calibration sampled the death pose at normalized
+  0.95 — slightly too early, because the death clip keeps changing vertically
+  through its tail; the serialized Y therefore left the final corpse pose a
+  little above the road. The setup-time calibration now samples the TRUE
+  near-end pose at normalized 0.999 (1.0 minus a tiny epsilon, the last
+  evaluable instant), and the tool logs a vertical profile (0.95 / 0.99 /
+  0.999) of the lowest corpse world Y so the tail movement is visible in the
+  console. A small configurable DOWNWARD contact margin
+  (`deathGroundingContactMargin`, default 0.02, runtime-clamped to [0, 0.05])
+  is serialized alongside the measured Y and subtracted at runtime
+  (`ApplyDeathGroundingContactMargin`); the blend target, completion gate and
+  misconfiguration warning all use the margin-adjusted value.
+- **Visual rule:** prefer a very slight contact/intersection with the road over
+  visible hovering — but never sink the body deeply (hence the 0.05 ceiling).
+- **Why setup-time only:** the production zombie and its death clip are fixed
+  assets; the runtime must never resample poses or chase targets (that was the
+  QA fix #6–#9 "sinking" failure). Calibration drift like this is corrected by
+  re-running the setup tool, not by runtime logic.
+
 ## UNKNOWN / open questions
 
 - Pre-1P architecture rationale for gates (1J series) could not be recovered (original

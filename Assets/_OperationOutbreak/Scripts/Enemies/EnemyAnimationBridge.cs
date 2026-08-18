@@ -131,10 +131,32 @@ namespace OperationOutbreak.Enemies
         [SerializeField] private float deathGroundingEndNormalizedTime = 0.85f;
 
         [Tooltip("The grounded death pose counts as REACHED when the visual's Y is " +
-                 "within this distance of deathGroundedVisualY. Used by the death " +
-                 "presentation completion gate.")]
+                 "within this distance of the margin-adjusted final grounded Y. Used " +
+                 "by the death presentation completion gate.")]
         [Min(0f)]
         [SerializeField] private float deathGroundingCompletionTolerance = 0.015f;
+
+        /// <summary>
+        /// QA fix #11 - DEFAULT contact margin subtracted from the serialized final
+        /// grounded death Y: the corpse prefers a very slight contact/intersection
+        /// with the road over visible hovering. Small by design (2 cm on a 2 m
+        /// zombie); the setup tool always writes this value, and it can be tuned
+        /// per-prefab in the Inspector without re-running the tool.
+        /// </summary>
+        public const float DefaultDeathGroundingContactMargin = 0.02f;
+
+        /// <summary>
+        /// QA fix #11 - safety ceiling for the contact margin. Anything larger would
+        /// sink the body visibly ("do not sink the body deeply"); the clamp is
+        /// applied at runtime too, so a hand-edited value can never over-sink.
+        /// </summary>
+        public const float MaximumDeathGroundingContactMargin = 0.05f;
+
+        [Tooltip("QA fix #11 - small DOWNWARD contact margin subtracted from the " +
+                 "serialized final grounded Y, so the corpse visually contacts the " +
+                 "road instead of hovering a few centimetres above it. Clamped to " +
+                 "[0, 0.05]; the setup tool writes the default 0.02 every run.")]
+        [SerializeField] private float deathGroundingContactMargin = DefaultDeathGroundingContactMargin;
 
         private Transform _productionVisual;
         private float _standingProductionVisualY;
@@ -252,6 +274,31 @@ namespace OperationOutbreak.Enemies
         }
 
         /// <summary>
+        /// QA fix #11 - pure clamp: the contact margin is DOWNWARD-ONLY and SMALL.
+        /// Negative values are discarded (the margin may never raise the corpse)
+        /// and anything above the safety ceiling clamps to it, so a hand-edited
+        /// value can never sink the body deeply. Static and side-effect free for
+        /// EditMode tests.
+        /// </summary>
+        public static float ClampDeathGroundingContactMargin(float contactMargin)
+        {
+            return Mathf.Clamp(contactMargin, 0f, MaximumDeathGroundingContactMargin);
+        }
+
+        /// <summary>
+        /// QA fix #11 - pure application: the effective final grounded Y is the
+        /// serialized pose-measured Y minus the (clamped, non-negative) contact
+        /// margin. The result is therefore always AT OR BELOW the measured Y -
+        /// never above it - which is the whole point: prefer a very slight
+        /// contact with the road over visible hovering.
+        /// </summary>
+        public static float ApplyDeathGroundingContactMargin(
+            float groundedVisualY, float contactMargin)
+        {
+            return groundedVisualY - ClampDeathGroundingContactMargin(contactMargin);
+        }
+
+        /// <summary>
         /// QA fix #10 - pure gate: the grounding blend has fully completed once the
         /// progress reaches 1, i.e. the Death clip advanced to (or past) the
         /// configured end point. Because the end point (0.85) sits well before the
@@ -327,8 +374,14 @@ namespace OperationOutbreak.Enemies
                     return true;
                 }
 
+                // QA fix #11 - completion is judged against the MARGIN-ADJUSTED final
+                // grounded Y (the same value the blend converges to), so the wait ends
+                // exactly when the corpse rests at its calibrated contact pose.
+                float finalGroundedY = ApplyDeathGroundingContactMargin(
+                    deathGroundedVisualY, deathGroundingContactMargin);
+
                 return IsDeathGroundingComplete(
-                    _productionVisual.localPosition.y, deathGroundedVisualY, deathGroundingCompletionTolerance);
+                    _productionVisual.localPosition.y, finalGroundedY, deathGroundingCompletionTolerance);
             }
         }
 
@@ -475,14 +528,21 @@ namespace OperationOutbreak.Enemies
 
             _deathPresentationStarted = true;
 
-            // QA fix #10 - sanity check: a misconfigured final grounded Y ABOVE the
-            // standing Y can never lift the corpse (the per-frame downward-only clamp
-            // discards upward motion), but QA should hear about the misconfiguration.
-            if (_productionVisual != null && deathGroundedVisualY > _standingProductionVisualY)
+            // QA fix #10/#11 - sanity check: a misconfigured final grounded Y (after
+            // the contact margin) ABOVE the standing Y can never lift the corpse (the
+            // per-frame downward-only clamp discards upward motion), but QA should
+            // hear about the misconfiguration.
+            float effectiveFinalGroundedY = ApplyDeathGroundingContactMargin(
+                deathGroundedVisualY, deathGroundingContactMargin);
+
+            if (_productionVisual != null && effectiveFinalGroundedY > _standingProductionVisualY)
             {
                 Debug.LogWarning(
-                    "[1Q QA fix #10] Death grounded Y " + deathGroundedVisualY.ToString("0.000") +
-                    " is ABOVE the standing visual Y " + _standingProductionVisualY.ToString("0.000") +
+                    "[1Q QA fix #10/#11] Effective death grounded Y " +
+                    effectiveFinalGroundedY.ToString("0.000") + " (measured " +
+                    deathGroundedVisualY.ToString("0.000") + " - contact margin " +
+                    ClampDeathGroundingContactMargin(deathGroundingContactMargin).ToString("0.000") +
+                    ") is ABOVE the standing visual Y " + _standingProductionVisualY.ToString("0.000") +
                     " - the corpse will stay at the standing Y until the deactivation safety " +
                     "timeout. Re-run 'Set Up Basic Infected Production Visual' to measure the " +
                     "correct value.", this);
@@ -620,23 +680,26 @@ namespace OperationOutbreak.Enemies
         }
 
         /// <summary>
-        /// QA fix #10 - runs once per frame after the death latch and drives the
+        /// QA fix #10/#11 - runs once per frame after the death latch and drives the
         /// corpse grounding PURELY from the Death clip's normalized time:
         ///
         ///   deathT  = Base Layer.Death normalized time (clamped, non-looping)
         ///   blendT  = smoothstep(remap(deathT, start=0.25, end=0.85))
-        ///   nextY   = clampDownward(currentY, lerp(standingY, finalGroundedY, blendT))
+        ///   finalY  = serializedDeathGroundedY - contactMargin (QA fix #11)
+        ///   nextY   = clampDownward(currentY, lerp(standingY, finalY, blendT))
         ///
-        /// The final grounded Y (deathGroundedVisualY) is a STABLE value measured
-        /// once at setup time and serialized on this component - it is never
-        /// resampled at runtime. The lowering therefore happens DURING the fall
-        /// (merging with the death animation) and is complete at normalized ~0.85,
-        /// well before the clip-finish gate at 0.999: no hover, no second downward
-        /// motion, no post-animation MoveTowards settle, no visible sinking. After
-        /// the clip finishes (and the Y is within tolerance of the target) no
-        /// further writes occur. Only the ProductionVisual child's Y is ever
-        /// written - the gameplay root, collider and the standing offset for
-        /// Idle/Walk/Attack are untouched.
+        /// The final grounded Y is a STABLE value measured once at setup time and
+        /// serialized on this component - it is never resampled at runtime. The
+        /// contact margin (small, downward-only, clamped) is the QA fix #11
+        /// calibration so the corpse ends in a very slight contact with the road
+        /// instead of hovering. The lowering happens DURING the fall (merging with
+        /// the death animation) and is complete at normalized ~0.85, well before
+        /// the clip-finish gate at 0.999: no hover, no second downward motion, no
+        /// post-animation settle, no visible sinking. After the clip finishes (and
+        /// the Y is within tolerance of the final target) no further writes occur.
+        /// Only the ProductionVisual child's Y is ever written - the gameplay
+        /// root, collider and the standing offset for Idle/Walk/Attack are
+        /// untouched.
         /// </summary>
         private void UpdateDeathPresentationVisual()
         {
@@ -661,11 +724,18 @@ namespace OperationOutbreak.Enemies
 
             float currentY = _productionVisual.localPosition.y;
 
+            // QA fix #11 - the blend target is the MARGIN-ADJUSTED final grounded Y:
+            // the serialized pose-measured Y minus the small downward contact margin,
+            // so the corpse ends in a very slight contact with the road rather than
+            // hovering a few centimetres above it.
+            float finalGroundedY = ApplyDeathGroundingContactMargin(
+                deathGroundedVisualY, deathGroundingContactMargin);
+
             // QA fix #10 - once the clip has finished AND the corpse already rests
             // at the final grounded Y, the visual is completely stationary: no
             // further writes, so nothing can move after the animation ends.
             if (_deathClipFinished &&
-                IsDeathGroundingComplete(currentY, deathGroundedVisualY, deathGroundingCompletionTolerance))
+                IsDeathGroundingComplete(currentY, finalGroundedY, deathGroundingCompletionTolerance))
             {
                 return;
             }
@@ -674,7 +744,7 @@ namespace OperationOutbreak.Enemies
             float blendProgress = ComputeDeathGroundingProgress(
                 deathT, deathGroundingStartNormalizedTime, deathGroundingEndNormalizedTime);
             float nextY = ComputeDeathGroundedVisualY(
-                _standingProductionVisualY, deathGroundedVisualY, blendProgress);
+                _standingProductionVisualY, finalGroundedY, blendProgress);
 
             // QA fix #10 - the downward-only invariant is enforced on the WRITE, not
             // on a chased target: the blend is already monotonic in normalized time,
@@ -712,7 +782,8 @@ namespace OperationOutbreak.Enemies
 
             // QA fix #10 - a grounded corpse's final Y must sit below the root
             // (never positive); the grounding window must stay inside the clip and
-            // end after it starts; the completion tolerance is non-negative.
+            // end after it starts; the completion tolerance is non-negative; the
+            // QA fix #11 contact margin is downward-only and capped small.
             deathGroundedVisualY = Mathf.Min(0f, deathGroundedVisualY);
             deathGroundingStartNormalizedTime =
                 Mathf.Clamp(deathGroundingStartNormalizedTime, 0.01f, 0.99f);
@@ -726,6 +797,7 @@ namespace OperationOutbreak.Enemies
             }
 
             deathGroundingCompletionTolerance = Mathf.Max(0f, deathGroundingCompletionTolerance);
+            deathGroundingContactMargin = ClampDeathGroundingContactMargin(deathGroundingContactMargin);
         }
 #endif
     }

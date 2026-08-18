@@ -885,15 +885,28 @@ namespace OperationOutbreak.Tests
             Assert.IsNotNull(
                 bridge.GetField("deathGroundedVisualY", Any),
                 "The stable serialized final grounded Y must exist on the bridge.");
+
+            // QA fix #10/#11 - the ALLOWED path must exist and be the only motion
+            // source: the death-time-driven blend plus the margin calibration.
+            Assert.IsNotNull(
+                bridge.GetMethod("UpdateDeathPresentationVisual", Any),
+                "The death-time-driven grounding blend must exist on the bridge.");
+            Assert.IsNotNull(
+                bridge.GetMethod("ComputeDeathGroundingProgress", Any),
+                "The normalized-time -> grounding-progress remap must exist.");
+            Assert.IsNotNull(
+                bridge.GetMethod("ApplyDeathGroundingContactMargin", Any),
+                "The QA fix #11 contact-margin application must exist.");
         }
 
         [Test]
         public void DeathGroundedVisualYDefaultIsTheDocumentedFallback()
         {
-            // QA fix #10: the serialized final grounded Y defaults to the documented
-            // fallback constant (used only when the setup measurement is
+            // QA fix #10/#11: the serialized final grounded Y defaults to the
+            // documented fallback constant (used only when the setup measurement is
             // unavailable) and must sit BELOW the standing offset so a default
-            // value can never leave the corpse floating.
+            // value can never leave the corpse floating. The contact margin
+            // defaults to the documented small downward value.
             GameObject holder = new GameObject("BridgeDefaultCheck");
             EnemyAnimationBridge bridge = holder.AddComponent<EnemyAnimationBridge>();
 
@@ -912,6 +925,17 @@ namespace OperationOutbreak.Tests
                     EnemyAnimationBridge.FallbackDeathGroundedVisualY,
                     EnemyVisualSetup.ProductionVisualGroundingOffsetY,
                     "The fallback final Y must sit below the standing offset (-1.005).");
+
+                System.Reflection.FieldInfo marginField = typeof(EnemyAnimationBridge).GetField(
+                    "deathGroundingContactMargin", BindingFlags.Instance | BindingFlags.NonPublic);
+
+                Assert.IsNotNull(marginField,
+                    "deathGroundingContactMargin must exist on the bridge (QA fix #11).");
+                Assert.AreEqual(
+                    EnemyAnimationBridge.DefaultDeathGroundingContactMargin,
+                    (float)marginField.GetValue(bridge),
+                    0.0001f,
+                    "The contact margin default must be the documented small value (0.02).");
             }
             finally
             {
@@ -937,6 +961,146 @@ namespace OperationOutbreak.Tests
                 EnemyVisualSetup.DeathGroundingEndNormalizedTime,
                 0.999f,
                 "The grounding end point must precede the clip-finish gate.");
+        }
+
+        // ============================================ QA fix #11 (final pose calibration)
+
+        [Test]
+        public void FinalDeathPoseSampleUsesTheTrueNearEndTime()
+        {
+            // QA fix #11: the calibration sample must sit at the TRUE near-end pose
+            // (1.0 minus a tiny epsilon), not mid-tail. The fix #10 sample (0.95)
+            // was slightly too early - the clip keeps changing vertically after it,
+            // which is exactly why the corpse hovered a little above the road.
+            Assert.GreaterOrEqual(
+                EnemyVisualSetup.DeathPoseMeasurementNormalizedTime,
+                0.99f,
+                "The calibration sample must be at least 0.99 - very close to the " +
+                "true final resting pose.");
+            Assert.Less(
+                EnemyVisualSetup.DeathPoseMeasurementNormalizedTime,
+                1f,
+                "The calibration sample must stay inside the clip (1.0 minus epsilon).");
+
+            // The diagnostic profile must be ordered and END on the calibration
+            // sample; its first entry keeps the old fix #10 sample so the tail's
+            // vertical movement is visible in the setup log.
+            float[] profile = EnemyVisualSetup.DeathPoseProfileNormalizedTimes;
+
+            Assert.IsNotNull(profile, "The vertical profile must exist.");
+            Assert.GreaterOrEqual(profile.Length, 2,
+                "The profile must contain at least the old sample and the calibration.");
+            Assert.LessOrEqual(profile[0], 0.95f,
+                "The profile must start at (or before) the old fix #10 sample so the " +
+                "vertical drift through the tail is logged.");
+
+            for (int i = 1; i < profile.Length; i++)
+            {
+                Assert.Greater(profile[i], profile[i - 1],
+                    "Profile sample times must be strictly increasing.");
+                Assert.Less(profile[i], 1f,
+                    "Every profile sample must stay inside the clip.");
+            }
+
+            Assert.AreEqual(
+                EnemyVisualSetup.DeathPoseMeasurementNormalizedTime,
+                profile[profile.Length - 1],
+                0.0001f,
+                "The profile must END on the calibration sample - the true near-end pose.");
+        }
+
+        [Test]
+        public void DeathGroundingContactMarginIsDownwardOnlyAndSmall()
+        {
+            // QA fix #11: the contact margin may only move the corpse DOWN (never
+            // up) and is capped small, so the body can never sink deeply even if
+            // the serialized value is hand-edited.
+            Assert.AreEqual(
+                0f,
+                EnemyAnimationBridge.ClampDeathGroundingContactMargin(-0.5f),
+                0.0001f,
+                "A negative margin must clamp to 0 (downward-only: never raise the corpse).");
+            Assert.AreEqual(
+                0.02f,
+                EnemyAnimationBridge.ClampDeathGroundingContactMargin(0.02f),
+                0.0001f,
+                "The documented default margin must pass through unchanged.");
+            Assert.AreEqual(
+                EnemyAnimationBridge.MaximumDeathGroundingContactMargin,
+                EnemyAnimationBridge.ClampDeathGroundingContactMargin(5f),
+                0.0001f,
+                "An absurd margin must clamp to the small safety ceiling (0.05).");
+            Assert.LessOrEqual(
+                EnemyAnimationBridge.MaximumDeathGroundingContactMargin,
+                0.05f,
+                "The safety ceiling itself must be small - no deep sinking.");
+
+            // Application: measured Y minus the clamped margin.
+            Assert.AreEqual(
+                -1.52f,
+                EnemyAnimationBridge.ApplyDeathGroundingContactMargin(-1.5f, 0.02f),
+                0.0001f,
+                "The default margin must lower the final Y by exactly 0.02.");
+            Assert.AreEqual(
+                -1.5f,
+                EnemyAnimationBridge.ApplyDeathGroundingContactMargin(-1.5f, -0.3f),
+                0.0001f,
+                "A negative margin must leave the measured Y unchanged.");
+            Assert.AreEqual(
+                -1.55f,
+                EnemyAnimationBridge.ApplyDeathGroundingContactMargin(-1.5f, 9f),
+                0.0001f,
+                "An absurd margin must lower the Y by at most the safety ceiling (0.05).");
+        }
+
+        [Test]
+        public void FinalDeathGroundedYStaysAtOrBelowTheMeasuredY()
+        {
+            // QA fix #11: the effective final grounded Y must never rise ABOVE the
+            // pose-measured Y - the margin only ever lowers it, guaranteeing contact
+            // is preferred over hovering.
+            const float StandingY = -1.005f;
+
+            // QA's observed direction: the clip still moves vertically after 0.95.
+            // Here the near-end pose's lowest vertex sits HIGHER than the 0.95
+            // sample's (the body dips at impact and settles slightly up), so the
+            // near-end-derived target is LOWER than the old sample's target - and
+            // the margin lowers it a little further.
+            float targetFromEarlySample = EnemyAnimationBridge.ComputeDeathGroundedTargetLocalY(
+                StandingY, 0.42f, 0f); // t=0.95: lowest vertex 0.42 above the lane
+            float targetFromNearEndSample = EnemyAnimationBridge.ComputeDeathGroundedTargetLocalY(
+                StandingY, 0.46f, 0f); // t=0.999: settled 0.46 above the lane
+
+            Assert.AreEqual(-1.425f, targetFromEarlySample, 0.0001f,
+                "The early-sample target must be -1.425 in this scenario.");
+            Assert.AreEqual(-1.465f, targetFromNearEndSample, 0.0001f,
+                "The near-end target must be -1.465 in this scenario.");
+            Assert.LessOrEqual(targetFromNearEndSample, targetFromEarlySample,
+                "The near-end-derived Y must be at or below the earlier-sample Y " +
+                "(the true resting pose needs at least as much lowering).");
+
+            // The margin keeps the effective final Y at or below BOTH measured Ys.
+            float effective = EnemyAnimationBridge.ApplyDeathGroundingContactMargin(
+                targetFromNearEndSample, EnemyVisualSetup.DeathGroundingContactMarginY);
+
+            Assert.LessOrEqual(effective, targetFromNearEndSample,
+                "The effective final Y must stay at or below the measured Y.");
+            Assert.AreEqual(-1.485f, effective, 0.0001f,
+                "The effective final Y must be the measured Y minus the 0.02 margin.");
+
+            // Zero margin -> exactly the measured Y (equal, never above).
+            Assert.AreEqual(
+                targetFromNearEndSample,
+                EnemyAnimationBridge.ApplyDeathGroundingContactMargin(targetFromNearEndSample, 0f),
+                0.0001f,
+                "With zero margin the effective final Y equals the measured Y.");
+
+            // The standing Y is untouched by any of this.
+            Assert.AreEqual(
+                -1.005f,
+                EnemyVisualSetup.ProductionVisualGroundingOffsetY,
+                0.001f,
+                "The standing grounding offset must remain -1.005.");
         }
 
         [Test]

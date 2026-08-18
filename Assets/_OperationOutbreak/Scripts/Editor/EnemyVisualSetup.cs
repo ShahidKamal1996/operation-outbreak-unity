@@ -29,10 +29,12 @@ namespace OperationOutbreak.EditorTools
     ///   6. Raises the enemy's deathPresentationDuration so the death clip plays
     ///      before deactivation (default 0.38 = prototype behavior when the tool is
     ///      never run).
-    ///   7. QA fix #10 - measures the near-final DEATH pose once and serializes the
-    ///      STABLE final grounded death Y (EnemyAnimationBridge.deathGroundedVisualY)
-    ///      plus the death-time grounding window (0.25 -> 0.85 normalized). The
-    ///      runtime never resamples the death pose.
+    ///   7. QA fix #10/#11 - measures the near-final DEATH pose once (vertical
+    ///      profile 0.95/0.99/0.999 logged for diagnosis; calibration from the
+    ///      true near-end pose at t=0.999) and serializes the STABLE final grounded
+    ///      death Y (EnemyAnimationBridge.deathGroundedVisualY) plus the small
+    ///      downward contact margin (0.02) and the death-time grounding window
+    ///      (0.25 -> 0.85 normalized). The runtime never resamples the death pose.
     ///
     /// FALLBACK: if the production prefab cannot be resolved the tool aborts with a
     /// dialog and modifies nothing - the prototype visual keeps working exactly as
@@ -126,12 +128,43 @@ namespace OperationOutbreak.EditorTools
         public const float DeathGroundingEndNormalizedTime = 0.85f;
 
         /// <summary>
-        /// QA fix #10 - the Death clip normalized time at which the near-final
-        /// corpse pose is sampled ONCE at setup time, to derive the stable
-        /// serialized final grounded death Y. Near the end (the pose has reached
-        /// its final lying shape) but not exactly at the last frame.
+        /// QA fix #10/#11 - the Death clip normalized time at which the near-final
+        /// corpse pose is sampled at setup time, to derive the stable serialized
+        /// final grounded death Y.
+        ///
+        /// QA fix #11 - the QA fix #10 value (0.95) was slightly TOO EARLY: manual
+        /// QA showed the corpse resting a little above the road, i.e. the clip
+        /// keeps changing vertically after 0.95 and the sampled pose was not yet
+        /// the true final resting pose. The sample now sits at 1.0 minus a tiny
+        /// epsilon (0.001) - the last evaluable instant of the clip, which IS the
+        /// true near-end resting pose. The setup log prints the vertical profile
+        /// (0.95 / 0.99 / 0.999) so the tail movement is directly visible.
         /// </summary>
-        public const float DeathPoseMeasurementNormalizedTime = 0.95f;
+        public const float DeathPoseMeasurementNormalizedTime = 0.999f;
+
+        /// <summary>
+        /// QA fix #11 - vertical-profile sample times logged for diagnosis. They
+        /// must be strictly increasing and end on the calibration sample
+        /// (DeathPoseMeasurementNormalizedTime); the first entry keeps the old
+        /// QA fix #10 sample so the tail's vertical movement shows up in the log.
+        /// </summary>
+        public static readonly float[] DeathPoseProfileNormalizedTimes =
+        {
+            0.95f,
+            0.99f,
+            DeathPoseMeasurementNormalizedTime,
+        };
+
+        /// <summary>
+        /// QA fix #11 - small DOWNWARD contact margin subtracted from the measured
+        /// final grounded Y (0.02 = 2 cm on a 2 m zombie): the corpse prefers a
+        /// very slight contact/intersection with the road over visible hovering.
+        /// Written onto EnemyAnimationBridge.deathGroundingContactMargin every run
+        /// (clamped to [0, 0.05] at runtime) and tunable per-prefab in the
+        /// Inspector without re-running the tool. Do NOT make it large - the body
+        /// must never sink deeply.
+        /// </summary>
+        public const float DeathGroundingContactMarginY = 0.02f;
 
         /// <summary>QA fix #10 - documented fallback constant used when the death-pose
         /// measurement is unavailable (shared with EnemyAnimationBridge).</summary>
@@ -178,17 +211,23 @@ namespace OperationOutbreak.EditorTools
         }
 
         /// <summary>
-        /// QA fix #10 - measures the near-final DEATH pose ONCE (editor/setup time)
-        /// and returns the STABLE final grounded local Y for the ProductionVisual:
+        /// QA fix #10/#11 - measures the near-final DEATH pose at setup time and
+        /// returns the STABLE final grounded local Y for the ProductionVisual:
         /// the value that places the corpse's lowest vertex exactly on the lane
         /// surface, computed with the same world-space-delta formula the runtime
-        /// used to derive (and chase) at run time. The result is serialized onto
+        /// used to derive at run time. The result is serialized onto
         /// EnemyAnimationBridge.deathGroundedVisualY; the runtime NEVER resamples.
         ///
-        /// The pose is sampled via AnimationMode.SampleAnimationClip at
-        /// DeathPoseMeasurementNormalizedTime (0.95) - near the final lying pose.
-        /// Every transform under the animator is recorded first and restored in the
-        /// finally block, so the prefab is always saved in its standing pose.
+        /// QA fix #11 - the pose is sampled across a small VERTICAL PROFILE
+        /// (0.95 / 0.99 / 0.999) so the clip's tail movement is logged and the
+        /// diagnosis is directly visible in the console. The CALIBRATION value is
+        /// taken from the LAST sample (DeathPoseMeasurementNormalizedTime = 0.999,
+        /// i.e. 1.0 minus a tiny epsilon) - the true near-end resting pose. The
+        /// QA fix #10 sample (0.95) was slightly too early, which is exactly why
+        /// the corpse hovered a little above the road.
+        ///
+        /// Every transform under the animator is recorded first and restored in
+        /// the finally block, so the prefab is always saved in its standing pose.
         ///
         /// Returns the documented fallback constant when anything is unavailable
         /// (renderer, mesh, animator/avatar, clip, sampling failure) and reports
@@ -223,7 +262,7 @@ namespace OperationOutbreak.EditorTools
             }
 
             // Record every transform under the animator root so the sampled death
-            // pose can be fully reverted before the prefab is saved - the prefab
+            // poses can be fully reverted before the prefab is saved - the prefab
             // must keep its authored standing pose.
             var recorded = new List<RecordedTransform>();
             foreach (Transform child in animator.transform.GetComponentsInChildren<Transform>(true))
@@ -234,55 +273,67 @@ namespace OperationOutbreak.EditorTools
 
             try
             {
-                AnimationMode.SampleAnimationClip(
-                    animator.gameObject, deathClip,
-                    deathClip.length * DeathPoseMeasurementNormalizedTime);
+                // QA fix #11 - vertical profile: sample each pose in turn, bake the
+                // skinned mesh and record the lowest visible world Y. The log line
+                // shows exactly how much the corpse still moves vertically through
+                // the tail of the clip (the QA fix #11 diagnosis).
+                var profile = new string[DeathPoseProfileNormalizedTimes.Length];
+                float lowestAtCalibration = float.MaxValue;
 
-                Mesh baked = new Mesh();
-                renderer.BakeMesh(baked);
-                Vector3[] vertices = baked.vertices;
-
-                float lowestCorpseWorldY = float.MaxValue;
-                for (int i = 0; i < vertices.Length; i++)
+                for (int i = 0; i < DeathPoseProfileNormalizedTimes.Length; i++)
                 {
-                    float worldY = renderer.transform.TransformPoint(vertices[i]).y;
-                    if (worldY < lowestCorpseWorldY)
+                    float normalizedTime = DeathPoseProfileNormalizedTimes[i];
+                    AnimationMode.SampleAnimationClip(
+                        animator.gameObject, deathClip, deathClip.length * normalizedTime);
+
+                    if (!TryMeasureLowestCorpseWorldY(renderer, out float lowestWorldY))
                     {
-                        lowestCorpseWorldY = worldY;
+                        Debug.LogWarning(
+                            "[1Q QA fix #10/#11] Death pose produced no measurable vertices at " +
+                            $"normalized {normalizedTime:0.000} - using the documented fallback " +
+                            "final grounded Y " + FallbackDeathGroundedVisualY.ToString("0.000") + ".",
+                            enemyRoot);
+                        return FallbackDeathGroundedVisualY;
+                    }
+
+                    profile[i] = $"t={normalizedTime:0.000}:{lowestWorldY:0.000}";
+
+                    if (i == DeathPoseProfileNormalizedTimes.Length - 1)
+                    {
+                        lowestAtCalibration = lowestWorldY;
                     }
                 }
 
-                Object.DestroyImmediate(baked);
-
-                if (vertices.Length == 0 || lowestCorpseWorldY >= float.MaxValue * 0.5f)
-                {
-                    Debug.LogWarning(
-                        "[1Q QA fix #10] Death pose produced no measurable vertices - " +
-                        "using the documented fallback final grounded Y " +
-                        FallbackDeathGroundedVisualY.ToString("0.000") + ".", enemyRoot);
-                    return FallbackDeathGroundedVisualY;
-                }
+                Debug.Log(
+                    "[1Q QA fix #11] Death pose vertical profile (lowest corpse world Y at each " +
+                    $"sample; calibration = LAST): {string.Join(", ", profile)}. " +
+                    "If the values keep changing through the tail, the earlier sample was not " +
+                    "the true resting pose - exactly the QA fix #10->#11 calibration drift.",
+                    enemyRoot);
 
                 // World-space delta (identical to the QA fix #7 runtime formula):
                 // targetLocalY = currentVisualLocalY + (groundWorldY - lowestCorpseWorldY).
                 float groundWorldY = enemyRoot.position.y - EnemyRootGroundHeight;
-                float finalGroundedY = EnemyAnimationBridge.ComputeDeathGroundedTargetLocalY(
-                    productionVisual.localPosition.y, lowestCorpseWorldY, groundWorldY);
+                float measuredGroundedY = EnemyAnimationBridge.ComputeDeathGroundedTargetLocalY(
+                    productionVisual.localPosition.y, lowestAtCalibration, groundWorldY);
 
                 measured = true;
                 Debug.Log(
-                    "[1Q QA fix #10] Final death pose measured at normalized " +
-                    DeathPoseMeasurementNormalizedTime.ToString("0.00") +
-                    $": lowestCorpseWorldY={lowestCorpseWorldY:0.000}, groundWorldY={groundWorldY:0.000}, " +
+                    "[1Q QA fix #10/#11] Final death grounded Y calibrated at normalized " +
+                    DeathPoseMeasurementNormalizedTime.ToString("0.000") +
+                    $": lowestCorpseWorldY={lowestAtCalibration:0.000}, groundWorldY={groundWorldY:0.000}, " +
                     $"standingVisualY={productionVisual.localPosition.y:0.000}, " +
-                    $"finalDeathGroundedY={finalGroundedY:0.000} (stable - serialized onto the bridge).",
+                    $"measuredFinalDeathGroundedY={measuredGroundedY:0.000}, " +
+                    $"contact margin={DeathGroundingContactMarginY:0.000} -> effective " +
+                    $"{EnemyAnimationBridge.ApplyDeathGroundingContactMargin(measuredGroundedY, DeathGroundingContactMarginY):0.000} " +
+                    "(stable - serialized onto the bridge).",
                     enemyRoot);
-                return finalGroundedY;
+                return measuredGroundedY;
             }
             catch (System.Exception exception)
             {
                 Debug.LogWarning(
-                    "[1Q QA fix #10] Death pose measurement failed (" + exception.Message +
+                    "[1Q QA fix #10/#11] Death pose measurement failed (" + exception.Message +
                     ") - using the documented fallback final grounded Y " +
                     FallbackDeathGroundedVisualY.ToString("0.000") + ".", enemyRoot);
                 return FallbackDeathGroundedVisualY;
@@ -301,6 +352,47 @@ namespace OperationOutbreak.EditorTools
                     }
                 }
             }
+        }
+
+        /// <summary>
+        /// QA fix #10/#11 - bakes the production skinned mesh (in its currently
+        /// sampled pose) and returns the lowest vertex WORLD Y. Measuring in world
+        /// space keeps the identical QA fix #7 convention: the baked vertices are
+        /// transformed through the renderer transform into world space.
+        /// </summary>
+        private static bool TryMeasureLowestCorpseWorldY(
+            SkinnedMeshRenderer renderer, out float lowestWorldY)
+        {
+            lowestWorldY = 0f;
+
+            if (renderer == null || renderer.sharedMesh == null || renderer.sharedMesh.vertexCount == 0)
+            {
+                return false;
+            }
+
+            Mesh baked = new Mesh();
+            renderer.BakeMesh(baked);
+            Vector3[] vertices = baked.vertices;
+
+            float minimum = float.MaxValue;
+            for (int i = 0; i < vertices.Length; i++)
+            {
+                float worldY = renderer.transform.TransformPoint(vertices[i]).y;
+                if (worldY < minimum)
+                {
+                    minimum = worldY;
+                }
+            }
+
+            Object.DestroyImmediate(baked);
+
+            if (vertices.Length == 0 || minimum >= float.MaxValue * 0.5f)
+            {
+                return false;
+            }
+
+            lowestWorldY = minimum;
+            return true;
         }
 
         private readonly struct RecordedTransform
@@ -499,6 +591,11 @@ namespace OperationOutbreak.EditorTools
                 // standingY -> finalDeathGroundedY as a smoothstep of the Death clip's
                 // normalized time between start (0.25) and end (0.85) - the corpse
                 // reaches the road DURING the fall and never sinks after it.
+                // QA fix #11 - the calibration sample moved to the true near-end pose
+                // (t=0.999; the 0.95 sample was slightly too early, leaving the corpse
+                // a little above the road) and a small downward contact margin (0.02)
+                // is serialized alongside, so the final pose very slightly contacts
+                // the road instead of hovering.
                 AnimationClip deathClipForGrounding = EnemyAnimationSetup.ResolveClip(EnemyAnimationSetup.DeathFbxPath);
                 float finalDeathGroundedY = MeasureFinalDeathGroundedVisualY(
                     productionVisual, contents.transform, deathClipForGrounding, out bool deathGroundingMeasured);
@@ -517,6 +614,12 @@ namespace OperationOutbreak.EditorTools
                     DeathGroundingStartNormalizedTime;
                 bridgeSo.FindProperty("deathGroundingEndNormalizedTime").floatValue =
                     DeathGroundingEndNormalizedTime;
+
+                // QA fix #11 - small downward contact margin: the corpse must prefer
+                // a very slight contact with the road over visible hovering. Written
+                // every run (deterministic) and tunable per-prefab afterwards.
+                bridgeSo.FindProperty("deathGroundingContactMargin").floatValue =
+                    DeathGroundingContactMarginY;
                 bridgeSo.ApplyModifiedPropertiesWithoutUndo();
 
                 // QA fix #1B (Bug 3) - death presentation window derived from the ACTUAL
@@ -559,7 +662,8 @@ namespace OperationOutbreak.EditorTools
                     $"{(controller != null ? controller.name : "MISSING")}, root motion: {animator.applyRootMotion}, " +
                     $"grounding Y: {ProductionVisualGroundingOffsetY:0.000} (deterministic FBX-derived), " +
                     $"final death grounded Y: {finalDeathGroundedY:0.000} " +
-                    $"({(deathGroundingMeasured ? "measured from the near-final death pose" : "documented fallback")}), " +
+                    $"({(deathGroundingMeasured ? "measured at t=" + DeathPoseMeasurementNormalizedTime.ToString("0.000") + " (true near-end pose)" : "documented fallback")}) " +
+                    $"- contact margin {DeathGroundingContactMarginY:0.000}, " +
                     $"death grounding window: {DeathGroundingStartNormalizedTime:0.00} -> {DeathGroundingEndNormalizedTime:0.00} normalized, " +
                     $"death window: {(deathClipForLog != null ? (deathClipForLog.length + DeathPresentationMarginSeconds).ToString("0.00") : "n/a")} s, " +
                     $"death state resolves: {deathResolves}, " +
