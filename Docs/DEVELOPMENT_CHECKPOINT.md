@@ -313,6 +313,36 @@ Production enemy VISUAL foundation only — zero enemy gameplay changes:
     guarantees no corpse lives forever. Prototype fallback (no bridge) keeps the
     exact pre-1Q timer behavior, and the prototype shrink progress is clamped so
     the extended wait cannot over-rotate it.
+16. **QA fix #10 (2026-08-19) — remove post-death sinking; corpse grounding is now
+    part of the death animation:** video QA showed the fall end with the corpse
+    hovering slightly above the lane, then the WHOLE visual translating downward
+    after the animation — reading as "sinking in water". Root cause: the QA fix
+    #6–#9 system was a POST-animation correction — it sampled the death pose late
+    (normalized 0.9), refined at 0.99 and then ran a time-based `MoveTowards`
+    settle AFTER the clip finished, so by construction the lowering could only
+    happen (and be seen) once the body had stopped moving. Fix — DEATH-TIME-DRIVEN
+    GROUNDING: the production zombie and death clip are fixed assets, so the final
+    grounded Y is now determined ONCE at setup time. The setup tool samples the
+    near-final death pose (normalized 0.95, via `AnimationMode.SampleAnimationClip`
+    inside prefab contents, transform poses recorded and restored so the prefab
+    always saves standing) and serializes the stable
+    `EnemyAnimationBridge.deathGroundedVisualY` (world-space-delta formula, same
+    maths as fix #7; documented fallback constant −1.5 when the measurement is
+    unavailable). At runtime the bridge blends
+    `standingVisualY (−1.005) → finalDeathGroundedY` as a smoothstep of the Death
+    clip's normalized time between `deathGroundingStartNormalizedTime` 0.25 and
+    `deathGroundingEndNormalizedTime` 0.85, with a per-frame downward-only clamp
+    (the visual can never move upward, even on misconfiguration or a restart).
+    The grounded Y is therefore ALREADY reached at normalized ~0.85 — well before
+    the clip-finish gate at 0.999 — so the corpse rests on the road the moment
+    the final lying pose arrives: no hover, no second downward motion, no
+    post-animation settle, no visible sinking. After the clip finishes and the Y
+    is within tolerance, no further writes occur (completely stationary). The
+    obsolete runtime measurement/refinement/MoveTowards machinery is REMOVED, not
+    bypassed (reflection-pinned by tests). Completion keeps the fix #9 contract:
+    clip finished AND grounded Y reached; the production-only 0.15 s hold and the
+    4 s safety timeout remain; collider lifecycle (fix #7), standing grounding
+    (−1.005), walk cadence, materials and all gameplay are untouched.
 9. **QA fix #2 (2026-08-17) — floating, vibration and death still unresolved:**
    - **Grounding:** QA fix #1B's renderer-bounds measurement read the vendor prefab's
      EDITOR/REFERENCE pose (the vendor ships a crouched cartoon pose), not the animated
@@ -344,11 +374,14 @@ Production enemy VISUAL foundation only — zero enemy gameplay changes:
    Infected Production Visual`** (rebuilds the controller with the cadence
    multiplier, applies the DETERMINISTIC FBX-derived grounding offset −1.005,
    assigns the source-controlled OO URP zombie materials to every production
-   renderer, and writes the clip-derived walk reference + death window onto the
-   prefab), save, and commit the regenerated `OO_BasicInfected.controller` plus the
-   modified `Zombie_Prototype.prefab`. The tool's console log reports grounding Y
-   (-1.005), death window (≈ 3.1 s), death state resolution, assigned renderer
-   count and walk cadence reference.
+   renderer, measures the near-final death pose ONCE and writes the stable final
+   death grounded Y + grounding window (0.25 → 0.85) and the clip-derived walk
+   reference + death window onto the prefab), save, and commit the regenerated
+   `OO_BasicInfected.controller` plus the modified `Zombie_Prototype.prefab`. The
+   tool's console log reports grounding Y (-1.005), the measured final death
+   grounded Y (or the documented fallback −1.5 with a warning), death window
+   (≈ 3.1 s), death state resolution, assigned renderer count and walk cadence
+   reference.
 1. Basic Infected spawns with the Stylized Zombie visual.
 2. **Correct textures/materials appear — NO magenta/pink** (OO URP materials
    active on LOD0 and LOD1).
@@ -373,16 +406,22 @@ Production enemy VISUAL foundation only — zero enemy gameplay changes:
      and must log a HIGHER normalized time (one-shot + progression proof). If the
      zombie animates there, the problem is sequencing, not clip/avatar setup.
 12. Dead enemy cannot move or attack.
-12b. **Corpse settles onto the road** near the end of the death animation — no
-     hovering, no sinking, and NEVER an upward pop (QA fixes #6/#7/#8: world-space
-     measurement, downward-only monotonic clamp; the console prints one
-     death-grounding log per pass with computedTargetY vs clampedTargetY).
+12b. **The lowering happens DURING the fall** (QA fix #10): the corpse blends
+     from the standing Y to the final grounded Y as a smoothstep of the Death
+     clip's normalized time (0.25 → 0.85), so the final lying pose is ALREADY
+     resting on the road when the animation ends. The desired sequence is:
+     upright → killed → falls → body naturally approaches the road → final lying
+     pose touches the road → corpse stays completely still on the road briefly →
+     disappears. There must be NO hover-then-sink ("sinking in water") and NEVER
+     an upward pop. After the clip ends the visual is written no further — fully
+     stationary.
 12c. **Dead collider disabled:** the CapsuleCollider turns off at death and the
      next spawned enemy has it enabled again (QA fix #7).
-12d. **Corpse disappears only AFTER the settle finishes:** the enemy stays visible
-     until the bridge reports presentation complete (clip finished + grounding
-     settled within tolerance), plus a short hold — no vanishing mid-settle
-     (QA fix #9).
+12d. **Corpse disappears only AFTER the grounded pose is reached:** the enemy
+     stays visible until the bridge reports presentation complete (clip finished
+     + final grounded Y reached within tolerance — both satisfied the moment the
+     clip ends because the grounding finishes at 0.85), plus a short hold — no
+     vanishing before the corpse rests (QA fixes #9/#10).
 13. Mission kill/wave accounting remains correct (3 sections, 12 enemies,
     9 BASIC / 3 RUNNER, Mission Complete exactly once).
 14. Multiple zombies animate independently.
@@ -390,31 +429,16 @@ Production enemy VISUAL foundation only — zero enemy gameplay changes:
 16. LOD/prefab rendering produces no obvious errors (both LODs textured).
 17. Player Toon Soldier remains unaffected (shooting, aim, muzzle, animations).
 18. Console remains clean.
-19. Full EditMode suite passes — expect **179/179** (176 previous + 3 new
-    QA-fix-#9 tests: grounding tolerance check, animation+grounding completion
-    gate, and the deactivation wait decision (bridge, prototype fallback, safety
-    timeout); the controller tests require step 0 to have been run once).
-    QA-fix-#8 tests: downward-only target clamp, refinement monotonicity, no
-    movement until a downward target exists, and downward settle still reaches the
-    ground; the controller tests require step 0 to have been run once).
-    local-space test + 5 new QA-fix-#7 tests: world-delta target formula, corpse-
-    lands-on-lane invariant matrix, refinement gate, collider capture/apply round-
-    trip, and mismatched-size guard; the controller tests require step 0 to have
-    been run once).
-    QA-fix-#6 tests: death-grounding gate, late-pose measurement threshold, pure
-    grounding-target maths (incl. standing-offset consistency), and the unchanged
-    standing offset pin; the controller tests require step 0 to have been run once).
-    QA-fix-#5 tests: one-shot presentation gate truth table, non-looping full
-    death clip, and Death state unit-speed/no-exits/no-self-re-entry; the
-    controller tests require step 0 to have been run once).
-    QA-fix-#4 tests: full-path hash shared with layer-0 targeting, generated
-    controller contains the exact 'Base Layer.Death' path, and the path survives a
-    rebuild + forced reimport; the controller tests require step 0 to have been run
-    once).
-    QA-fix-#3 tests: direct death entry targets the layer-0 Death state, URP
-    shader check on both OO materials, vendor texture wiring check, and the
-    deterministic material-selection rule; the controller tests require step 0 to
-    have been run once).
+19. Full EditMode suite passes — expect **184/184** (179 previous; QA fix #10
+    REPLACED the 6 obsolete settle tests with 6 death-time-driven tests — blend
+    start gate, final-Y-reached-by-end gate, downward-only per-frame clamp
+    simulation, stops-changing-after-target, standing-Y-retained-until-window-
+    opens, blend-ends-exactly-on-final-Y — and ADDED 5: grounding-driven-by-
+    normalized-time matrix, smoothstep ease-in/out shape, reflection-pinned
+    no-post-animation-settle-path, documented fallback default, and the
+    window-completes-before-the-clip-finish-gate pin; the two world-delta maths
+    tests remain as setup-time measurement pins; the controller tests require
+    step 0 to have been run once).
 
 ## What Milestone 1P.5 delivered
 

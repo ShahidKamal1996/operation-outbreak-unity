@@ -484,6 +484,34 @@
   section clear and mission completion all still fire IMMEDIATELY at zero
   health — only the GameObject deactivation is delayed. No ragdoll physics.
 
+### AD-1Q-8: Corpse grounding is driven by the death animation's normalized time (QA fix #10)
+
+- **Decision:** The production zombie and its death clip are FIXED assets, so the
+  final grounded death Y is a static per-asset constant, not a runtime
+  measurement. The setup tool samples the near-final death pose ONCE
+  (normalized 0.95) inside prefab contents and serializes the resulting stable
+  `EnemyAnimationBridge.deathGroundedVisualY` (world-space-delta formula; the
+  transforms sampled are recorded and restored so the prefab always saves in
+  its standing pose). At runtime the bridge blends
+  `standingVisualY → deathGroundedVisualY` as a smoothstep of the Death clip's
+  normalized time between 0.25 and 0.85, with a per-frame downward-only clamp.
+- **Why not keep the fix #6–#9 system:** a post-animation correction is
+  VISIBLY wrong by construction — sampling at 0.9 / refining at 0.99 and then
+  MoveTowards-settling after the clip finished means the lowering can only
+  happen once the body has stopped moving, which reads as "sinking in water".
+  Grounding must be INSIDE the animation window: the blend finishes at 0.85,
+  before the clip-finish gate (0.999), so the final lying pose already rests on
+  the road and nothing moves after the animation ends.
+- **What was removed:** runtime pose sampling, the refinement pass, the chased
+  target and the time-based MoveTowards settle are all DELETED (reflection-pinned
+  by tests) — no dual grounding systems can fight. Completion keeps the fix #9
+  contract (clip finished AND grounded Y reached within 0.015 tolerance), the
+  production-only hold (0.15 s) and the safety timeout (4 s). Collider
+  lifecycle (fix #7), standing grounding (−1.005), locomotion cadence, materials
+  and all gameplay are untouched. Fallback: a documented constant (−1.5) is used
+  only when the setup measurement is unavailable, and a misconfigured value can
+  never lift the corpse (downward-only clamp).
+
 ## UNKNOWN / open questions
 
 - Pre-1P architecture rationale for gates (1J series) could not be recovered (original

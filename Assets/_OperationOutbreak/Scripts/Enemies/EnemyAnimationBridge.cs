@@ -98,53 +98,47 @@ namespace OperationOutbreak.Enemies
 
         // ------------------------------------------------------------------ death grounding
 
-        [Header("Death Grounding (Milestone 1Q QA fix #6)")]
-        [Tooltip("Height of the enemy gameplay root above the lane surface. The corpse " +
-                 "grounding is computed in root-local space against this value.")]
-        [Min(0.1f)]
-        [SerializeField] private float enemyRootGroundHeight = 1f;
+        /// <summary>
+        /// QA fix #10 - DOCUMENTED FALLBACK for the final grounded death visual Y,
+        /// used only when the editor setup tool cannot measure the near-final death
+        /// pose (the setup tool always overwrites this with the measured value).
+        /// Assumes the lying corpse's lowest point rests ~0.5 units above the
+        /// ProductionVisual pivot (roughly the capsule radius 0.45 + margin), so
+        /// with the enemy root at y=1 and the lane at y=0:
+        ///   standing -1.005 -> final -(1 + 0.5) = -1.5.
+        /// </summary>
+        public const float FallbackDeathGroundedVisualY = -1.5f;
 
-        [Tooltip("Fallback extra lowering (in meters) applied to the production visual " +
-                 "during the death presentation, used only when the death-pose measurement " +
-                 "is unavailable.")]
-        [Min(0f)]
-        [SerializeField] private float deathGroundingOffsetY = 0.6f;
+        [Header("Death Grounding (Milestone 1Q QA fix #10 - death-time-driven)")]
+        [Tooltip("STABLE final local Y of the ProductionVisual for the grounded death " +
+                 "pose, measured ONCE by the setup tool from the near-final death pose " +
+                 "(deterministic for these fixed production assets). The runtime never " +
+                 "resamples or chases a moving target - it blends to this value only, " +
+                 "as a function of the Death clip's normalized time.")]
+        [SerializeField] private float deathGroundedVisualY = FallbackDeathGroundedVisualY;
 
-        [Tooltip("Seconds over which the death grounding correction blends in, so the " +
-                 "corpse settles smoothly instead of teleporting.")]
-        [Min(0.05f)]
-        [SerializeField] private float deathGroundingBlendDuration = 0.35f;
+        [Tooltip("Death clip normalized time at which the blend from the standing Y to " +
+                 "the final grounded Y BEGINS. Before this point the standing Y is " +
+                 "retained unchanged (the fall is still mostly upright).")]
+        [Range(0.01f, 0.99f)]
+        [SerializeField] private float deathGroundingStartNormalizedTime = 0.25f;
 
-        [Tooltip("Normalized time of the death clip at which the corpse pose is measured. " +
-                 "The measurement must happen late in the fall, when the pose is close to " +
-                 "its final resting shape.")]
-        [Range(0.5f, 0.99f)]
-        [SerializeField] private float deathGroundingSampleNormalizedTime = 0.9f;
+        [Tooltip("Death clip normalized time at which the blend REACHES the final " +
+                 "grounded Y. The final lying pose must already rest on the road by " +
+                 "this point - well before the clip-finish gate at 0.999, so no " +
+                 "post-animation correction can ever be visible.")]
+        [Range(0.01f, 0.99f)]
+        [SerializeField] private float deathGroundingEndNormalizedTime = 0.85f;
 
-        [Tooltip("Normalized time at which a FINAL refinement measurement recomputes the " +
-                 "grounding target from the true resting pose (QA fix #7: the fall still " +
-                 "moves slightly after the first sample).")]
-        [Range(0.9f, 1f)]
-        [SerializeField] private float deathGroundingRefineNormalizedTime = 0.99f;
-
-        [Tooltip("QA fix #9 - the grounding settle counts as complete when the visual's Y " +
-                 "is within this distance of the target. The enemy must stay visible until " +
-                 "the corpse has actually reached the road.")]
+        [Tooltip("The grounded death pose counts as REACHED when the visual's Y is " +
+                 "within this distance of deathGroundedVisualY. Used by the death " +
+                 "presentation completion gate.")]
         [Min(0f)]
         [SerializeField] private float deathGroundingCompletionTolerance = 0.015f;
 
-        [Tooltip("Measure the corpse's lowest point from the actual animated death pose " +
-                 "and ground the production visual to it; fall back to deathGroundingOffsetY " +
-                 "only when the measurement is unavailable.")]
-        [SerializeField] private bool useMeasuredDeathGrounding = true;
-
         private Transform _productionVisual;
         private float _standingProductionVisualY;
-        private float _deathGroundingTargetY;
-        private bool _deathGroundingMeasured;
-        private bool _deathGroundingRefined;
         private bool _deathClipFinished;
-        private Mesh _deathPoseBakeMesh;
 
         // QA fix #7 - gameplay collider lifecycle: the prototype prefab's CapsuleCollider
         // lives on the enemy ROOT. Its original enabled state is captured once and
@@ -197,26 +191,91 @@ namespace OperationOutbreak.Enemies
         }
 
         /// <summary>
-        /// QA fix #6 - pure gate: the death-pose measurement happens only once the
-        /// death clip has advanced to (or past) the sample threshold, so the measured
-        /// pose is the near-final lying pose and never the standing pose.
+        /// QA fix #10 - pure gate: the time-driven grounding blend starts only once
+        /// the Death clip has advanced to (or past) the configured start point.
+        /// Early in the clip the standing Y is retained unchanged.
         /// </summary>
-        public static bool ShouldMeasureDeathGrounding(float normalizedTime, float sampleThreshold)
+        public static bool ShouldStartDeathGroundingBlend(
+            float deathNormalizedTime, float startNormalizedTime)
         {
-            return normalizedTime >= Mathf.Max(0.01f, sampleThreshold);
+            return deathNormalizedTime >= Mathf.Max(0f, startNormalizedTime);
         }
 
         /// <summary>
-        /// QA fix #7 - pure computation, WORLD-SPACE DELTA form. Given the corpse's
-        /// lowest visible vertex WORLD Y (measured while the visual is still at its
-        /// current offset) and the lane surface WORLD Y, returns the ProductionVisual
-        /// local Y that places that vertex exactly on the surface:
+        /// QA fix #10 - pure remap: converts the Death clip's normalized time into
+        /// the grounding blend progress over [start, end]. Smoothstep eases the
+        /// lowering in and out so it visually MERGES with the fall animation
+        /// instead of reading as a separate correction. Clamped to [0, 1]; a
+        /// degenerate (zero/negative-width) window completes exactly at the end
+        /// point. Static and side-effect free for EditMode tests.
+        /// </summary>
+        public static float ComputeDeathGroundingProgress(
+            float deathNormalizedTime, float startNormalizedTime, float endNormalizedTime)
+        {
+            float window = endNormalizedTime - startNormalizedTime;
+
+            if (window <= 0f)
+            {
+                return deathNormalizedTime >= endNormalizedTime ? 1f : 0f;
+            }
+
+            float linear = Mathf.Clamp01((deathNormalizedTime - startNormalizedTime) / window);
+
+            // Smoothstep: 3t^2 - 2t^3 - eases in at the window start and eases out
+            // at the window end so the lowering reads as part of the fall.
+            return linear * linear * (3f - 2f * linear);
+        }
+
+        /// <summary>
+        /// QA fix #10 - pure blend: the ProductionVisual's grounded Y as a function
+        /// of the grounding progress between the standing Y and the STABLE final
+        /// grounded death Y. At progress 0 the standing Y is returned exactly; at
+        /// progress 1 the final grounded Y is returned exactly; between them it is
+        /// a plain lerp of the (already smoothstepped) progress.
+        /// </summary>
+        public static float ComputeDeathGroundedVisualY(
+            float standingVisualY, float finalGroundedVisualY, float groundingProgress)
+        {
+            return Mathf.Lerp(standingVisualY, finalGroundedVisualY, Mathf.Clamp01(groundingProgress));
+        }
+
+        /// <summary>
+        /// QA fix #10 - pure monotonic guard: the visual's Y may only ever move
+        /// DOWNWARD (or stay put). Replaces the QA fix #8 target clamp - there is
+        /// no target to chase anymore, but the per-frame write still enforces the
+        /// no-upward-motion invariant (misconfigured final Y, animator glitches or
+        /// a repeated Died can never lift the corpse).
+        /// </summary>
+        public static float ClampDeathGroundingDownwardOnly(float currentVisualY, float nextVisualY)
+        {
+            return Mathf.Min(currentVisualY, nextVisualY);
+        }
+
+        /// <summary>
+        /// QA fix #10 - pure gate: the grounding blend has fully completed once the
+        /// progress reaches 1, i.e. the Death clip advanced to (or past) the
+        /// configured end point. Because the end point (0.85) sits well before the
+        /// clip-finish gate (0.999), the final grounded Y is always reached DURING
+        /// the death animation - never after it.
+        /// </summary>
+        public static bool IsDeathGroundingBlendComplete(float groundingProgress)
+        {
+            return groundingProgress >= 1f;
+        }
+
+        /// <summary>
+        /// QA fix #7 - pure computation, WORLD-SPACE DELTA form - now used ONLY by
+        /// the editor setup tool to derive the STABLE serialized
+        /// deathGroundedVisualY once, from the near-final death pose. Given the
+        /// corpse's lowest visible vertex WORLD Y (measured while the visual is at
+        /// its current offset) and the lane surface WORLD Y, returns the
+        /// ProductionVisual local Y that places that vertex exactly on the
+        /// surface:
         ///   targetLocalY = currentVisualLocalY + (groundWorldY - lowestCorpseWorldY)
         /// This is valid because the visual's parent chain (the enemy gameplay root)
         /// is identity-rotated and identity-scaled: a world-space Y delta equals a
-        /// local-Y delta. Measuring everything in ONE space (world) removes the
-        /// instance-root/renderer/local-frame ambiguity that made the QA fix #6
-        /// correction miss the road.
+        /// local-Y delta. The runtime NEVER resamples this - the result is baked
+        /// onto the prefab at setup time (QA fix #10).
         /// </summary>
         public static float ComputeDeathGroundedTargetLocalY(
             float currentVisualLocalY, float lowestCorpseWorldY, float groundWorldY)
@@ -225,34 +284,9 @@ namespace OperationOutbreak.Enemies
         }
 
         /// <summary>
-        /// QA fix #8 - pure monotonic rule: the death-grounding target may only ever
-        /// move DOWNWARD (or stay put). It can never exceed the standing ceiling, and
-        /// a later pass (the clip-end refinement) can never raise the target above an
-        /// earlier one. If a measurement says the corpse is already below the ground,
-        /// the upward "correction" is DISCARDED - a small sink is preferable to an
-        /// obvious upward pop. Returns the clamped target.
-        /// </summary>
-        public static float ClampDeathGroundingTargetDownwardOnly(
-            float previousTargetY, float computedTargetY, float standingCeilingY)
-        {
-            float clampedToCeiling = Mathf.Min(computedTargetY, standingCeilingY);
-            return Mathf.Min(previousTargetY, clampedToCeiling);
-        }
-
-        /// <summary>
-        /// QA fix #8 - pure gate: a final REFINEMENT measurement runs only once the
-        /// death clip has essentially completed, so the target is recomputed from the
-        /// true resting pose (the fall still moves slightly between the first sample
-        /// and the end, which is what left the corpse floating).
-        /// </summary>
-        public static bool ShouldRefineDeathGrounding(float normalizedTime, float refineThreshold)
-        {
-            return normalizedTime >= Mathf.Max(0.01f, refineThreshold);
-        }
-
-        /// <summary>
-        /// QA fix #9 - pure tolerance check: the grounding settle is complete when the
-        /// visual's Y is within the configured tolerance of the target (abs distance).
+        /// QA fix #9 - pure tolerance check: the grounded death pose counts as
+        /// reached when the visual's Y is within the configured tolerance of the
+        /// stable final grounded Y (abs distance).
         /// </summary>
         public static bool IsDeathGroundingComplete(float currentVisualY, float targetY, float tolerance)
         {
@@ -261,9 +295,11 @@ namespace OperationOutbreak.Enemies
 
         /// <summary>
         /// QA fix #9 - pure completion gate: the death presentation is complete only
-        /// when BOTH the death animation has finished AND the corpse grounding has
-        /// settled within tolerance. Deactivation must wait for both - a clip-length
-        /// timer alone cuts the late settle short (the QA fix #9 symptom).
+        /// when BOTH the death animation has finished AND the final grounded death Y
+        /// has been reached within tolerance. With the QA fix #10 time-driven blend,
+        /// the Y is reached at normalized ~0.85 - well BEFORE the clip-finish gate
+        /// at 0.999 - so the two conditions are both satisfied the moment the clip
+        /// ends and no post-animation wait is ever visible.
         /// </summary>
         public static bool ShouldCompleteDeathPresentation(bool animationFinished, bool groundingComplete)
         {
@@ -271,9 +307,9 @@ namespace OperationOutbreak.Enemies
         }
 
         /// <summary>
-        /// QA fix #9 - live completion state read by ZombieController's death
+        /// QA fix #10 - live completion state read by ZombieController's death
         /// feedback: the death clip has finished AND the production visual's Y is
-        /// within tolerance of the (downward-only) grounding target. With no
+        /// within tolerance of the STABLE serialized final grounded Y. With no
         /// production visual the presentation is trivially complete once the clip
         /// finished.
         /// </summary>
@@ -292,7 +328,7 @@ namespace OperationOutbreak.Enemies
                 }
 
                 return IsDeathGroundingComplete(
-                    _productionVisual.localPosition.y, _deathGroundingTargetY, deathGroundingCompletionTolerance);
+                    _productionVisual.localPosition.y, deathGroundedVisualY, deathGroundingCompletionTolerance);
             }
         }
 
@@ -321,11 +357,6 @@ namespace OperationOutbreak.Enemies
                 ? _productionVisual.localPosition.y
                 : 0f;
 
-            // QA fix #8 - the death-grounding target starts AT the standing ceiling:
-            // until a measurement produces a LOWER target, no grounding movement can
-            // occur at all (this is what removes the upward pop before settling).
-            _deathGroundingTargetY = _standingProductionVisualY;
-
             // QA fix #7 - capture the ROOT-level gameplay colliders (the prototype
             // CapsuleCollider lives on the enemy root) and their authored enabled
             // states so the death lifecycle can disable them and reuse can restore
@@ -349,10 +380,7 @@ namespace OperationOutbreak.Enemies
             // enabled states (QA fix #7 - reused enemies must collide again).
             _deathLatched = false;
             _deathPresentationStarted = false;
-            _deathGroundingMeasured = false;
-            _deathGroundingRefined = false;
             _deathClipFinished = false;
-            _deathGroundingTargetY = _standingProductionVisualY;
             RestoreStandingProductionVisualY();
             RestoreGameplayColliders();
         }
@@ -378,12 +406,14 @@ namespace OperationOutbreak.Enemies
                 return;
             }
 
-            // QA fix #6 - after the death latch, ONLY the death grounding correction
-            // runs: locomotion parameters stay frozen so Death plays cleanly, and the
-            // production visual settles smoothly onto the road.
+            // QA fix #10 - after the death latch, ONLY the death-time-driven
+            // grounding blend runs: locomotion parameters stay frozen so Death
+            // plays cleanly, and the production visual lowers to the STABLE final
+            // grounded Y as a function of the Death clip's normalized time. There
+            // is no measurement, no target chasing and no post-animation settle.
             if (ShouldApplyDeathGrounding(_deathLatched))
             {
-                UpdateDeathGrounding();
+                UpdateDeathPresentationVisual();
                 return;
             }
 
@@ -444,6 +474,19 @@ namespace OperationOutbreak.Enemies
             }
 
             _deathPresentationStarted = true;
+
+            // QA fix #10 - sanity check: a misconfigured final grounded Y ABOVE the
+            // standing Y can never lift the corpse (the per-frame downward-only clamp
+            // discards upward motion), but QA should hear about the misconfiguration.
+            if (_productionVisual != null && deathGroundedVisualY > _standingProductionVisualY)
+            {
+                Debug.LogWarning(
+                    "[1Q QA fix #10] Death grounded Y " + deathGroundedVisualY.ToString("0.000") +
+                    " is ABOVE the standing visual Y " + _standingProductionVisualY.ToString("0.000") +
+                    " - the corpse will stay at the standing Y until the deactivation safety " +
+                    "timeout. Re-run 'Set Up Basic Infected Production Visual' to measure the " +
+                    "correct value.", this);
+            }
 
             // QA fix #7 - the dead corpse is presentation-only: disable the gameplay
             // colliders immediately after death is registered (never interrupting the
@@ -577,17 +620,25 @@ namespace OperationOutbreak.Enemies
         }
 
         /// <summary>
-        /// QA fix #6/#7 - runs once per frame after the death latch: waits until the
-        /// death clip has advanced to the sample threshold, then measures the corpse
-        /// pose's lowest point in WORLD space and smoothly blends the production
-        /// visual's local Y toward the world-delta grounding target. A final
-        /// refinement pass at clip completion recomputes the target from the true
-        /// resting pose (the fall still moves slightly after the first sample, which
-        /// is what left the corpse floating). Only the ProductionVisual child's Y is
-        /// ever written - the gameplay root, collider and standing offset for
+        /// QA fix #10 - runs once per frame after the death latch and drives the
+        /// corpse grounding PURELY from the Death clip's normalized time:
+        ///
+        ///   deathT  = Base Layer.Death normalized time (clamped, non-looping)
+        ///   blendT  = smoothstep(remap(deathT, start=0.25, end=0.85))
+        ///   nextY   = clampDownward(currentY, lerp(standingY, finalGroundedY, blendT))
+        ///
+        /// The final grounded Y (deathGroundedVisualY) is a STABLE value measured
+        /// once at setup time and serialized on this component - it is never
+        /// resampled at runtime. The lowering therefore happens DURING the fall
+        /// (merging with the death animation) and is complete at normalized ~0.85,
+        /// well before the clip-finish gate at 0.999: no hover, no second downward
+        /// motion, no post-animation MoveTowards settle, no visible sinking. After
+        /// the clip finishes (and the Y is within tolerance of the target) no
+        /// further writes occur. Only the ProductionVisual child's Y is ever
+        /// written - the gameplay root, collider and the standing offset for
         /// Idle/Walk/Attack are untouched.
         /// </summary>
-        private void UpdateDeathGrounding()
+        private void UpdateDeathPresentationVisual()
         {
             if (_productionVisual == null)
             {
@@ -608,161 +659,32 @@ namespace OperationOutbreak.Enemies
                 _deathClipFinished = true;
             }
 
-            bool wantMeasure =
-                !_deathGroundingMeasured &&
-                ShouldMeasureDeathGrounding(deathStateInfo.normalizedTime, deathGroundingSampleNormalizedTime);
-
-            bool wantRefine =
-                _deathGroundingMeasured &&
-                !_deathGroundingRefined &&
-                ShouldRefineDeathGrounding(deathStateInfo.normalizedTime, deathGroundingRefineNormalizedTime);
-
-            if (wantMeasure || wantRefine)
-            {
-                RecomputeDeathGroundingTarget(wantRefine);
-
-                if (wantMeasure)
-                {
-                    _deathGroundingMeasured = true;
-                }
-                else
-                {
-                    _deathGroundingRefined = true;
-                }
-            }
-
-            // Smooth settle: move toward the target over the configured duration so
-            // the corpse eases onto the road instead of teleporting.
             float currentY = _productionVisual.localPosition.y;
 
-            // QA fix #8 - defensive re-assertion of the monotonic rule: whatever else
-            // happened, the target may never sit ABOVE the visual's current Y, so the
-            // settle below can only move the visual downward or keep it still.
-            _deathGroundingTargetY = Mathf.Min(_deathGroundingTargetY, currentY);
-
-            float totalDistance = Mathf.Max(0.0001f, Mathf.Abs(_deathGroundingTargetY - currentY));
-            float step = totalDistance / Mathf.Max(0.05f, deathGroundingBlendDuration) * Time.deltaTime;
-            float newY = Mathf.MoveTowards(currentY, _deathGroundingTargetY, step);
-
-            // QA fix #9 - snap to the target once within tolerance, so the completion
-            // check settles promptly instead of approaching asymptotically.
-            if (IsDeathGroundingComplete(newY, _deathGroundingTargetY, deathGroundingCompletionTolerance))
+            // QA fix #10 - once the clip has finished AND the corpse already rests
+            // at the final grounded Y, the visual is completely stationary: no
+            // further writes, so nothing can move after the animation ends.
+            if (_deathClipFinished &&
+                IsDeathGroundingComplete(currentY, deathGroundedVisualY, deathGroundingCompletionTolerance))
             {
-                newY = _deathGroundingTargetY;
+                return;
             }
+
+            float deathT = Mathf.Clamp01(deathStateInfo.normalizedTime);
+            float blendProgress = ComputeDeathGroundingProgress(
+                deathT, deathGroundingStartNormalizedTime, deathGroundingEndNormalizedTime);
+            float nextY = ComputeDeathGroundedVisualY(
+                _standingProductionVisualY, deathGroundedVisualY, blendProgress);
+
+            // QA fix #10 - the downward-only invariant is enforced on the WRITE, not
+            // on a chased target: the blend is already monotonic in normalized time,
+            // and this guard makes an upward motion impossible even for a
+            // misconfigured final Y or an animator restart.
+            nextY = ClampDeathGroundingDownwardOnly(currentY, nextY);
 
             Vector3 position = _productionVisual.localPosition;
-            position.y = newY;
+            position.y = nextY;
             _productionVisual.localPosition = position;
-        }
-
-        /// <summary>
-        /// QA fix #7 - recomputes the grounding target from a WORLD-SPACE measurement
-        /// and logs the full calculation once per pass, so manual QA can verify the
-        /// maths from the console.
-        /// </summary>
-        private void RecomputeDeathGroundingTarget(bool isRefinement)
-        {
-            // The lane surface's world Y, derived from the gameplay root height (the
-            // root rides at y=1; the lane is at y=0).
-            float groundWorldY = transform.position.y - enemyRootGroundHeight;
-            float currentVisualLocalY = _productionVisual.localPosition.y;
-
-            if (useMeasuredDeathGrounding && TryMeasureDeathPoseLowestWorldY(out float lowestCorpseWorldY))
-            {
-                float computedTarget = ComputeDeathGroundedTargetLocalY(
-                    currentVisualLocalY, lowestCorpseWorldY, groundWorldY);
-
-                // QA fix #8 - MONOTONIC DOWNWARD-ONLY rule: the target may never rise
-                // above the standing ceiling nor above a previous pass's target. A
-                // mid-fall sample that would lift the visual is discarded, and the
-                // clip-end refinement can only move the target further down.
-                _deathGroundingTargetY = ClampDeathGroundingTargetDownwardOnly(
-                    _deathGroundingTargetY, computedTarget, _standingProductionVisualY);
-
-                Debug.Log(
-                    "[1Q QA fix #7/#8] Death grounding " + (isRefinement ? "refinement" : "measurement") + ": " +
-                    $"standingVisualY={_standingProductionVisualY:0.000}, currentVisualY={currentVisualLocalY:0.000}, " +
-                    $"lowestCorpseWorldY={lowestCorpseWorldY:0.000}, groundWorldY={groundWorldY:0.000}, " +
-                    $"computedTargetY={computedTarget:0.000}, clampedTargetY={_deathGroundingTargetY:0.000} " +
-                    $"(downward-only, never above {_standingProductionVisualY:0.000}).", this);
-            }
-            else
-            {
-                // Documented fallback: lower the visual by the serialized offset,
-                // clamped by the same monotonic downward-only rule.
-                float computedTarget = _standingProductionVisualY - Mathf.Max(0f, deathGroundingOffsetY);
-                _deathGroundingTargetY = ClampDeathGroundingTargetDownwardOnly(
-                    _deathGroundingTargetY, computedTarget, _standingProductionVisualY);
-
-                Debug.LogWarning(
-                    "[1Q QA fix #7/#8] Death grounding fallback (measurement unavailable): " +
-                    $"clampedTargetY={_deathGroundingTargetY:0.000} (standing {_standingProductionVisualY:0.000} - " +
-                    $"{Mathf.Max(0f, deathGroundingOffsetY):0.000}, downward-only).", this);
-            }
-        }
-
-        /// <summary>
-        /// QA fix #7 - bakes the production skinned mesh once per death and returns
-        /// the lowest vertex WORLD Y. Measuring in world space removes every
-        /// instance-root/renderer/local-frame ambiguity from QA fix #6: the baked
-        /// vertices are transformed through the renderer transform into world space,
-        /// and the correction is computed as a pure world-space delta applied to the
-        /// visual's local Y (valid because the parent chain is identity-rotated and
-        /// identity-scaled).
-        /// </summary>
-        private bool TryMeasureDeathPoseLowestWorldY(out float lowestWorldY)
-        {
-            lowestWorldY = 0f;
-
-            if (_productionVisual == null)
-            {
-                return false;
-            }
-
-            SkinnedMeshRenderer renderer = null;
-            foreach (SkinnedMeshRenderer candidate in
-                     _productionVisual.GetComponentsInChildren<SkinnedMeshRenderer>(true))
-            {
-                if (candidate.sharedMesh != null && candidate.sharedMesh.vertexCount > 0)
-                {
-                    renderer = candidate;
-                    break;
-                }
-            }
-
-            if (renderer == null)
-            {
-                return false;
-            }
-
-            if (_deathPoseBakeMesh == null)
-            {
-                _deathPoseBakeMesh = new Mesh();
-            }
-
-            renderer.BakeMesh(_deathPoseBakeMesh);
-            Vector3[] vertices = _deathPoseBakeMesh.vertices;
-
-            if (vertices == null || vertices.Length == 0)
-            {
-                return false;
-            }
-
-            float minimum = float.MaxValue;
-
-            foreach (Vector3 vertex in vertices)
-            {
-                float worldY = renderer.transform.TransformPoint(vertex).y;
-
-                if (worldY < minimum)
-                {
-                    minimum = worldY;
-                }
-            }
-
-            lowestWorldY = minimum;
-            return true;
         }
 
         /// <summary>
@@ -787,11 +709,22 @@ namespace OperationOutbreak.Enemies
             walkReferenceSpeed = Mathf.Max(0.1f, walkReferenceSpeed);
             minimumLocomotionMultiplier = Mathf.Max(0.1f, minimumLocomotionMultiplier);
             maximumLocomotionMultiplier = Mathf.Max(minimumLocomotionMultiplier, maximumLocomotionMultiplier);
-            enemyRootGroundHeight = Mathf.Max(0.1f, enemyRootGroundHeight);
-            deathGroundingOffsetY = Mathf.Max(0f, deathGroundingOffsetY);
-            deathGroundingBlendDuration = Mathf.Max(0.05f, deathGroundingBlendDuration);
-            deathGroundingSampleNormalizedTime = Mathf.Clamp(deathGroundingSampleNormalizedTime, 0.5f, 0.99f);
-            deathGroundingRefineNormalizedTime = Mathf.Clamp(deathGroundingRefineNormalizedTime, 0.9f, 1f);
+
+            // QA fix #10 - a grounded corpse's final Y must sit below the root
+            // (never positive); the grounding window must stay inside the clip and
+            // end after it starts; the completion tolerance is non-negative.
+            deathGroundedVisualY = Mathf.Min(0f, deathGroundedVisualY);
+            deathGroundingStartNormalizedTime =
+                Mathf.Clamp(deathGroundingStartNormalizedTime, 0.01f, 0.99f);
+            deathGroundingEndNormalizedTime =
+                Mathf.Clamp(deathGroundingEndNormalizedTime, 0.01f, 0.99f);
+
+            if (deathGroundingEndNormalizedTime <= deathGroundingStartNormalizedTime)
+            {
+                deathGroundingEndNormalizedTime = Mathf.Min(
+                    0.99f, deathGroundingStartNormalizedTime + 0.05f);
+            }
+
             deathGroundingCompletionTolerance = Mathf.Max(0f, deathGroundingCompletionTolerance);
         }
 #endif

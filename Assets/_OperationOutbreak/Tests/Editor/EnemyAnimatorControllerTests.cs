@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System.Reflection;
 using NUnit.Framework;
 using OperationOutbreak.EditorTools;
 using OperationOutbreak.Enemies;
@@ -16,7 +17,12 @@ namespace OperationOutbreak.Tests
     ///     Runner variants; death has no exits; bridge parameters intact);
     ///   - the prototype fallback (Zombie_Prototype.prefab keeps its ZombieController
     ///     and Visual child regardless of whether the production visual was set up);
-    ///   - the production prefab itself still resolves in the project.
+    ///   - the production prefab itself still resolves in the project;
+    ///   - QA fix #10: the corpse grounding is driven by the Death clip's
+    ///     normalized time (smoothstep blend from the standing Y to the stable
+    ///     serialized final grounded Y between 0.25 and 0.85), never moves upward,
+    ///     stops changing after the target is reached, and the obsolete
+    ///     measurement/refinement/MoveTowards settle system is removed entirely.
     ///
     /// NOTE: the controller tests assert the REBUILT controller. On a fresh checkout,
     /// run Tools > Operation Outbreak > Rebuild Basic Infected Animator Controller
@@ -406,25 +412,34 @@ namespace OperationOutbreak.Tests
         }
 
         [Test]
-        public void DeathPoseMeasurementWaitsForTheLateClipThreshold()
+        public void DeathGroundingBlendStartsOnlyAfterTheConfiguredStartTime()
         {
-            // The measurement must sample the LATE death pose (the lying corpse), never
-            // the standing pose at the clip start.
+            // QA fix #10: the lowering must NOT begin while the corpse is still
+            // standing - before the configured start point (normalized 0.25) the
+            // standing Y is retained unchanged.
             Assert.IsFalse(
-                EnemyAnimationBridge.ShouldMeasureDeathGrounding(0.1f, 0.9f),
-                "Early in the clip the pose is still standing - no measurement yet.");
+                EnemyAnimationBridge.ShouldStartDeathGroundingBlend(0.24f, 0.25f),
+                "Before the configured start point the grounding blend must not run.");
             Assert.IsTrue(
-                EnemyAnimationBridge.ShouldMeasureDeathGrounding(0.9f, 0.9f),
-                "At the sample threshold the near-final pose may be measured.");
-            Assert.IsTrue(
-                EnemyAnimationBridge.ShouldMeasureDeathGrounding(0.95f, 0.9f),
-                "Past the threshold the measurement must still be allowed.");
+                EnemyAnimationBridge.ShouldStartDeathGroundingBlend(0.25f, 0.25f),
+                "At the configured start point the blend must begin.");
+            Assert.AreEqual(
+                0f,
+                EnemyAnimationBridge.ComputeDeathGroundingProgress(0.24f, 0.25f, 0.85f),
+                0.0001f,
+                "Progress must be exactly 0 before the window opens (standing Y retained).");
+            Assert.AreEqual(
+                0f,
+                EnemyAnimationBridge.ComputeDeathGroundingProgress(0.25f, 0.25f, 0.85f),
+                0.0001f,
+                "Progress must be exactly 0 at the window start.");
         }
 
         [Test]
         public void DeathGroundingTargetIsAWorldSpaceDeltaAppliedToVisualLocalY()
         {
-            // QA fix #7: the target is computed in ONE consistent space - world. The
+            // QA fix #7 (kept by QA fix #10 as SETUP-TIME-ONLY math): the stable
+            // final grounded Y is computed in ONE consistent space - world. The
             // world-space delta (groundWorldY - lowestCorpseWorldY) is added to the
             // visual's current local Y (valid because the parent chain is identity).
             Assert.AreEqual(
@@ -445,9 +460,11 @@ namespace OperationOutbreak.Tests
         [Test]
         public void DeathGroundingCorrectionPlacesTheCorpseOnTheLaneWithinTolerance()
         {
-            // Invariant: after applying the computed target, the measured lowest world
-            // point must reach the ground. Since moving the visual by a local-Y delta
-            // moves the corpse by the same world delta (identity parent chain):
+            // Invariant (QA fix #7, kept by QA fix #10 for the SETUP-TIME
+            // measurement): after applying the computed target, the measured lowest
+            // world point must reach the ground. Since moving the visual by a
+            // local-Y delta moves the corpse by the same world delta (identity
+            // parent chain):
             //   lowestAfter = lowestBefore + (target - currentVisualY)
             // and that must equal groundWorldY within a tiny tolerance.
             float[,] cases =
@@ -477,20 +494,34 @@ namespace OperationOutbreak.Tests
         }
 
         [Test]
-        public void DeathGroundingRefinementWaitsForClipCompletion()
+        public void FinalGroundedYIsReachedByTheConfiguredEndTime()
         {
-            // QA fix #7: the final refinement re-measures the true resting pose only
-            // at clip completion - the fall still moves slightly between the first
-            // sample and the end, which is what left the corpse floating.
-            Assert.IsFalse(
-                EnemyAnimationBridge.ShouldRefineDeathGrounding(0.95f, 0.99f),
-                "Before the clip has completed, no refinement measurement.");
+            // QA fix #10: the blend must reach the stable final grounded Y at (or
+            // before) the configured end point (0.85) - well before the clip-finish
+            // gate at 0.999 - so the corpse already rests on the road when the
+            // death animation ends. No correction may be needed after that.
+            const float StandingY = -1.005f;
+            const float FinalY = -1.5f;
+
+            float progressAtEnd = EnemyAnimationBridge.ComputeDeathGroundingProgress(0.85f, 0.25f, 0.85f);
+            Assert.AreEqual(1f, progressAtEnd, 0.0001f,
+                "At the configured end point the grounding progress must be exactly 1.");
+
             Assert.IsTrue(
-                EnemyAnimationBridge.ShouldRefineDeathGrounding(0.99f, 0.99f),
-                "At the completion threshold the refinement must run.");
-            Assert.IsTrue(
-                EnemyAnimationBridge.ShouldRefineDeathGrounding(1f, 0.99f),
-                "At full completion the refinement must run.");
+                EnemyAnimationBridge.IsDeathGroundingBlendComplete(progressAtEnd),
+                "At the end point the blend must be complete.");
+
+            Assert.AreEqual(
+                FinalY,
+                EnemyAnimationBridge.ComputeDeathGroundedVisualY(StandingY, FinalY, progressAtEnd),
+                0.0001f,
+                "At the end point the visual Y must equal the final grounded Y exactly.");
+
+            // The grounding end point must sit BEFORE the clip-finish gate, so the
+            // corpse is fully grounded while the animation is still playing.
+            Assert.Less(
+                0.85f, 0.999f,
+                "The grounding must always complete inside the death animation, never after it.");
         }
 
         [Test]
@@ -565,98 +596,209 @@ namespace OperationOutbreak.Tests
             }
         }
 
-        // ============================================ QA fix #8 (downward-only settle)
+        // ============================================ QA fix #10 (death-time-driven grounding)
 
         [Test]
-        public void DeathGroundingTargetNeverRaisesTheVisual()
+        public void DeathGroundingIsDrivenByTheDeathNormalizedTime()
         {
-            // The monotonic rule: the clamped target may never exceed the standing
-            // ceiling nor a previous pass's target. A mid-fall measurement that would
-            // LIFT the visual is discarded - only downward targets are accepted.
-            const float StandingCeiling = -1.005f;
+            // QA fix #10: the grounded Y is a pure function of the Death clip's
+            // normalized time - a smoothstep remap over the [0.25, 0.85] window,
+            // lerped between the standing Y (-1.005) and the stable final grounded
+            // Y. No measurement, no target chasing, no time-based settle.
+            const float StandingY = -1.005f;
+            const float FinalY = -1.5f;
 
-            // Computed target ABOVE the standing ceiling (mid-fall corpse) -> clamped
-            // to the ceiling (no upward movement from standing).
-            Assert.AreEqual(
-                StandingCeiling,
-                EnemyAnimationBridge.ClampDeathGroundingTargetDownwardOnly(
-                    StandingCeiling, -0.6f, StandingCeiling),
-                0.0001f,
-                "A mid-fall sample that would lift the visual must be discarded.");
+            var expectations = new[]
+            {
+                new { DeathT = 0.00f, Progress = 0.0f },
+                new { DeathT = 0.25f, Progress = 0.0f },
+                new { DeathT = 0.55f, Progress = 0.5f },   // window midpoint
+                new { DeathT = 0.85f, Progress = 1.0f },
+                new { DeathT = 0.95f, Progress = 1.0f },
+                new { DeathT = 1.00f, Progress = 1.0f },
+            };
 
-            // Computed target BELOW the ceiling (corpse near the ground) -> accepted.
-            Assert.AreEqual(
-                -1.355f,
-                EnemyAnimationBridge.ClampDeathGroundingTargetDownwardOnly(
-                    StandingCeiling, -1.355f, StandingCeiling),
-                0.0001f,
-                "A downward settle target must be accepted.");
+            foreach (var expectation in expectations)
+            {
+                float progress = EnemyAnimationBridge.ComputeDeathGroundingProgress(
+                    expectation.DeathT, 0.25f, 0.85f);
+                float y = EnemyAnimationBridge.ComputeDeathGroundedVisualY(
+                    StandingY, FinalY, progress);
 
-            // Computed target below the ceiling but ABOVE an earlier target -> the
-            // earlier (lower) target wins: refinement can never raise the visual.
-            Assert.AreEqual(
-                -1.355f,
-                EnemyAnimationBridge.ClampDeathGroundingTargetDownwardOnly(
-                    -1.355f, -1.2f, StandingCeiling),
-                0.0001f,
-                "A later pass must never raise the target above an earlier one.");
+                Assert.AreEqual(
+                    expectation.Progress, progress, 1e-4f,
+                    $"deathT={expectation.DeathT}: progress must be the smoothstep remap.");
+                Assert.AreEqual(
+                    Mathf.Lerp(StandingY, FinalY, expectation.Progress), y, 1e-4f,
+                    $"deathT={expectation.DeathT}: the visual Y must lerp by the progress.");
+            }
+
+            // The computed Y is monotonic non-increasing across the whole clip.
+            float previous = StandingY;
+            for (int step = 0; step <= 100; step++)
+            {
+                float deathT = step / 100f;
+                float progress = EnemyAnimationBridge.ComputeDeathGroundingProgress(
+                    deathT, 0.25f, 0.85f);
+                float y = EnemyAnimationBridge.ComputeDeathGroundedVisualY(StandingY, FinalY, progress);
+                Assert.LessOrEqual(
+                    y, previous + 1e-5f,
+                    "The grounded Y must never rise as deathT advances.");
+                previous = y;
+            }
         }
 
         [Test]
-        public void DeathGroundingRefinementCannotIncreaseLocalY()
+        public void DeathGroundingSmoothstepEasesTheLoweringInAndOut()
         {
-            // Two-pass simulation: pass 1 settles to t1; the clip-end refinement
-            // computes t2 (which may be higher because the fall moved). The clamped
-            // sequence must be monotonic non-increasing.
-            const float StandingCeiling = -1.005f;
+            // QA fix #10: smoothstep (3t^2 - 2t^3) eases the lowering in and out so
+            // it merges with the fall animation instead of reading as a separate
+            // linear/robotic correction.
+            const float WindowStart = 0.25f;
+            const float WindowEnd = 0.85f;
 
-            float targetAfterPass1 = EnemyAnimationBridge.ClampDeathGroundingTargetDownwardOnly(
-                StandingCeiling, -1.355f, StandingCeiling);
+            float deathTEaseIn = WindowStart + (WindowEnd - WindowStart) * 0.25f;
+            float deathTEaseOut = WindowStart + (WindowEnd - WindowStart) * 0.75f;
 
-            float targetAfterRefinement = EnemyAnimationBridge.ClampDeathGroundingTargetDownwardOnly(
-                targetAfterPass1, -1.2f, StandingCeiling);
+            float progressEaseIn = EnemyAnimationBridge.ComputeDeathGroundingProgress(
+                deathTEaseIn, WindowStart, WindowEnd);
+            float progressEaseOut = EnemyAnimationBridge.ComputeDeathGroundingProgress(
+                deathTEaseOut, WindowStart, WindowEnd);
 
-            Assert.GreaterOrEqual(targetAfterPass1, targetAfterRefinement,
-                "The refinement must never raise the target above the first pass.");
-            Assert.AreEqual(-1.355f, targetAfterRefinement, 0.0001f,
-                "The refinement must keep the lower first-pass target.");
+            Assert.Less(progressEaseIn, 0.25f,
+                "Early in the window the smoothstep must lag the linear remap (ease-in).");
+            Assert.Greater(progressEaseOut, 0.75f,
+                "Late in the window the smoothstep must lead the linear remap (ease-out).");
+
+            Assert.AreEqual(
+                0.5f,
+                EnemyAnimationBridge.ComputeDeathGroundingProgress(
+                    WindowStart + (WindowEnd - WindowStart) * 0.5f, WindowStart, WindowEnd),
+                1e-5f,
+                "The window midpoint must map to smoothstep(0.5) = 0.5.");
         }
 
         [Test]
-        public void StandingYIsUnchangedUntilADownwardTargetIsMeasured()
+        public void DeathGroundingBlendNeverMovesTheVisualUpward()
         {
-            // Before any downward target exists, the grounded target must equal the
-            // standing ceiling - meaning the settle loop has zero distance to travel
-            // and the standing visual Y is untouched.
-            const float StandingCeiling = -1.005f;
+            // QA fix #10: the per-frame downward-only clamp discards ANY upward
+            // motion - even for a misconfigured final Y above the standing Y, or an
+            // animator restart that resets the normalized time after the corpse
+            // already grounded.
+            const float StandingY = -1.005f;
+            const float FinalY = -1.5f;
 
-            float target = EnemyAnimationBridge.ClampDeathGroundingTargetDownwardOnly(
-                StandingCeiling, -0.4f, StandingCeiling);
+            // Frame-by-frame simulation across the full clip.
+            float currentY = StandingY;
+            for (int step = 0; step <= 100; step++)
+            {
+                float deathT = step / 100f;
+                float progress = EnemyAnimationBridge.ComputeDeathGroundingProgress(
+                    deathT, 0.25f, 0.85f);
+                float blended = EnemyAnimationBridge.ComputeDeathGroundedVisualY(
+                    StandingY, FinalY, progress);
+                float nextY = EnemyAnimationBridge.ClampDeathGroundingDownwardOnly(
+                    currentY, blended);
 
-            Assert.AreEqual(StandingCeiling, target, 0.0001f,
-                "With only upward measurements available, the target must stay at the " +
-                "standing ceiling so no grounding movement happens at all.");
+                Assert.LessOrEqual(
+                    nextY, currentY + 1e-5f,
+                    $"Frame {step}: the visual Y must never move upward.");
+                currentY = nextY;
+            }
+
+            Assert.AreEqual(FinalY, currentY, 0.0001f,
+                "The simulated corpse must end exactly on the final grounded Y.");
+
+            // Misconfigured final Y ABOVE the standing Y -> the clamp holds the
+            // standing Y (no upward pop; the deactivation safety timeout still ends
+            // the presentation).
+            float misconfigured = EnemyAnimationBridge.ComputeDeathGroundedVisualY(
+                StandingY, -0.6f, 1f);
+            Assert.AreEqual(
+                StandingY,
+                EnemyAnimationBridge.ClampDeathGroundingDownwardOnly(StandingY, misconfigured),
+                0.0001f,
+                "An upward blended Y must be discarded - the visual stays at the standing Y.");
+
+            // Restart (normalized time resets to 0 after the corpse already
+            // grounded) -> the blend wants the standing Y again; the clamp keeps
+            // the corpse down.
+            float restartBlend = EnemyAnimationBridge.ComputeDeathGroundedVisualY(
+                StandingY, FinalY, 0f);
+            Assert.AreEqual(
+                FinalY,
+                EnemyAnimationBridge.ClampDeathGroundingDownwardOnly(FinalY, restartBlend),
+                0.0001f,
+                "A restart must never lift the already-grounded corpse.");
         }
 
         [Test]
-        public void DownwardSettleStillReachesTheGround()
+        public void DeathGroundedVisualYStopsChangingAfterTheTargetIsReached()
         {
-            // The clamp must not prevent a genuine downward correction from reaching
-            // the lane: a corpse floating above the road produces a lower target and
-            // that target passes through unchanged.
-            const float StandingCeiling = -1.005f;
-            float currentVisualY = StandingCeiling;
-            float computed = EnemyAnimationBridge.ComputeDeathGroundedTargetLocalY(
-                currentVisualY, 0.35f, 0f); // corpse 0.35 above the lane
+            // QA fix #10: after the blend completes, the computed Y equals the
+            // stable final grounded Y on every subsequent frame - the corpse is
+            // completely stationary for the tail of the clip, and the completion
+            // tolerance is satisfied throughout (no snap, no settle, no drift).
+            const float StandingY = -1.005f;
+            const float FinalY = -1.5f;
 
-            float clamped = EnemyAnimationBridge.ClampDeathGroundingTargetDownwardOnly(
-                StandingCeiling, computed, StandingCeiling);
+            for (int step = 85; step <= 200; step++)
+            {
+                float deathT = step / 100f;
+                float progress = EnemyAnimationBridge.ComputeDeathGroundingProgress(
+                    deathT, 0.25f, 0.85f);
+                float y = EnemyAnimationBridge.ComputeDeathGroundedVisualY(
+                    StandingY, FinalY, progress);
 
-            Assert.AreEqual(computed, clamped, 0.0001f,
-                "The downward correction must pass through the clamp unchanged, so the " +
-                "corpse still settles onto the road.");
-            Assert.AreEqual(-1.355f, clamped, 0.0001f,
-                "The settle must reach the ground (standing -1.005 - 0.35 = -1.355).");
+                Assert.AreEqual(
+                    FinalY, y, 1e-5f,
+                    $"deathT={deathT}: after the end point the Y must stay at the final grounded Y.");
+                Assert.IsTrue(
+                    EnemyAnimationBridge.IsDeathGroundingComplete(y, FinalY, 0.015f),
+                    "The corpse must count as grounded for the whole tail of the clip.");
+            }
+        }
+
+        [Test]
+        public void StandingYIsRetainedUntilTheGroundingWindowOpens()
+        {
+            // QA fix #10: during the early death clip (before normalized 0.25) the
+            // standing visual Y (-1.005) is retained byte-for-byte - the fall is
+            // still upright and no lowering may have started.
+            const float StandingY = -1.005f;
+            const float FinalY = -1.5f;
+
+            for (int step = 0; step <= 25; step++)
+            {
+                float deathT = step / 100f;
+                float progress = EnemyAnimationBridge.ComputeDeathGroundingProgress(
+                    deathT, 0.25f, 0.85f);
+                float y = EnemyAnimationBridge.ComputeDeathGroundedVisualY(
+                    StandingY, FinalY, progress);
+
+                Assert.AreEqual(
+                    StandingY, y, 1e-5f,
+                    $"deathT={deathT}: before the window opens the standing Y must be untouched.");
+            }
+        }
+
+        [Test]
+        public void BlendEndsExactlyOnTheFinalGroundedY()
+        {
+            // QA fix #10: the blend terminates EXACTLY on the stable final grounded
+            // Y (lerp at progress 1) - no asymptotic approach, no snap step and no
+            // post-animation settle is needed to finish the job.
+            const float StandingY = -1.005f;
+            const float FinalY = -1.5f;
+
+            float yAtEnd = EnemyAnimationBridge.ComputeDeathGroundedVisualY(
+                StandingY, FinalY, 1f);
+            Assert.AreEqual(
+                FinalY, yAtEnd, 0.0001f,
+                "At progress 1 the Y must be exactly the final grounded Y.");
+            Assert.IsTrue(
+                EnemyAnimationBridge.IsDeathGroundingComplete(yAtEnd, FinalY, 0.015f),
+                "The end-of-blend Y must satisfy the completion tolerance immediately.");
         }
 
         // ============================================ QA fix #9 (presentation completion)
@@ -664,15 +806,17 @@ namespace OperationOutbreak.Tests
         [Test]
         public void GroundingCompletionUsesTolerance()
         {
+            // QA fix #10: "final grounded Y reached" is a tolerance check against
+            // the STABLE serialized final grounded Y (-1.5 in these cases).
             Assert.IsTrue(
-                EnemyAnimationBridge.IsDeathGroundingComplete(-1.345f, -1.355f, 0.02f),
-                "Within tolerance the grounding must count as complete.");
+                EnemyAnimationBridge.IsDeathGroundingComplete(-1.49f, -1.5f, 0.015f),
+                "Within tolerance the grounded pose must count as reached.");
             Assert.IsFalse(
-                EnemyAnimationBridge.IsDeathGroundingComplete(-1.0f, -1.355f, 0.02f),
-                "Outside tolerance the grounding must still be settling.");
+                EnemyAnimationBridge.IsDeathGroundingComplete(-1.2f, -1.5f, 0.015f),
+                "Outside tolerance the grounded pose must still be pending.");
             Assert.IsTrue(
-                EnemyAnimationBridge.IsDeathGroundingComplete(-1.355f, -1.355f, 0.02f),
-                "Exactly on the target the grounding is complete.");
+                EnemyAnimationBridge.IsDeathGroundingComplete(-1.5f, -1.5f, 0.015f),
+                "Exactly on the target the grounded pose is reached.");
         }
 
         [Test]
@@ -688,6 +832,111 @@ namespace OperationOutbreak.Tests
             Assert.IsFalse(
                 EnemyAnimationBridge.ShouldCompleteDeathPresentation(false, true),
                 "The presentation must NOT complete while the death clip is still playing.");
+        }
+
+        [Test]
+        public void DeathPresentationHasNoPostAnimationSettlePath()
+        {
+            // QA fix #10: the obsolete measurement/refinement/MoveTowards settle
+            // system must be GONE, not bypassed - only the death-time-driven blend
+            // may remain. Reflection-pins the removed methods and fields so a
+            // regression can never silently reintroduce the sinking.
+            System.Type bridge = typeof(EnemyAnimationBridge);
+            const BindingFlags Any = BindingFlags.Public | BindingFlags.NonPublic |
+                                     BindingFlags.Static | BindingFlags.Instance;
+
+            string[] removedMethods =
+            {
+                "UpdateDeathGrounding",
+                "RecomputeDeathGroundingTarget",
+                "TryMeasureDeathPoseLowestWorldY",
+                "ClampDeathGroundingTargetDownwardOnly",
+                "ShouldMeasureDeathGrounding",
+                "ShouldRefineDeathGrounding",
+            };
+
+            foreach (string methodName in removedMethods)
+            {
+                Assert.IsNull(
+                    bridge.GetMethod(methodName, Any),
+                    $"The obsolete settle API '{methodName}' must not exist anymore.");
+            }
+
+            string[] removedFields =
+            {
+                "_deathGroundingTargetY",
+                "_deathGroundingMeasured",
+                "_deathGroundingRefined",
+                "_deathPoseBakeMesh",
+                "useMeasuredDeathGrounding",
+                "deathGroundingSampleNormalizedTime",
+                "deathGroundingRefineNormalizedTime",
+                "deathGroundingBlendDuration",
+                "deathGroundingOffsetY",
+            };
+
+            foreach (string fieldName in removedFields)
+            {
+                Assert.IsNull(
+                    bridge.GetField(fieldName, Any),
+                    $"The obsolete settle field '{fieldName}' must not exist anymore.");
+            }
+
+            Assert.IsNotNull(
+                bridge.GetField("deathGroundedVisualY", Any),
+                "The stable serialized final grounded Y must exist on the bridge.");
+        }
+
+        [Test]
+        public void DeathGroundedVisualYDefaultIsTheDocumentedFallback()
+        {
+            // QA fix #10: the serialized final grounded Y defaults to the documented
+            // fallback constant (used only when the setup measurement is
+            // unavailable) and must sit BELOW the standing offset so a default
+            // value can never leave the corpse floating.
+            GameObject holder = new GameObject("BridgeDefaultCheck");
+            EnemyAnimationBridge bridge = holder.AddComponent<EnemyAnimationBridge>();
+
+            try
+            {
+                System.Reflection.FieldInfo field = typeof(EnemyAnimationBridge).GetField(
+                    "deathGroundedVisualY", BindingFlags.Instance | BindingFlags.NonPublic);
+
+                Assert.IsNotNull(field, "deathGroundedVisualY must exist on the bridge.");
+                Assert.AreEqual(
+                    EnemyAnimationBridge.FallbackDeathGroundedVisualY,
+                    (float)field.GetValue(bridge),
+                    0.0001f,
+                    "The field default must be the documented fallback constant.");
+                Assert.Less(
+                    EnemyAnimationBridge.FallbackDeathGroundedVisualY,
+                    EnemyVisualSetup.ProductionVisualGroundingOffsetY,
+                    "The fallback final Y must sit below the standing offset (-1.005).");
+            }
+            finally
+            {
+                Object.DestroyImmediate(holder);
+            }
+        }
+
+        [Test]
+        public void DeathGroundingWindowCompletesBeforeTheClipFinishGate()
+        {
+            // QA fix #10: the grounding must ALWAYS finish inside the death
+            // animation. The configured window (start 0.25 -> end 0.85) must be
+            // ordered, non-zero and end below the clip-finish gate (0.999).
+            Assert.Greater(
+                EnemyVisualSetup.DeathGroundingStartNormalizedTime,
+                0f,
+                "The blend must not start at the very first frame (the fall is upright).");
+            Assert.Less(
+                EnemyVisualSetup.DeathGroundingStartNormalizedTime,
+                EnemyVisualSetup.DeathGroundingEndNormalizedTime,
+                "The grounding window must be ordered (start before end).");
+            Assert.Less(
+                EnemyVisualSetup.DeathGroundingEndNormalizedTime,
+                0.999f,
+                "The grounding end point must precede the clip-finish gate.");
         }
 
         [Test]
