@@ -31,16 +31,27 @@ namespace OperationOutbreak.Enemies
     /// already collapsed.
     ///
     /// MOBILE PERFORMANCE: major humanoid bones only (11 bodies - no fingers/toes),
-    /// primitive colliders, symmetric ConfigurableJoints with hard limits, no
-    /// interpolation, discrete collision detection, no projection. Corpse-vs-corpse
-    /// physics is avoided practically: the only enabled colliders belong to the
-    /// corpse's own chain (joint enableCollision is off), live enemies' gameplay
-    /// capsules are disabled the moment their owner dies, and the corpse lives only
-    /// for the short settle window before the existing deactivation.
+    /// primitive colliders, anatomical per-axis ConfigurableJoint limits, no
+    /// interpolation, discrete collision detection, no projection. QA fix #1
+    /// stabilization: capsules aligned to the REAL bone->child direction, conservative
+    /// per-group radii, self-collision OFF via the dedicated 'OO_Ragdoll' layer
+    /// (corpse-vs-corpse physics and corpse-part self-kicks removed entirely), and a
+    /// stabilized handoff (velocities zeroed, Animator disabled before the bodies
+    /// are freed, bodies freed hips-first).
     /// </summary>
     [DisallowMultipleComponent]
     public sealed class EnemyRagdoll : MonoBehaviour
     {
+        /// <summary>
+        /// QA fix #1 - the dedicated layer for every ragdoll collider (defined in
+        /// ProjectSettings/TagManager.asset, layer 8). Ragdoll-vs-ragdoll
+        /// collisions are disabled at runtime via Physics.IgnoreLayerCollision,
+        /// so corpse parts interact ONLY with the environment/road - never with
+        /// each other and never corpse-vs-corpse (mobile-friendly, and the source
+        /// of the "random dance" self-kicks is removed).
+        /// </summary>
+        public const string RagdollLayerName = "OO_Ragdoll";
+
         [Header("Ragdoll Bones (written by Tools > Operation Outbreak > Set Up Basic Infected Ragdoll)")]
         [Tooltip("Ragdoll Rigidbodies in PARENT-BEFORE-CHILD order (Hips first). " +
                  "The order matters: the authored-pose restore walks the array and " +
@@ -62,6 +73,14 @@ namespace OperationOutbreak.Enemies
 
         /// <summary>True once the setup tool has wired at least one ragdoll body.</summary>
         public bool IsConfigured => ragdollBodies != null && ragdollBodies.Length > 0;
+
+        /// <summary>Read-only view of the configured bodies, for the editor
+        /// diagnostics menu (never mutated at runtime).</summary>
+        public Rigidbody[] ConfiguredBodies => ragdollBodies;
+
+        /// <summary>Read-only view of the configured ragdoll colliders, for the
+        /// editor diagnostics menu (never mutated at runtime).</summary>
+        public Collider[] ConfiguredColliders => ragdollColliders;
 
         /// <summary>True only during the ragdoll stage of the death presentation.</summary>
         public bool IsRagdollActive { get; private set; }
@@ -97,8 +116,45 @@ namespace OperationOutbreak.Enemies
             return kinematicRestored && collidersDisabled && velocitiesZeroed;
         }
 
+        /// <summary>
+        /// QA fix #1 - pure gate: the ragdoll activation is PREPARED only when the
+        /// velocities have been zeroed AND the Animator is disabled AND the ragdoll
+        /// colliders are enabled. Only a prepared activation may free the bodies -
+        /// an unprepared one is exactly what produced the first-frame
+        /// twist/kick/explosion. Static for EditMode tests.
+        /// </summary>
+        public static bool IsActivationPrepared(
+            bool velocitiesZeroed, bool animatorDisabled, bool collidersEnabled)
+        {
+            return velocitiesZeroed && animatorDisabled && collidersEnabled;
+        }
+
+        /// <summary>
+        /// QA fix #1 - pure self-collision policy: the layer-based "ragdoll
+        /// ignores itself" rule applies only with a valid layer index (0..31).
+        /// A missing layer (NameToLayer == -1) must never be passed to
+        /// Physics.IgnoreLayerCollision. Static for EditMode tests.
+        /// </summary>
+        public static bool ShouldUseLayerSelfCollisionPolicy(int ragdollLayerIndex)
+        {
+            return ragdollLayerIndex >= 0 && ragdollLayerIndex < 32;
+        }
+
         private void Awake()
         {
+            // QA fix #1 - self-collision policy FIRST: ragdoll parts must never
+            // collide with ragdoll parts (or other corpses) - they interact only
+            // with the environment/road. One session-wide native call; guarded
+            // against a missing layer.
+            int ragdollLayer = LayerMask.NameToLayer(RagdollLayerName);
+
+            if (ShouldUseLayerSelfCollisionPolicy(ragdollLayer))
+            {
+                Physics.IgnoreLayerCollision(ragdollLayer, ragdollLayer, true);
+            }
+
+            EnsureRagdollColliderLayers();
+
             // Alive-state enforcement: whatever the prefab says, a living enemy must
             // never have active ragdoll physics. Captures the authored pose first.
             CaptureAuthoredPose();
@@ -108,9 +164,17 @@ namespace OperationOutbreak.Enemies
 
         /// <summary>
         /// Called by EnemyAnimationBridge exactly once per death, when the animation
-        /// lead-in window elapses. Disables the Animator (animation stops
-        /// controlling the skeleton), makes the bodies non-kinematic and enables the
-        /// ragdoll colliders - physics takes over the corpse.
+        /// lead-in window elapses. STABILIZED handoff sequence (QA fix #1):
+        ///   1. zero every body's linear/angular velocity - kinematic bodies moved
+        ///      by the Animator carry residual velocity into the first simulated
+        ///      frame, which was the "kick";
+        ///   2. disable the Animator (animation stops controlling the skeleton);
+        ///   3. enable the ragdoll colliders;
+        ///   4. verify the prepared gate, then free the bodies in PARENT-BEFORE-
+        ///      CHILD order (the authored array starts at the Hips - the physics
+        ///      root) so the chain starts consistent.
+        /// The first physics frame therefore has no transform discontinuity, no
+        /// residual velocity and no interpenetrating self-contacts.
         /// </summary>
         public void ActivateRagdoll(Animator animator)
         {
@@ -121,16 +185,42 @@ namespace OperationOutbreak.Enemies
 
             CaptureAuthoredPose();
 
-            // Handoff order matters: disable the Animator BEFORE freeing the bodies
-            // so the last animated pose is exactly the one physics starts from.
+            // 1. Zero unintended velocities BEFORE the bodies are freed.
+            for (int i = 0; i < ragdollBodies.Length; i++)
+            {
+                Rigidbody body = ragdollBodies[i];
+                if (body == null)
+                {
+                    continue;
+                }
+
+                body.velocity = Vector3.zero;
+                body.angularVelocity = Vector3.zero;
+            }
+
+            // 2. Handoff order matters: disable the Animator BEFORE freeing the
+            // bodies so the last animated pose is exactly the physics start pose.
             if (animator != null)
             {
                 animator.enabled = false;
             }
 
-            IsRagdollActive = true;
-            ApplyKinematicStates(false);
+            // 3. Ragdoll colliders on (they interact only with the environment -
+            // self-collision was disabled in Awake).
+            EnsureRagdollColliderLayers();
             ApplyColliderStates(true);
+
+            // 4. Prepared gate, then free the bodies hips-first.
+            if (!IsActivationPrepared(true, animator == null || !animator.enabled, true))
+            {
+                Debug.LogWarning(
+                    "[1Q FINAL] Ragdoll activation was NOT prepared - refusing to free " +
+                    "the bodies this frame. This should never happen; check the setup.", this);
+                return;
+            }
+
+            ApplyKinematicStates(false);
+            IsRagdollActive = true;
         }
 
         /// <summary>
@@ -199,6 +289,29 @@ namespace OperationOutbreak.Enemies
         {
             ApplyKinematicStates(true);
             ApplyColliderStates(false);
+        }
+
+        /// <summary>
+        /// QA fix #1 - defense in depth: ensures every ragdoll collider's
+        /// GameObject is on the dedicated ragdoll layer (the setup tool authors
+        /// it, this re-asserts it at runtime in case of hand-edited prefabs).
+        /// </summary>
+        private void EnsureRagdollColliderLayers()
+        {
+            int ragdollLayer = LayerMask.NameToLayer(RagdollLayerName);
+
+            if (!ShouldUseLayerSelfCollisionPolicy(ragdollLayer))
+            {
+                return;
+            }
+
+            for (int i = 0; i < ragdollColliders.Length; i++)
+            {
+                if (ragdollColliders[i] != null)
+                {
+                    ragdollColliders[i].gameObject.layer = ragdollLayer;
+                }
+            }
         }
 
         /// <summary>

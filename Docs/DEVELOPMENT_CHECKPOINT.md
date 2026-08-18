@@ -401,6 +401,59 @@ Production enemy VISUAL foundation only — zero enemy gameplay changes:
     visual) keeps the animation-only path. Gameplay, accounting, walk/attack,
     materials, standing grounding (−1.005), root motion OFF and the Toon
     Soldier are untouched.
+19. **1Q Hybrid Ragdoll QA fix #1 (2026-08-19) — stabilize the production
+    ragdoll:** manual QA showed the FINAL authoring was physically unstable -
+    after the handoff the limbs violently twisted/kicked/flipped ("random
+    dance"). Root causes, all in the authoring: (a) every capsule blindly used
+    the bone's LOCAL Y axis, so on this skeleton capsules crossed into
+    neighbors; (b) the aggressive `boneLength * 0.9 / 2` radii (capped 0.3)
+    made connected colliders mushroom over each other at the joints, and the
+    solver kicked them apart at activation; (c) self-collision was only off
+    for DIRECTLY connected pairs - thighs, forearms and torso parts could
+    still hit each other (and other corpses); (d) every joint had the same
+    symmetric ±90–120° freedom on ALL axes, so elbows/knees free-flailed
+    instead of hinging; (e) the handoff inherited the Animator's residual
+    linear/angular velocities (kinematic bodies moved per frame) straight into
+    the first simulated step; (f) nothing capped angular velocity or damped
+    the flailing. Fix — STABILIZED ANATOMICAL AUTHORING (same hybrid
+    architecture, zero gameplay change):
+    - **Collider alignment:** every capsule now lives on a per-bone child
+      `RagdollCollider` holder rotated with
+      `ComputeColliderAlignmentRotation` so the capsule axis follows the
+      ACTUAL bone→child vector (measured per bone in local space; the head
+      stays a sphere). No fixed local-Y assumption.
+    - **Collider sizes:** conservative per-group radius table
+      (`GetBoneColliderRadius`: 0.05–0.17 m), capsule height = measured bone
+      length with a full-diameter minimum (`GetCapsuleHeight`) - connected
+      pairs taper smoothly (ratio ≤ 2.5, policy-pinned).
+    - **Self-collision OFF:** all ragdoll colliders live on the dedicated
+      `OO_Ragdoll` layer (TagManager layer 8, committed); `EnemyRagdoll` calls
+      `Physics.IgnoreLayerCollision(8, 8, true)` in Awake (guarded by
+      `ShouldUseLayerSelfCollisionPolicy`) and re-asserts the collider layers.
+      Corpse parts interact ONLY with the environment/road - never with each
+      other, never corpse-vs-corpse. Joints keep `enableCollision = false` as
+      defense in depth.
+    - **Anatomical joints:** axes computed from the real bone chain
+      (`ComputeJointAxes`: twist axis = bone direction, hinge axis =
+      cross(parent, child) with degenerate fallbacks) and stored child-local;
+      per-axis limits per group: elbows ±100° bend / ±15° twist / ±10°
+      lateral and knees ±110°/±15°/±10° (HINGE-LIKE), shoulders ±80°/±60°,
+      hips ±70°/±40°, spine ±30° bend / ±25° twist / ±15° lateral, head
+      controlled. Zero-freedom axes are LOCKED.
+    - **Stable handoff:** `EnemyRagdoll.ActivateRagdoll` now zeroes every
+      body's linear/angular velocity BEFORE the Animator is disabled, then
+      enables the colliders, verifies the pure `IsActivationPrepared` gate
+      (velocities zeroed + Animator off + colliders on) and only then frees
+      the bodies hips-first (parent-before-child array order).
+    - **Physics tuning:** `maxAngularVelocity = 7` (no spin-kicks), angular
+      drag 0.4 (damps flailing), linear drag 0, discrete detection, no
+      interpolation, no projection; masses rebalanced (hips 1.8 heaviest,
+      connected mass ratios ≤ 2.4, ceiling 4x policy-pinned).
+    - **Validation + diagnostics:** the tool now reports every bone's
+      collider (shape/radius/height/layer) and flags PROBLEMATIC connected
+      overlap/mass pairs; also available read-only via
+      `Tools > Operation Outbreak > Debug Basic Infected Ragdoll`.
+    Re-run the setup tool and commit the regenerated prefab.
 9. **QA fix #2 (2026-08-17) — floating, vibration and death still unresolved:**
    - **Grounding:** QA fix #1B's renderer-bounds measurement read the vendor prefab's
      EDITOR/REFERENCE pose (the vendor ships a crouched cartoon pose), not the animated
@@ -434,19 +487,24 @@ Production enemy VISUAL foundation only — zero enemy gameplay changes:
    assigns the source-controlled OO URP zombie materials to every production
    renderer, measures the near-final death pose (vertical profile 0.95/0.99/0.999,
    calibration at the true near-end pose t=0.999), writes the stable final
-   death grounded Y + the small contact margin (0.02), and — 1Q FINAL —
-   CONFIGURES THE HYBRID RAGDOLL DEATH (11 major humanoid bones, primitive
-   colliders, ConfigurableJoints, handoff 0.30 s, settle 0.6 s, animation
-   grounding window zeroed so corpse-Y correction never fights physics)), save,
-   and commit the regenerated `OO_BasicInfected.controller` plus the modified
-   `Zombie_Prototype.prefab`. The tool's console log reports grounding Y
-   (-1.005), the vertical profile (lowest corpse world Y per sample), the
-   measured final death grounded Y + contact margin (or the documented fallback
-   −1.5 with a warning), the ragdoll bone/joint/handoff summary (or the abort
-   warning — the prefab is then NOT saved), death window (≈ 3.1 s), death state
-   resolution, assigned renderer count and walk cadence reference.
+   death grounded Y + the small contact margin (0.02), and — 1Q FINAL + ragdoll
+   QA fix #1 — CONFIGURES THE STABILIZED HYBRID RAGDOLL DEATH (11 major
+   humanoid bones; capsules aligned to each bone's REAL child direction on
+   per-bone `RagdollCollider` holders; conservative per-group radii;
+   anatomical per-axis ConfigurableJoint limits; self-collision OFF via the
+   `OO_Ragdoll` layer; maxAngularVelocity 7; handoff 0.30 s, settle 0.6 s;
+   animation grounding window zeroed so corpse-Y correction never fights
+   physics)), save, and commit the regenerated `OO_BasicInfected.controller`
+   plus the modified `Zombie_Prototype.prefab`. The tool's console log reports
+   grounding Y (-1.005), the vertical profile, the measured final death
+   grounded Y + contact margin (or the documented fallback −1.5 with a
+   warning), the ragdoll bone/joint/handoff summary PLUS the per-bone
+   collider diagnostics (shape/radius/height/layer, PROBLEMATIC overlap/mass
+   flags), death window (≈ 3.1 s), death state resolution, assigned renderer
+   count and walk cadence reference.
    `Tools > Operation Outbreak > Set Up Basic Infected Ragdoll` re-runs the
-   ragdoll step alone.
+   ragdoll step alone; `Tools > Operation Outbreak > Debug Basic Infected
+   Ragdoll` prints the same diagnostics read-only.
 1. Basic Infected spawns with the Stylized Zombie visual.
 2. **Correct textures/materials appear — NO magenta/pink** (OO URP materials
    active on LOD0 and LOD1).
@@ -483,9 +541,12 @@ Production enemy VISUAL foundation only — zero enemy gameplay changes:
      the Death clip is the only driver; after the handoff there is NO
      ProductionVisual Y correction (the animation grounding window is zeroed by
      the setup tool) — the corpse is physics-only. The desired sequence is:
-     upright → killed → death clip starts → handoff at ~0.30 s → physics fall
-     completes → corpse rests on the road with real contact → stays still
-     briefly → disappears. No hover, no sinking, no upward pop.
+     upright → killed → death clip starts → handoff at ~0.30 s → body
+     NATURALLY collapses onto the road with real contact → small natural
+     variation between deaths → corpse settles → stays still briefly →
+     disappears. **QA fix #1 target: NO pop/explosion at the handoff, NO
+     twisting/kicking limbs, NO spinning/"random dancing".** No hover, no
+     sinking, no upward pop.
 12c. **Dead collider disabled:** the CapsuleCollider turns off at death and the
      next spawned enemy has it enabled again (QA fix #7).
 12d. **Corpse disappears only AFTER the physics settle:** the enemy stays
@@ -500,6 +561,12 @@ Production enemy VISUAL foundation only — zero enemy gameplay changes:
      collides and no ragdoll body is simulated — the zombie moves/attacks
      exactly as before (mobile perf: keep an eye on frame time with several
      enemies alive).
+12g. **Self-collision off (QA fix #1):** during a corpse's fall, its body parts
+     must never visibly kick off each other, and two corpses must never
+     interact - the `OO_Ragdoll` layer is self-ignoring. The corpse collides
+     with the ROAD/environment only. `Tools > Operation Outbreak > Debug Basic
+     Infected Ragdoll` prints the per-bone collider report (no PROBLEMATIC
+     flags expected).
 13. Mission kill/wave accounting remains correct (3 sections, 12 enemies,
     9 BASIC / 3 RUNNER, Mission Complete exactly once).
 14. Multiple zombies animate independently.
@@ -507,18 +574,21 @@ Production enemy VISUAL foundation only — zero enemy gameplay changes:
 16. LOD/prefab rendering produces no obvious errors (both LODs textured).
 17. Player Toon Soldier remains unaffected (shooting, aim, muzzle, animations).
 18. Console remains clean.
-19. Full EditMode suite passes — expect **198/198** (187 previous; the 1Q FINAL
-    hybrid ragdoll upgrade ADDED 11: ragdoll-physics-only-when-configured-and-
-    activated, alive-state-enforced-until-activation, handoff-waits-for-the-
-    configured-lead-in (0.25–0.40 s band), ragdoll-settle-time-ends-the-
-    presentation, major-humanoid-bones-only (11 bones, no fingers/toes/hands/
-    feet, Hips first), deterministic joint parents, deterministic collider
-    shapes, deterministic hips-heavy masses, sane joint angular limits,
-    grounding-bypass-window-zeroed (no corpse-Y correction during ragdoll), and
-    reuse-reset-requires-all-restore-groups; the grounding gate test now also
-    pins "never during ragdoll", and the reflection test pins the ragdoll
-    handoff/completion gates exist; the controller tests require step 0 to have
-    been run once).
+19. Full EditMode suite passes — expect **205/205** (198 previous; the 1Q
+    Hybrid Ragdoll QA fix #1 ADDED 7: capsule-alignment-follows-the-bone-child-
+    direction (rotation mapping + degenerate fallback), joint-axes-follow-the-
+    bone-chain (orthogonality + collinear/childless fallbacks),
+    connected-colliders-do-not-significantly-overlap (10-pair ratio walk +
+    boundary math), connected-mass-ratios-are-stable, activation-requires-
+    zeroed-velocities-disabled-animator-and-enabled-colliders (prepared-gate
+    truth table), self-collision-policy-deterministic (layer index truth table
+    + pinned layer name), reuse-reset-restores-parents-before-children
+    (parent-before-child order invariant); REPLACED 3: the handoff test now
+    pins the ONE-SHOT gate (already-active/already-done cases), the collider
+    test pins the conservative per-group radius/height policy, and the joint
+    test pins the anatomical per-axis hinge-like limits; the reflection test
+    pins the renamed one-shot handoff gate; the controller tests require step 0
+    to have been run once).
 
 ## What Milestone 1P.5 delivered
 

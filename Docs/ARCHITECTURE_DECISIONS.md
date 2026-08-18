@@ -579,6 +579,54 @@
   prototype fallback (no production visual → animation-only path), Toon
   Soldier.
 
+### AD-1Q-11: Stable anatomically aligned ragdoll authoring (Hybrid Ragdoll QA fix #1)
+
+- **Decision:** the first ragdoll authoring was physically unstable ("random
+  dance" after handoff). Root causes and their fixes, all in authoring —
+  the hybrid animation→ragdoll architecture itself was kept:
+  1. **Collider orientation:** capsules now live on per-bone `RagdollCollider`
+     child holders rotated with `ComputeColliderAlignmentRotation`, so the
+     capsule axis follows the ACTUAL bone→child vector measured per bone
+     (head stays a sphere). No fixed local-Y assumption — the skeleton's real
+     frames decide.
+  2. **Collider sizes:** conservative per-group radius table (0.05–0.17 m)
+     replaces the aggressive `boneLength * 0.9 / 2` formula; capsule height =
+     measured bone length with a full-diameter minimum. Connected pairs taper
+     (radius ratio ≤ 2.5, `ComputeAdjacentOverlapRatio` policy-pinned) so the
+     solver no longer kicks overlapping colliders apart at activation.
+  3. **Self-collision OFF:** all ragdoll colliders go on the committed
+     `OO_Ragdoll` layer (TagManager layer 8). `EnemyRagdoll` disables
+     layer-vs-itself collision at runtime (`Physics.IgnoreLayerCollision`,
+     guarded by `ShouldUseLayerSelfCollisionPolicy`) and re-asserts the
+     collider layers in Awake. Corpse parts interact ONLY with the
+     environment/road — never with each other, never corpse-vs-corpse.
+  4. **Anatomical joints:** axes are computed from the real bone chain
+     (`ComputeJointAxes`: twist axis = bone direction; hinge axis =
+     cross(parent, child) with collinear/childless fallbacks) and stored
+     child-local. Per-axis limits replace the symmetric ±90–120° freedom:
+     elbows/knees are HINGE-LIKE (bend 100–110°, twist ≤ 15°, lateral ≤ 10°),
+     shoulders/hips wide but controlled (≤ 80°), spine modest (≤ 30°),
+     head controlled (≤ 45°). Zero-freedom axes are LOCKED.
+  5. **Stable handoff:** `ActivateRagdoll` zeroes every body's linear/angular
+     velocity (kinematic bodies moved by the Animator carry residual velocity
+     into the first simulated step — the "kick"), disables the Animator,
+     enables the colliders, verifies the pure `IsActivationPrepared` gate,
+     then frees the bodies in parent-before-child (hips-first) order. The
+     bridge's handoff gate is one-shot and ragdoll-aware
+     (`ShouldTriggerRagdollHandoff`).
+  6. **Physics tuning:** `maxAngularVelocity` 7 rad/s (no spin-kicks), angular
+     drag 0.4 (damps flailing), linear drag 0, discrete detection, no
+     interpolation, no projection; masses rebalanced so connected ratios stay
+     ≤ 2.4 (ceiling 4x policy-pinned) — the joint solver no longer fights
+     itself.
+- **Why not scripted grounding:** rejected by the production direction — real
+  ground contact must come from physics; the fix is making physics stable,
+  not replacing it.
+- **Validation:** the setup tool logs a per-bone collider report and flags
+  PROBLEMATIC connected overlap/mass pairs after generation; the read-only
+  `Tools > Operation Outbreak > Debug Basic Infected Ragdoll` menu prints the
+  same report.
+
 ## UNKNOWN / open questions
 
 - Pre-1P architecture rationale for gates (1J series) could not be recovered (original

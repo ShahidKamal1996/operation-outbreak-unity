@@ -252,14 +252,17 @@ namespace OperationOutbreak.Enemies
         }
 
         /// <summary>
-        /// 1Q FINAL - pure handoff gate: the skeleton is handed to ragdoll physics
-        /// exactly once the animation lead-in has elapsed. Before that the Death
-        /// clip (and ONLY the Death clip) is driving the skeleton. Static and
-        /// side-effect free for EditMode tests.
+        /// 1Q FINAL / QA fix #1 - pure ONE-SHOT handoff gate: the skeleton hands
+        /// off to ragdoll physics exactly once - only when the ragdoll is NOT
+        /// already active, the handoff has NOT already been done, and the
+        /// animation lead-in has elapsed. Before the lead-in the Death clip (and
+        /// ONLY the Death clip) drives the skeleton. Static and side-effect free
+        /// for EditMode tests.
         /// </summary>
-        public static bool ShouldHandoffToRagdoll(float leadInElapsed, float handoffSeconds)
+        public static bool ShouldTriggerRagdollHandoff(
+            bool ragdollActive, bool handoffDone, float leadInElapsed, float handoffSeconds)
         {
-            return leadInElapsed >= Mathf.Max(0f, handoffSeconds);
+            return !ragdollActive && !handoffDone && leadInElapsed >= Mathf.Max(0f, handoffSeconds);
         }
 
         /// <summary>
@@ -815,14 +818,22 @@ namespace OperationOutbreak.Enemies
         /// </summary>
         private void UpdateDeathPresentationVisual()
         {
-            // 1Q FINAL - hybrid handoff: the Death clip is the lead-in. Tick the
-            // handoff timer; when it opens, activate the ragdoll EXACTLY ONCE and
-            // never return to the animation/grounding path again.
-            if (ragdoll != null && ragdoll.IsConfigured && !_ragdollHandoffDone)
+            // 1Q FINAL / QA fix #1 - hybrid handoff: the Death clip is the lead-in.
+            // Tick the handoff timer; the ONE-SHOT gate fires the ragdoll exactly
+            // once (never while already active, never twice), and this branch never
+            // falls through to the animation/grounding path.
+            if (ragdoll != null && ragdoll.IsConfigured)
             {
-                _ragdollHandoffElapsed += Time.deltaTime;
+                bool ragdollActiveNow = ragdoll.IsRagdollActive;
 
-                if (ShouldHandoffToRagdoll(_ragdollHandoffElapsed, deathRagdollHandoffSeconds))
+                if (!ragdollActiveNow && !_ragdollHandoffDone)
+                {
+                    _ragdollHandoffElapsed += Time.deltaTime;
+                }
+
+                if (ShouldTriggerRagdollHandoff(
+                        ragdollActiveNow, _ragdollHandoffDone,
+                        _ragdollHandoffElapsed, deathRagdollHandoffSeconds))
                 {
                     _ragdollHandoffDone = true;
                     _ragdollActivationTime = Time.time;

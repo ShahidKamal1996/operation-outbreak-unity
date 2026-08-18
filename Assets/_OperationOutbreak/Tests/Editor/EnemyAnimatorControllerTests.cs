@@ -910,8 +910,8 @@ namespace OperationOutbreak.Tests
 
             // 1Q FINAL - the hybrid ragdoll handoff/completion gates must exist.
             Assert.IsNotNull(
-                bridge.GetMethod("ShouldHandoffToRagdoll", Any),
-                "The animation -> ragdoll handoff gate must exist on the bridge.");
+                bridge.GetMethod("ShouldTriggerRagdollHandoff", Any),
+                "The one-shot animation -> ragdoll handoff gate must exist on the bridge.");
             Assert.IsNotNull(
                 bridge.GetMethod("ShouldCompleteRagdollPresentation", Any),
                 "The ragdoll presentation completion gate must exist on the bridge.");
@@ -1158,21 +1158,28 @@ namespace OperationOutbreak.Tests
         }
 
         [Test]
-        public void RagdollHandoffWaitsForTheConfiguredLeadIn()
+        public void RagdollHandoffIsOneShotAndWaitsForTheLeadIn()
         {
-            // The skeleton hands off to physics exactly once the animation lead-in
-            // has elapsed - the Death clip (and ONLY the Death clip) drives the
-            // skeleton before that, so the Animator is disabled only at handoff.
+            // QA fix #1: the skeleton hands off to physics EXACTLY ONCE - the gate
+            // needs the ragdoll inactive, the handoff not yet done, AND the
+            // animation lead-in elapsed. The Death clip (and ONLY the Death clip)
+            // drives the skeleton before that, so the Animator is disabled only at
+            // handoff.
             Assert.IsFalse(
-                EnemyAnimationBridge.ShouldHandoffToRagdoll(0.29f, 0.3f),
+                EnemyAnimationBridge.ShouldTriggerRagdollHandoff(false, false, 0.29f, 0.3f),
                 "Inside the lead-in the Animator must keep controlling the skeleton.");
             Assert.IsTrue(
-                EnemyAnimationBridge.ShouldHandoffToRagdoll(0.3f, 0.3f),
-                "At the handoff time the ragdoll must take over exactly once.");
+                EnemyAnimationBridge.ShouldTriggerRagdollHandoff(false, false, 0.3f, 0.3f),
+                "At the handoff time the ragdoll must take over.");
             Assert.IsTrue(
-                EnemyAnimationBridge.ShouldHandoffToRagdoll(0.5f, 0.3f),
-                "Past the handoff time the gate stays open (one-shot is enforced by " +
-                "the bridge's _ragdollHandoffDone latch).");
+                EnemyAnimationBridge.ShouldTriggerRagdollHandoff(false, false, 0.5f, 0.3f),
+                "Past the handoff time the gate stays open (the bridge latches).");
+            Assert.IsFalse(
+                EnemyAnimationBridge.ShouldTriggerRagdollHandoff(true, false, 0.5f, 0.3f),
+                "The ragdoll is ALREADY active - the handoff must never fire again.");
+            Assert.IsFalse(
+                EnemyAnimationBridge.ShouldTriggerRagdollHandoff(false, true, 0.5f, 0.3f),
+                "The handoff has ALREADY been done - it must never fire twice.");
 
             // The configured lead-in sits inside the required 0.25-0.40 s band.
             Assert.GreaterOrEqual(
@@ -1285,31 +1292,55 @@ namespace OperationOutbreak.Tests
         }
 
         [Test]
-        public void RagdollColliderShapesAreDeterministic()
+        public void RagdollColliderSizesAreConservativePerBoneGroup()
         {
-            // Long bones (limbs/torso) get capsules along their length; short bones
-            // (the head) get spheres. The radius derives from the bone length,
-            // floored and capped, so no bone can ever be absurdly thick.
-            Assert.IsTrue(
-                EnemyRagdollSetup.ShouldUseCapsuleCollider(0.2f),
-                "A 0.2 m bone (forearm/shin) must use a capsule.");
-            Assert.IsFalse(
-                EnemyRagdollSetup.ShouldUseCapsuleCollider(0.05f),
-                "A 0.05 m bone (head) must use a sphere.");
+            // QA fix #1: radii come from the conservative PER-GROUP table (no
+            // aggressive boneLength*0.9/2 formula), the head is the only sphere,
+            // and the capsule height is the measured bone length with a full-
+            // diameter minimum. Narrow limbs, compact torso/pelvis.
+            string[] bones = EnemyRagdollSetup.RequiredBoneNames;
 
+            foreach (string bone in bones)
+            {
+                float radius = EnemyRagdollSetup.GetBoneColliderRadius(bone);
+
+                Assert.Greater(radius, 0f, $"'{bone}' must have a positive radius.");
+                Assert.LessOrEqual(radius, 0.2f,
+                    $"'{bone}' radius must stay conservative (<= 0.2).");
+
+                if (bone.Contains("Arm"))
+                {
+                    Assert.LessOrEqual(radius, 0.07f,
+                        $"'{bone}' is an arm - it must stay narrow (<= 0.07).");
+                }
+            }
+
+            // Head: sphere; everything else: capsule.
+            Assert.IsFalse(
+                EnemyRagdollSetup.ShouldUseCapsuleCollider("Head"),
+                "The head must be a sphere.");
+            foreach (string bone in bones)
+            {
+                if (bone != "Head")
+                {
+                    Assert.IsTrue(
+                        EnemyRagdollSetup.ShouldUseCapsuleCollider(bone),
+                        $"'{bone}' must be a capsule aligned to its real bone direction.");
+                }
+            }
+
+            // Capsule height policy: never thinner than a full diameter, otherwise
+            // the measured bone length.
             Assert.AreEqual(
-                0.09f,
-                EnemyRagdollSetup.ComputeColliderRadius(0.2f),
+                0.34f,
+                EnemyRagdollSetup.GetCapsuleHeight(0.17f, 0.2f),
                 0.0001f,
-                "Radius = boneLength * 0.9 / 2 = 0.09 for a 0.2 m bone.");
+                "Height = max(2*radius, boneLength) -> 0.34 for r=0.17.");
             Assert.AreEqual(
-                EnemyRagdollSetup.ColliderRadiusCap,
-                EnemyRagdollSetup.ComputeColliderRadius(1f),
+                0.2f,
+                EnemyRagdollSetup.GetCapsuleHeight(0.05f, 0.2f),
                 0.0001f,
-                "A huge bone must clamp to the radius cap.");
-            Assert.Greater(
-                EnemyRagdollSetup.ComputeColliderRadius(0.001f), 0f,
-                "Even a tiny bone gets a positive (floored) radius.");
+                "Height = the bone length when it exceeds the diameter.");
         }
 
         [Test]
@@ -1348,28 +1379,341 @@ namespace OperationOutbreak.Tests
         }
 
         [Test]
-        public void RagdollJointAngularLimitsAreSane()
+        public void RagdollJointLimitsAreAnatomicallyRestricted()
         {
-            // Symmetric hard limits per bone group: free enough to fall naturally,
-            // tight enough to never look rubbery. The hips have no joint (0).
+            // QA fix #1: per-axis ANATOMICAL limits replace the generic symmetric
+            // +/-90..120 free-flailing. Elbows/knees are hinge-like (large bend,
+            // tiny twist/lateral); shoulders/hips wide but controlled; the spine
+            // bends/twists modestly; the head is controlled.
             string[] bones = EnemyRagdollSetup.RequiredBoneNames;
 
             foreach (string bone in bones)
             {
-                float limit = EnemyRagdollSetup.GetJointAngularLimitDegrees(bone);
-
                 if (bone == "Hips")
                 {
-                    Assert.AreEqual(0f, limit, 0.0001f,
-                        "The hips are the physics root - no joint limit.");
+                    Assert.AreEqual(0f, EnemyRagdollSetup.GetJointTwistLimitDegrees(bone), 0.0001f,
+                        "The hips are the physics root - no joint.");
+                    Assert.AreEqual(0f, EnemyRagdollSetup.GetJointBendLimitDegrees(bone), 0.0001f,
+                        "The hips are the physics root - no bend limit.");
+                    Assert.AreEqual(0f, EnemyRagdollSetup.GetJointLateralLimitDegrees(bone), 0.0001f,
+                        "The hips are the physics root - no lateral limit.");
                     continue;
                 }
 
-                Assert.GreaterOrEqual(limit, 30f,
-                    $"'{bone}' limit must allow a natural fall.");
-                Assert.LessOrEqual(limit, 120f,
-                    $"'{bone}' limit must prevent rubbery over-rotation.");
+                float twist = EnemyRagdollSetup.GetJointTwistLimitDegrees(bone);
+                float bend = EnemyRagdollSetup.GetJointBendLimitDegrees(bone);
+                float lateral = EnemyRagdollSetup.GetJointLateralLimitDegrees(bone);
+
+                if (bone.Contains("LowerArm") || bone.Contains("LowerLeg"))
+                {
+                    // Elbows/knees: HINGE-LIKE.
+                    Assert.GreaterOrEqual(bend, 90f,
+                        $"'{bone}' must bend enough to collapse naturally (>= 90).");
+                    Assert.LessOrEqual(bend, 115f,
+                        $"'{bone}' bend must stay bounded (<= 115) - no free flailing.");
+                    Assert.LessOrEqual(twist, 20f,
+                        $"'{bone}' must barely twist (<= 20) - hinge-like.");
+                    Assert.LessOrEqual(lateral, 15f,
+                        $"'{bone}' must barely swing sideways (<= 15) - hinge-like.");
+                }
+
+                if (bone.Contains("UpperArm") || bone.Contains("UpperLeg"))
+                {
+                    // Shoulders/hips: wide but controlled.
+                    Assert.LessOrEqual(bend, 85f,
+                        $"'{bone}' swing must be controlled (<= 85).");
+                    Assert.LessOrEqual(twist, 65f,
+                        $"'{bone}' twist must be controlled (<= 65).");
+                    Assert.LessOrEqual(lateral, 65f,
+                        $"'{bone}' lateral must be controlled (<= 65).");
+                }
+
+                if (bone == "Spine")
+                {
+                    Assert.LessOrEqual(bend, 35f,
+                        "The spine must bend modestly (<= 35).");
+                    Assert.LessOrEqual(twist, 30f,
+                        "The spine must twist modestly (<= 30).");
+                    Assert.LessOrEqual(lateral, 20f,
+                        "The spine must not lean sideways freely (<= 20).");
+                }
+
+                if (bone == "Head")
+                {
+                    Assert.LessOrEqual(bend, 50f,
+                        "The head must be controlled (<= 50).");
+                    Assert.LessOrEqual(twist, 45f,
+                        "The head must not spin freely (<= 45).");
+                }
+
+                // No group may free-flail in ANY axis: everything <= 115.
+                Assert.LessOrEqual(Mathf.Max(twist, Mathf.Max(bend, lateral)), 115f,
+                    $"'{bone}' must never reach the old +/-120 free-flailing freedom.");
             }
+        }
+
+        [Test]
+        public void RagdollCapsuleAlignmentFollowsTheBoneChildDirection()
+        {
+            // QA fix #1: the capsule holder is rotated so its +Y follows the ACTUAL
+            // bone->child direction in the bone's LOCAL space - never a fixed
+            // local-Y assumption. The rotation must map +Y exactly onto the
+            // direction (verified per axis), and degenerate inputs must fall back
+            // to identity.
+            Quaternion identity = EnemyRagdollSetup.ComputeColliderAlignmentRotation(Vector3.up);
+            Assert.AreEqual(
+                1f,
+                Vector3.Dot(identity * Vector3.up, Vector3.up),
+                0.0001f,
+                "An already-Y-aligned bone keeps the identity rotation.");
+
+            Quaternion down = EnemyRagdollSetup.ComputeColliderAlignmentRotation(Vector3.down);
+            Assert.AreEqual(
+                -1f,
+                Vector3.Dot(down * Vector3.up, Vector3.up),
+                0.0001f,
+                "A downward bone rotates 180 degrees around Z.");
+
+            // Canonical axes: the holder's Y must map onto each direction.
+            Vector3[] directions =
+            {
+                new Vector3(1f, 0f, 0f),
+                new Vector3(-1f, 0f, 0f),
+                new Vector3(0f, 0f, 1f),
+                new Vector3(0f, 0f, -1f),
+                new Vector3(0.3f, 0.6f, 0.7416f),
+            };
+
+            foreach (Vector3 direction in directions)
+            {
+                Quaternion rotation =
+                    EnemyRagdollSetup.ComputeColliderAlignmentRotation(direction);
+                Vector3 aligned = rotation * Vector3.up;
+
+                Assert.AreEqual(
+                    1f, Vector3.Dot(aligned, direction.normalized), 1e-4f,
+                    $"The aligned capsule axis must follow the real bone direction " +
+                    $"({direction.normalized}).");
+            }
+
+            Assert.AreEqual(
+                Quaternion.identity,
+                EnemyRagdollSetup.ComputeColliderAlignmentRotation(Vector3.zero),
+                "A zero direction (bone without children) must fall back to identity.");
+        }
+
+        [Test]
+        public void RagdollJointAxesFollowTheBoneChain()
+        {
+            // QA fix #1: the joint's primary axis is the bone's own direction and
+            // the secondary (hinge) axis is the plane normal of the two segments,
+            // with deterministic degenerate fallbacks. The axes must be orthogonal.
+            EnemyRagdollSetup.ComputeJointAxes(
+                new Vector3(1f, 0f, 0f), new Vector3(0f, 1f, 0f),
+                out Vector3 primary, out Vector3 secondary);
+
+            Assert.AreEqual(
+                1f, Vector3.Dot(primary, Vector3.up), 0.0001f,
+                "The primary axis must follow the bone->child direction.");
+            Assert.AreEqual(
+                1f, Vector3.Dot(secondary, Vector3.forward), 0.0001f,
+                "cross((1,0,0),(0,1,0)) = +Z is the hinge axis for that chain.");
+            Assert.AreEqual(
+                0f, Vector3.Dot(primary, secondary), 1e-5f,
+                "The joint axes must be orthogonal.");
+
+            // Collinear chain (straight T-pose limb): fallback keeps orthogonality.
+            EnemyRagdollSetup.ComputeJointAxes(
+                new Vector3(0f, 1f, 0f), new Vector3(0f, 2f, 0f),
+                out Vector3 degeneratePrimary, out Vector3 degenerateSecondary);
+
+            Assert.AreEqual(
+                0f, Vector3.Dot(degeneratePrimary, degenerateSecondary), 1e-5f,
+                "Even a collinear chain must produce orthogonal axes.");
+            Assert.Greater(
+                degenerateSecondary.magnitude, 0.99f,
+                "The fallback hinge axis must be unit length.");
+
+            // A bone with no child (head): the parent direction becomes primary.
+            EnemyRagdollSetup.ComputeJointAxes(
+                new Vector3(0f, 1f, 0f), Vector3.zero,
+                out Vector3 headPrimary, out Vector3 headSecondary);
+
+            Assert.AreEqual(
+                1f, Vector3.Dot(headPrimary, Vector3.up), 0.0001f,
+                "Without a child the parent->bone direction is the primary axis.");
+            Assert.AreEqual(
+                0f, Vector3.Dot(headPrimary, headSecondary), 1e-5f,
+                "The head axes must be orthogonal too.");
+        }
+
+        [Test]
+        public void ConnectedRagdollCollidersDoNotSignificantlyOverlap()
+        {
+            // QA fix #1: every CONNECTED collider pair must taper smoothly - the
+            // larger radius may be at most MaxAcceptableAdjacentOverlapRatio (2.5)
+            // times the smaller. The old aggressive radii mushroomed at the joints
+            // and the solver kicked them apart at activation.
+            string[] bones = EnemyRagdollSetup.RequiredBoneNames;
+
+            int checkedPairs = 0;
+
+            for (int i = 1; i < bones.Length; i++)
+            {
+                string parent = EnemyRagdollSetup.GetJointParentBoneName(bones[i]);
+
+                if (parent == null)
+                {
+                    continue;
+                }
+
+                float ratio = EnemyRagdollSetup.ComputeAdjacentOverlapRatio(
+                    EnemyRagdollSetup.GetBoneColliderRadius(parent),
+                    EnemyRagdollSetup.GetBoneColliderRadius(bones[i]));
+
+                Assert.IsTrue(
+                    EnemyRagdollSetup.IsAdjacentOverlapAcceptable(ratio),
+                    $"The connected pair {parent}<->{bones[i]} overlaps too much " +
+                    $"(ratio {ratio:0.00} > 2.5).");
+                checkedPairs++;
+            }
+
+            Assert.AreEqual(10, checkedPairs,
+                "Exactly 10 connected pairs must be checked (11 bones, 1 physics root).");
+
+            // The pure ratio math itself.
+            Assert.AreEqual(
+                1f,
+                EnemyRagdollSetup.ComputeAdjacentOverlapRatio(0.1f, 0.1f),
+                0.0001f,
+                "Equal radii -> ratio 1.");
+            Assert.AreEqual(
+                2.5f,
+                EnemyRagdollSetup.ComputeAdjacentOverlapRatio(0.25f, 0.1f),
+                0.0001f,
+                "0.25 vs 0.1 -> ratio 2.5 (the acceptance boundary).");
+            Assert.IsFalse(
+                EnemyRagdollSetup.IsAdjacentOverlapAcceptable(2.51f),
+                "Just past the boundary the pair must be flagged.");
+        }
+
+        [Test]
+        public void RagdollConnectedMassRatiosAreStable()
+        {
+            // QA fix #1: connected Rigidbody masses must not differ by more than
+            // the stability ceiling (4x) - large ratios made the joint solver
+            // fight itself at handoff.
+            string[] bones = EnemyRagdollSetup.RequiredBoneNames;
+
+            for (int i = 1; i < bones.Length; i++)
+            {
+                string parent = EnemyRagdollSetup.GetJointParentBoneName(bones[i]);
+
+                if (parent == null)
+                {
+                    continue;
+                }
+
+                Assert.IsTrue(
+                    EnemyRagdollSetup.IsConnectedMassRatioAcceptable(
+                        EnemyRagdollSetup.GetBoneMass(parent),
+                        EnemyRagdollSetup.GetBoneMass(bones[i])),
+                    $"The connected mass ratio {parent}<->{bones[i]} exceeds the " +
+                    "stability ceiling (4x).");
+            }
+
+            Assert.IsTrue(
+                EnemyRagdollSetup.IsConnectedMassRatioAcceptable(1.8f, 0.5f),
+                "A 3.6x ratio must be acceptable.");
+            Assert.IsFalse(
+                EnemyRagdollSetup.IsConnectedMassRatioAcceptable(2.5f, 0.4f),
+                "A 6.25x ratio must be rejected.");
+        }
+
+        [Test]
+        public void RagdollActivationRequiresZeroedVelocitiesDisabledAnimatorAndEnabledColliders()
+        {
+            // QA fix #1: the bodies may only be freed once the activation is
+            // PREPARED - velocities zeroed, Animator disabled, ragdoll colliders
+            // enabled. An unprepared activation produced the first-frame
+            // twist/kick/explosion.
+            Assert.IsTrue(
+                EnemyRagdoll.IsActivationPrepared(true, true, true),
+                "All three preparation steps done - the activation may free the bodies.");
+            Assert.IsFalse(
+                EnemyRagdoll.IsActivationPrepared(false, true, true),
+                "Residual velocities present - the activation must NOT proceed.");
+            Assert.IsFalse(
+                EnemyRagdoll.IsActivationPrepared(true, false, true),
+                "The Animator is still driving the skeleton - the activation must NOT proceed.");
+            Assert.IsFalse(
+                EnemyRagdoll.IsActivationPrepared(true, true, false),
+                "The ragdoll colliders are off - the activation must NOT proceed.");
+        }
+
+        [Test]
+        public void RagdollSelfCollisionPolicyIsDeterministic()
+        {
+            // QA fix #1: ragdoll parts never collide with ragdoll parts (or other
+            // corpses) - they interact ONLY with the environment/road. The policy
+            // is a dedicated named layer whose index must be valid; a missing
+            // layer must never reach Physics.IgnoreLayerCollision.
+            Assert.IsFalse(
+                EnemyRagdoll.ShouldUseLayerSelfCollisionPolicy(-1),
+                "A missing layer (NameToLayer == -1) must disable the policy safely.");
+            Assert.IsTrue(
+                EnemyRagdoll.ShouldUseLayerSelfCollisionPolicy(8),
+                "A valid layer index (8) must enable the policy.");
+            Assert.IsTrue(
+                EnemyRagdoll.ShouldUseLayerSelfCollisionPolicy(0),
+                "The policy accepts any valid layer index (0..31).");
+            Assert.IsFalse(
+                EnemyRagdoll.ShouldUseLayerSelfCollisionPolicy(32),
+                "An out-of-range layer must disable the policy safely.");
+
+            Assert.AreEqual(
+                "OO_Ragdoll", EnemyRagdoll.RagdollLayerName,
+                "The dedicated ragdoll layer name must stay pinned.");
+
+            // The setup tool's layer constant must match the runtime component's.
+            Assert.AreEqual(
+                EnemyRagdoll.RagdollLayerName,
+                EnemyRagdollSetup.RagdollLayerName,
+                "The authoring and runtime layer names must never drift apart.");
+        }
+
+        [Test]
+        public void RagdollReuseResetRestoresParentsBeforeChildren()
+        {
+            // QA fix #1: the authored-pose restore walks the bone array in index
+            // order, so EVERY joint parent must precede its child in the authored
+            // order - restoring a child before its parent would snap it to a stale
+            // pose. This pins the parent-before-child contract of the setup tool.
+            string[] bones = EnemyRagdollSetup.RequiredBoneNames;
+
+            for (int childIndex = 1; childIndex < bones.Length; childIndex++)
+            {
+                string parent = EnemyRagdollSetup.GetJointParentBoneName(bones[childIndex]);
+
+                if (parent == null)
+                {
+                    continue;
+                }
+
+                int parentIndex = System.Array.IndexOf(bones, parent);
+                Assert.GreaterOrEqual(parentIndex, 0, $"'{parent}' must be a configured bone.");
+                Assert.Less(parentIndex, childIndex,
+                    $"'{parent}' (index {parentIndex}) must be restored before its child " +
+                    $"'{bones[childIndex]}' (index {childIndex}).");
+            }
+
+            // And the full reset gate from the FINAL upgrade still holds.
+            Assert.IsTrue(
+                EnemyRagdoll.IsReuseResetComplete(true, true, true),
+                "The complete reset gate must stay accepted.");
+            Assert.IsFalse(
+                EnemyRagdoll.IsReuseResetComplete(true, true, false),
+                "A reset without zeroed velocities must stay rejected.");
         }
 
         [Test]
