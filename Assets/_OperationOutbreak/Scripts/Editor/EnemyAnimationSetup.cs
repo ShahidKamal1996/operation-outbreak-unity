@@ -182,9 +182,18 @@ namespace OperationOutbreak.EditorTools
             AnimatorState deathState = root.AddState(DeathState, new Vector3(610f, 300f, 0f));
             deathState.motion = death;
 
+            // QA fix #5 - death presentation is ONE-SHOT: the state plays at exactly
+            // 1x speed, is NOT driven by any parameter, and the AnyState->Death
+            // transition explicitly CANNOT re-enter the state it is already in - so
+            // nothing can restart the clip at its first frames.
+            deathState.speed = 1f;
+            deathState.speedParameterActive = false;
+            deathState.cycleOffset = 0f;
+
             AnimatorStateTransition anyToDeath = root.AddAnyStateTransition(deathState);
             anyToDeath.hasExitTime = false;
             anyToDeath.duration = 0.1f;
+            anyToDeath.canTransitionToSelf = false;
             anyToDeath.AddCondition(AnimatorConditionMode.If, 0f, "Dead");
 
             EditorUtility.SetDirty(controller);
@@ -360,6 +369,29 @@ namespace OperationOutbreak.EditorTools
                 {
                     problems.Add(DeathState + " must NOT be driven by the locomotion speed " +
                                  "multiplier - death timing is authored.");
+                }
+
+                // QA fix #5 - the death presentation must be one-shot at exactly 1x.
+                if (deathState.speed != 1f)
+                {
+                    problems.Add(DeathState + " speed must be exactly 1 so the death clip " +
+                                 "plays once at its authored rate.");
+                }
+            }
+
+            // QA fix #5 - the AnyState->Death transition must never re-enter the
+            // state it is already in (a self-transition would restart the clip).
+            if (root.anyStateTransitions != null)
+            {
+                foreach (AnimatorStateTransition anyStateTransition in root.anyStateTransitions)
+                {
+                    if (anyStateTransition.destinationState == deathState &&
+                        anyStateTransition.canTransitionToSelf)
+                    {
+                        problems.Add("The AnyState->" + DeathState + " transition must NOT be " +
+                                     "self-re-entrant - canTransitionToSelf=true would restart " +
+                                     "the death clip at its first frames.");
+                    }
                 }
             }
 

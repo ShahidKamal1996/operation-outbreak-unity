@@ -94,6 +94,18 @@ namespace OperationOutbreak.Enemies
         public bool IsDeathLatched => _deathLatched;
 
         private bool _deathLatched;
+        private bool _deathPresentationStarted;
+
+        /// <summary>
+        /// QA fix #5 - pure one-shot gate for the death presentation. Animator.Play
+        /// with normalizedTime 0 MUST execute exactly once per death: any repeated
+        /// call restarts the death clip at its first frames, which QA observed as
+        /// jerking/looping. Static and side-effect free for EditMode tests.
+        /// </summary>
+        public static bool ShouldStartDeathPresentation(bool deathLatched, bool presentationStarted)
+        {
+            return deathLatched && !presentationStarted;
+        }
 
         /// <summary>
         /// Pure helper (Bug 4): converts the code-driven planar speed into the Walk
@@ -209,9 +221,16 @@ namespace OperationOutbreak.Enemies
 
             _deathLatched = true;
 
-            // Death outranks everything: clear a queued Attack trigger, freeze the
-            // locomotion inputs, latch the Dead parameter, and switch the base layer
-            // straight into the Death state. See ForceDeathPresentation.
+            // QA fix #5 - ONE-SHOT: the latch and the presentation-start flag together
+            // guarantee Animator.Play runs exactly once per death. A repeated Died
+            // callback (or any other path) can never restart the death clip at
+            // normalized time 0.
+            if (!ShouldStartDeathPresentation(_deathLatched, _deathPresentationStarted))
+            {
+                return;
+            }
+
+            _deathPresentationStarted = true;
             ForceDeathPresentation(animator);
         }
 
@@ -247,11 +266,23 @@ namespace OperationOutbreak.Enemies
         /// Instance convenience for the editor diagnostic menu: forces the death
         /// presentation on this bridge's Animator (no gameplay involved) and latches
         /// the bridge so Update can no longer drive locomotion parameters.
+        ///
+        /// QA fix #5 - one-shot: returns false (and does NOT re-Play) when the death
+        /// presentation has already been started, so repeated diagnostic invocations
+        /// can never restart the death clip at its first frames.
         /// </summary>
-        public void ForceDeathPresentation()
+        public bool ForceDeathPresentation()
         {
             _deathLatched = true;
+
+            if (!ShouldStartDeathPresentation(_deathLatched, _deathPresentationStarted))
+            {
+                return false;
+            }
+
+            _deathPresentationStarted = true;
             ForceDeathPresentation(animator);
+            return true;
         }
 
 #if UNITY_EDITOR

@@ -227,6 +227,23 @@ Production enemy VISUAL foundation only — zero enemy gameplay changes:
     (enabled / controller / layers / avatar / state resolution) plus the reported
     state after the forced entry — answering whether the clip/avatar setup itself
     can play Death.
+11. **QA fix #5 (2026-08-18) — one-shot death presentation:** QA observed the death
+    animation enter but its first frames repeat/restart (jerking). Evidence:
+    the imported `zombie death` clip is a single ~2.97 s take and its importer meta
+    has no Loop Time (non-looping default), and gameplay's `Animator.Play` is
+    already gated once per death — so the restart signature came from ANY repeated
+    `Play(..., 0)` call (most plausibly repeated invocations of the isolation
+    diagnostic during QA, which re-issued Play at normalized time 0). Fix:
+    - `EnemyAnimationBridge` now carries an explicit one-shot gate
+      (`ShouldStartDeathPresentation(deathLatched, presentationStarted)`) — latched
+      + not-started allows the presentation exactly once; every later path
+      (repeated `Died`, diagnostics) refuses and never calls Play again.
+    - The isolation diagnostic no longer re-Plays when the Animator is already in
+      the Death state; it logs the CURRENT normalized time instead, so the clip's
+      progression (0 → 1) can be verified across invocations without restarting it.
+    - The controller tool pins the Death state to speed 1, no speed parameter, and
+      the `AnyState → Death` transition to `canTransitionToSelf = false` (validated),
+      so nothing in the state machine can re-enter Death and restart the clip.
 9. **QA fix #2 (2026-08-17) — floating, vibration and death still unresolved:**
    - **Grounding:** QA fix #1B's renderer-bounds measurement read the vendor prefab's
      EDITOR/REFERENCE pose (the vendor ships a crouched cartoon pose), not the animated
@@ -283,8 +300,9 @@ Production enemy VISUAL foundation only — zero enemy gameplay changes:
 11b. **Isolation check (if death still fails):** select a spawned zombie in Play
      Mode and run `Tools > Operation Outbreak > Test Force Death On Selected
      Animator` — the console reports every precondition and the state after the
-     forced entry; if the zombie animates there, the problem is sequencing, not
-     clip/avatar setup.
+     forced entry; run it AGAIN a few frames later: it must NOT restart the clip
+     and must log a HIGHER normalized time (one-shot + progression proof). If the
+     zombie animates there, the problem is sequencing, not clip/avatar setup.
 12. Dead enemy cannot move or attack.
 13. Mission kill/wave accounting remains correct (3 sections, 12 enemies,
     9 BASIC / 3 RUNNER, Mission Complete exactly once).
@@ -293,7 +311,10 @@ Production enemy VISUAL foundation only — zero enemy gameplay changes:
 16. LOD/prefab rendering produces no obvious errors (both LODs textured).
 17. Player Toon Soldier remains unaffected (shooting, aim, muzzle, animations).
 18. Console remains clean.
-19. Full EditMode suite passes — expect **161/161** (158 previous + 3 new
+19. Full EditMode suite passes — expect **164/164** (161 previous + 3 new
+    QA-fix-#5 tests: one-shot presentation gate truth table, non-looping full
+    death clip, and Death state unit-speed/no-exits/no-self-re-entry; the
+    controller tests require step 0 to have been run once).
     QA-fix-#4 tests: full-path hash shared with layer-0 targeting, generated
     controller contains the exact 'Base Layer.Death' path, and the path survives a
     rebuild + forced reimport; the controller tests require step 0 to have been run

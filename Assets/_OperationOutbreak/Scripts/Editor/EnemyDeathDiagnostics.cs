@@ -60,6 +60,24 @@ namespace OperationOutbreak.EditorTools
                 return;
             }
 
+            // QA fix #5 - never restart an already-running death: if the Animator is
+            // already in the Death state, do NOT re-issue Animator.Play (which would
+            // reset normalized time to 0 and produce the observed first-frame
+            // restart/jitter). Instead report the current normalized time so the
+            // progression can be verified across invocations.
+            AnimatorStateInfo current = animator.GetCurrentAnimatorStateInfo(EnemyAnimationBridge.DeathPlayLayer);
+
+            if (current.IsName(EnemyAnimationBridge.DeathStateName))
+            {
+                Debug.Log(
+                    "[1Q QA fix #4/#5] Animator is ALREADY in the Death state - NOT restarting. " +
+                    $"Current normalizedTime={current.normalizedTime:0.00}. If this value keeps " +
+                    "increasing across log entries, the death clip is progressing correctly; " +
+                    "if it stays near 0 across frames, something else is resetting the state.",
+                    animator);
+                return;
+            }
+
             EnemyAnimationBridge.ForceDeathPresentation(animator);
 
             AnimatorStateInfo stateInfo = animator.GetCurrentAnimatorStateInfo(EnemyAnimationBridge.DeathPlayLayer);
@@ -70,8 +88,10 @@ namespace OperationOutbreak.EditorTools
             Debug.Log(
                 "[1Q QA fix #4] Forced death entry issued via Animator.Play('" +
                 EnemyAnimationBridge.DeathStateFullPath + "'). State machine reports: '" +
-                reportedState + $"', normalizedTime={stateInfo.normalizedTime:0.00}. Watch the " +
-                "Scene view: if the zombie now visibly plays the death clip, the " +
+                reportedState + $"', normalizedTime={stateInfo.normalizedTime:0.00}. Run this " +
+                "menu again in a few frames: the tool will NOT restart the clip and will " +
+                "log the current normalized time so the progression can be verified. Watch the " +
+                "Scene view: if the zombie visibly plays the death clip, the " +
                 "clip/state/avatar setup is GOOD and any remaining failure is gameplay " +
                 "sequencing; if it does not animate, the clip/avatar binding is broken.",
                 animator);

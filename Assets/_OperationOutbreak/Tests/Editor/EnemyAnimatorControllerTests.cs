@@ -314,6 +314,80 @@ namespace OperationOutbreak.Tests
                 "The Death state must survive the rebuild.");
         }
 
+        // ============================================ QA fix #5 (one-shot death)
+
+        [Test]
+        public void ShouldStartDeathPresentation_IsOneShot()
+        {
+            // The gate must allow exactly one presentation start per death: latched +
+            // not-yet-started allows it; any other combination refuses. A repeated
+            // Animator.Play would restart the death clip at its first frames - the
+            // observed jerking symptom.
+            Assert.IsTrue(
+                EnemyAnimationBridge.ShouldStartDeathPresentation(true, false),
+                "A latched enemy whose death presentation has not started yet must start it.");
+
+            Assert.IsFalse(
+                EnemyAnimationBridge.ShouldStartDeathPresentation(true, true),
+                "A latched enemy whose death presentation has already started must NOT " +
+                "restart it (this is the one-shot guarantee).");
+
+            Assert.IsFalse(
+                EnemyAnimationBridge.ShouldStartDeathPresentation(false, false),
+                "An enemy that is not death-latched must never start the death presentation.");
+        }
+
+        [Test]
+        public void DeathClipIsNonLooping()
+        {
+            // The imported zombie death clip must NOT loop - a looping clip replays
+            // its first frames, which reads as the reported jerking/restart symptom.
+            AnimationClip death = EnemyAnimationSetup.ResolveClip(EnemyAnimationSetup.DeathFbxPath);
+
+            Assert.IsNotNull(death, "The zombie death clip must resolve.");
+
+            Assert.IsFalse(death.isLooping,
+                "The zombie death clip must be non-looping. If this fails, uncheck " +
+                "Loop Time on the death clip's import settings and re-save.");
+
+            Assert.Greater(death.length, 1f,
+                "The death clip must be the full ~2.8-3.0 s take, not a truncated fragment.");
+        }
+
+        [Test]
+        public void DeathStateIsUnitSpeedAndNeverSelfReEntrant()
+        {
+            // The Death state must play once at exactly 1x, with no exits and no
+            // self-re-entrant AnyState transition - any of those would restart the
+            // clip at its first frames.
+            AnimatorController controller = AssetDatabase.LoadAssetAtPath<AnimatorController>(
+                EnemyAnimationSetup.ControllerPath);
+
+            Assert.IsNotNull(controller, "Controller asset missing - run the rebuild tool.");
+
+            AnimatorStateMachine baseRoot = controller.layers[0].stateMachine;
+            AnimatorState deathState = FindState(baseRoot, EnemyAnimationBridge.DeathStateName);
+
+            Assert.IsNotNull(deathState, "Death state missing.");
+
+            Assert.AreEqual(1f, deathState.speed, 0.0001f,
+                "The Death state must play at exactly 1x speed.");
+            Assert.IsFalse(deathState.speedParameterActive,
+                "The Death state must not be driven by any speed parameter.");
+            Assert.IsEmpty(deathState.transitions,
+                "The Death state must have no exits.");
+
+            foreach (AnimatorStateTransition anyStateTransition in baseRoot.anyStateTransitions)
+            {
+                if (anyStateTransition.destinationState == deathState)
+                {
+                    Assert.IsFalse(anyStateTransition.canTransitionToSelf,
+                        "The AnyState->Death transition must never re-enter the Death " +
+                        "state - that would restart the death clip.");
+                }
+            }
+        }
+
         [Test]
         public void ProductionZombieMaterialsUseTheUrpLitShader()
         {

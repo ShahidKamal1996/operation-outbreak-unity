@@ -409,6 +409,14 @@
   editor isolation diagnostic (`EnemyDeathDiagnostics`) forces death without any
   gameplay involvement. The setup tool validates the Death state + clip resolve
   before finishing and warns otherwise.
+- **One-shot rule (QA fix #5):** the death presentation must be idempotent.
+  `Animator.Play` with normalizedTime 0 runs exactly once per death, gated by
+  `ShouldStartDeathPresentation(deathLatched, presentationStarted)`; repeated
+  `Died` callbacks and repeated diagnostic invocations refuse to re-Play, and the
+  diagnostic logs the current normalized time instead (so clip progression can be
+  verified without restarting). The Death state is pinned to speed 1 with no speed
+  parameter and `AnyState → Death` has `canTransitionToSelf = false`, so the state
+  machine itself can never re-enter Death and restart the clip.
 - **Materials:** the vendor `.mat` files use the BUILT-IN Standard shader (renders
   magenta under URP); local vendor-material conversions are NOT portable and are
   forbidden. Operation Outbreak owns URP/Lit materials
