@@ -202,13 +202,12 @@ namespace OperationOutbreak.Enemies
             animator.SetFloat(LocomotionSpeedMultiplierHash, 1f);
             animator.SetBool(DeadHash, true);
 
-            // QA fix #2 - DIRECT death entry: crossfade straight into the Death state
-            // in addition to the parameter-driven AnyState transition. This guarantees
-            // the death clip starts immediately even if a same-frame Attack
-            // self-transition or any other transition conflict would otherwise delay
-            // or swallow the parameter-driven one. The Death state has no exits, so
-            // the crossfade is terminal.
-            animator.CrossFadeInFixedTime(DeathStateHash, 0.1f, 0);
+            // QA fix #3 - DETERMINISTIC death entry: Play switches the base layer into
+            // the Death state immediately at normalized time 0, independent of AnyState
+            // transition evaluation, transition durations, or same-frame trigger races.
+            // The Dead bool above remains as the parameter-driven backup path. The
+            // Death state has no exits, so nothing can animate the enemy out of it.
+            animator.Play(DeathStateHash, 0, 0f);
         }
 
 #if UNITY_EDITOR

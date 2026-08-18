@@ -1,4 +1,5 @@
 #if UNITY_EDITOR
+using System.Collections.Generic;
 using OperationOutbreak.Enemies;
 using UnityEditor;
 using UnityEditor.Animations;
@@ -46,6 +47,20 @@ namespace OperationOutbreak.EditorTools
 
         public const string ZombieFbxPath =
             "Assets/ArtStore3D/Stylized Zombie/Model/StylizedZombie.fbx";
+
+        /// <summary>
+        /// QA fix #3 (Bug 2 - magenta on clean clones) - Operation Outbreak-owned URP
+        /// materials for the production zombie. The vendor .mat files use the BUILT-IN
+        /// Standard shader, which renders magenta under URP; the old PC had locally
+        /// converted vendor materials that were never committed. These OO-owned
+        /// materials are source-controlled (URP/Lit + vendor textures), so a clean
+        /// clone renders identically without any manual conversion.
+        /// </summary>
+        public const string OoZombieMaterial01Path =
+            "Assets/_OperationOutbreak/Art/Materials/Enemies/OO_Zombie_01.mat";
+
+        public const string OoZombieMaterial02Path =
+            "Assets/_OperationOutbreak/Art/Materials/Enemies/OO_Zombie_02.mat";
 
         public const string ProductionVisualName = "ProductionVisual";
         public const string PrototypeVisualName = "Visual";
@@ -101,6 +116,24 @@ namespace OperationOutbreak.EditorTools
         public static bool ShouldHidePrototypeVisual(bool productionVisualActive)
         {
             return productionVisualActive;
+        }
+
+        /// <summary>
+        /// QA fix #3 (Bug 2) - selects the Operation Outbreak-owned URP material for a
+        /// renderer based on the renderer's CURRENT vendor material name: anything
+        /// containing "02" maps to OO_Zombie_02 (the second vendor material/variant),
+        /// everything else (including an unresolvable/unknown name) falls back to
+        /// OO_Zombie_01. Deterministic and LOD-safe: every renderer of the production
+        /// instance is assigned by this rule on every setup run.
+        /// </summary>
+        public static string SelectProductionMaterialForRenderer(string currentMaterialName)
+        {
+            if (!string.IsNullOrEmpty(currentMaterialName) && currentMaterialName.Contains("02"))
+            {
+                return OoZombieMaterial02Path;
+            }
+
+            return OoZombieMaterial01Path;
         }
 
         /// <summary>
@@ -203,6 +236,54 @@ namespace OperationOutbreak.EditorTools
                 animator.applyRootMotion = false;
                 animator.cullingMode = AnimatorCullingMode.AlwaysAnimate;
 
+                // QA fix #3 (Bug 2) - assign the Operation Outbreak-owned URP materials
+                // to EVERY renderer of the production instance (LOD0 and LOD1 alike),
+                // selected deterministically from the vendor material names. The vendor
+                // materials use the built-in Standard shader and render magenta under
+                // URP, so relying on uncommitted local conversions is forbidden - the
+                // OO materials are source-controlled and this step runs on every setup.
+                Material material01 = AssetDatabase.LoadAssetAtPath<Material>(OoZombieMaterial01Path);
+                Material material02 = AssetDatabase.LoadAssetAtPath<Material>(OoZombieMaterial02Path);
+
+                if (material01 == null || material02 == null)
+                {
+                    EditorUtility.DisplayDialog(
+                        "Basic Infected Visual",
+                        "One or more OO zombie URP materials are missing:\n" +
+                        OoZombieMaterial01Path + "\n" + OoZombieMaterial02Path +
+                        "\nThe production zombie would render magenta (vendor built-in shader). " +
+                        "Restore the materials and re-run.",
+                        "OK");
+                    return;
+                }
+
+                int assignedRenderers = 0;
+                foreach (Renderer renderer in zombie.GetComponentsInChildren<Renderer>(true))
+                {
+                    Material[] sharedMaterials = renderer.sharedMaterials;
+                    bool changed = false;
+
+                    for (int i = 0; i < sharedMaterials.Length; i++)
+                    {
+                        string currentName = sharedMaterials[i] != null ? sharedMaterials[i].name : string.Empty;
+                        string selectedPath = SelectProductionMaterialForRenderer(currentName);
+                        Material selected = selectedPath == OoZombieMaterial02Path ? material02 : material01;
+
+                        if (sharedMaterials[i] != selected)
+                        {
+                            sharedMaterials[i] = selected;
+                            changed = true;
+                        }
+                    }
+
+                    if (changed)
+                    {
+                        renderer.sharedMaterials = sharedMaterials;
+                    }
+
+                    assignedRenderers++;
+                }
+
                 // Prototype visual: hidden (not deleted) while the production visual is
                 // active, preserving the safe fallback for debugging/QA.
                 Transform prototypeVisual = contents.transform.Find(PrototypeVisualName);
@@ -262,12 +343,27 @@ namespace OperationOutbreak.EditorTools
                 PrefabUtility.SaveAsPrefabAsset(contents, ZombiePrefabPath);
                 AnimationClip walkClipForLog = EnemyAnimationSetup.ResolveClip(EnemyAnimationSetup.WalkFbxPath);
                 AnimationClip deathClipForLog = EnemyAnimationSetup.ResolveClip(EnemyAnimationSetup.DeathFbxPath);
+
+                // QA fix #3 - validate the death presentation before finishing setup.
+                List<string> controllerProblems = EnemyAnimationSetup.CollectValidationProblems();
+                bool deathResolves = deathClipForLog != null && controllerProblems.Count == 0;
+
+                if (!deathResolves)
+                {
+                    Debug.LogWarning(
+                        "[1Q] Basic Infected death presentation may not resolve: " +
+                        (deathClipForLog == null ? "death clip missing; " : string.Empty) +
+                        string.Join("; ", controllerProblems), contents);
+                }
+
                 Debug.Log(
                     "[1Q] Basic Infected production visual ready. Avatar valid: " +
                     $"{(animator.avatar != null && animator.avatar.isValid)}, controller: " +
                     $"{(controller != null ? controller.name : "MISSING")}, root motion: {animator.applyRootMotion}, " +
                     $"grounding Y: {ProductionVisualGroundingOffsetY:0.000} (deterministic FBX-derived), " +
                     $"death window: {(deathClipForLog != null ? (deathClipForLog.length + DeathPresentationMarginSeconds).ToString("0.00") : "n/a")} s, " +
+                    $"death state resolves: {deathResolves}, " +
+                    $"materials assigned: {assignedRenderers} renderers -> OO_Zombie URP materials, " +
                     $"walk cadence reference: {(walkClipForLog != null && walkClipForLog.averageSpeed.magnitude > 0.01f ? walkClipForLog.averageSpeed.magnitude.ToString("0.00") : "1.30 (fallback)")} u/s. " +
                     "Commit the modified Zombie_Prototype.prefab.", contents);
             }

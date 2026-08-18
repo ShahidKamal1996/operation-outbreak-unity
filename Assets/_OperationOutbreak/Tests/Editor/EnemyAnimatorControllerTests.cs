@@ -205,6 +205,105 @@ namespace OperationOutbreak.Tests
                 "direct crossfade targets it.");
         }
 
+        // ============================================ QA fix #3 (death entry + materials)
+
+        [Test]
+        public void DirectDeathEntryTargetsTheLayerZeroDeathState()
+        {
+            // QA fix #3 regression: the bridge's deterministic death entry uses
+            // Animator.Play(DeathStateHash, layer 0, time 0). The hash must resolve to
+            // the shared Death state name and the Death state must live on the base
+            // layer (layer 0), with the death clip assigned.
+            Assert.AreEqual(
+                Animator.StringToHash(EnemyAnimationBridge.DeathStateName),
+                Animator.StringToHash("Death"),
+                "The Death state hash must resolve from the shared state name.");
+
+            AnimatorController controller = AssetDatabase.LoadAssetAtPath<AnimatorController>(
+                EnemyAnimationSetup.ControllerPath);
+
+            Assert.IsNotNull(controller, "Controller asset missing - run the rebuild tool.");
+            Assert.GreaterOrEqual(controller.layers.Length, 1,
+                "The controller needs its base layer.");
+
+            AnimatorStateMachine baseRoot = controller.layers[0].stateMachine;
+            AnimatorState deathState = FindState(baseRoot, EnemyAnimationBridge.DeathStateName);
+            Assert.IsNotNull(deathState,
+                "The Death state must live on the BASE layer (layer 0) where the " +
+                "bridge's Animator.Play targets it.");
+
+            AnimationClip deathClip = EnemyAnimationSetup.ResolveClip(EnemyAnimationSetup.DeathFbxPath);
+            Assert.IsNotNull(deathClip, "The zombie death clip must resolve.");
+            Assert.AreEqual(deathClip, deathState.motion as AnimationClip,
+                "The Death state must play the zombie death clip.");
+        }
+
+        [Test]
+        public void ProductionZombieMaterialsUseTheUrpLitShader()
+        {
+            // QA fix #3 (Bug 2) regression: the production zombie must render with
+            // Operation Outbreak-owned URP materials. The vendor materials use the
+            // built-in Standard shader, which renders magenta under URP and was only
+            // "fixed" by uncommitted local conversions on the old PC.
+            Material material01 = AssetDatabase.LoadAssetAtPath<Material>(
+                EnemyVisualSetup.OoZombieMaterial01Path);
+            Material material02 = AssetDatabase.LoadAssetAtPath<Material>(
+                EnemyVisualSetup.OoZombieMaterial02Path);
+
+            Assert.IsNotNull(material01,
+                "OO_Zombie_01 URP material is missing - a clean clone would render magenta.");
+            Assert.IsNotNull(material02,
+                "OO_Zombie_02 URP material is missing - a clean clone would render magenta.");
+
+            Assert.AreEqual("Universal Render Pipeline/Lit", material01.shader.name,
+                "OO_Zombie_01 must use the URP/Lit shader.");
+            Assert.AreEqual("Universal Render Pipeline/Lit", material02.shader.name,
+                "OO_Zombie_02 must use the URP/Lit shader.");
+        }
+
+        [Test]
+        public void ProductionZombieMaterialsReferenceTheVendorTextures()
+        {
+            // QA fix #3 (Bug 2) regression: the OO URP materials must carry the vendor
+            // base-color textures so the zombie looks correct, not just non-magenta.
+            Material material01 = AssetDatabase.LoadAssetAtPath<Material>(
+                EnemyVisualSetup.OoZombieMaterial01Path);
+            Material material02 = AssetDatabase.LoadAssetAtPath<Material>(
+                EnemyVisualSetup.OoZombieMaterial02Path);
+
+            Assert.IsNotNull(material01, "OO_Zombie_01 is missing.");
+            Assert.IsNotNull(material02, "OO_Zombie_02 is missing.");
+
+            Assert.IsNotNull(material01.GetTexture("_MainTex"),
+                "OO_Zombie_01 must reference the vendor base-color texture.");
+            Assert.IsNotNull(material02.GetTexture("_MainTex"),
+                "OO_Zombie_02 must reference the vendor base-color texture.");
+        }
+
+        [Test]
+        public void SelectProductionMaterialForRenderer_IsDeterministic()
+        {
+            // The material selection rule: current vendor material names containing
+            // "02" map to OO_Zombie_02 (the second vendor material), everything else
+            // falls back to OO_Zombie_01.
+            Assert.AreEqual(
+                EnemyVisualSetup.OoZombieMaterial02Path,
+                EnemyVisualSetup.SelectProductionMaterialForRenderer("StylizedZombie_02_Mat"),
+                "The vendor '02' material must map to OO_Zombie_02.");
+            Assert.AreEqual(
+                EnemyVisualSetup.OoZombieMaterial01Path,
+                EnemyVisualSetup.SelectProductionMaterialForRenderer("StylizedZombie_01_Mat"),
+                "The vendor '01' material must map to OO_Zombie_01.");
+            Assert.AreEqual(
+                EnemyVisualSetup.OoZombieMaterial01Path,
+                EnemyVisualSetup.SelectProductionMaterialForRenderer(""),
+                "An unknown/empty material name must fall back to OO_Zombie_01.");
+            Assert.AreEqual(
+                EnemyVisualSetup.OoZombieMaterial01Path,
+                EnemyVisualSetup.SelectProductionMaterialForRenderer(null),
+                "A null material name must fall back to OO_Zombie_01.");
+        }
+
         [Test]
         public void LegacyTransformPunchAppliesOnlyWithoutTheProductionVisual()
         {

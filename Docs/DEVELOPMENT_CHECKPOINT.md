@@ -192,6 +192,25 @@ Production enemy VISUAL foundation only — zero enemy gameplay changes:
     reference now uses `averageSpeed.magnitude` — the scalar speed the clip's root
     actually travels at, which is what the Walk-cadence multiplier divides by. Bug 4
     behavior is identical.
+9. **QA fix #3 (2026-08-17) — deterministic death entry + portable URP materials:**
+   - **Death (still not visible):** the death entry relied on `CrossFadeInFixedTime`
+     (a transition request that can be delayed by same-frame state machine
+     evaluation) — and on the old PC the zombie rendered as a MAGENTA silhouette
+     (vendor built-in shader), so even a correct death pose was nearly
+     indistinguishable. Fix: the bridge now uses `animator.Play(DeathStateHash, 0,
+     0f)` — an immediate, transition-independent switch of the base layer into the
+     terminal Death state at normalized time 0; the Dead bool remains as the
+     parameter-driven backup. The setup tool now validates that the Death state and
+     death clip resolve before finishing and logs a clear warning otherwise.
+   - **Materials (magenta on clean clones):** the vendor `.mat` files use the
+     BUILT-IN Standard shader, which renders magenta under URP; the old PC's local
+     conversions were never committed. Fix: Operation Outbreak-owned URP materials
+     (`Art/Materials/Enemies/OO_Zombie_01.mat` / `OO_Zombie_02.mat` — URP/Lit with
+     the vendor BaseColor/Normal/MetallicSmoothness textures wired) are now
+     source-controlled, and the setup tool deterministically assigns them to EVERY
+     production renderer (LOD0 + LOD1) on every run, selected from the current
+     vendor material name ("02" → OO_Zombie_02, else OO_Zombie_01). The vendor
+     package assets are left untouched.
 9. **QA fix #2 (2026-08-17) — floating, vibration and death still unresolved:**
    - **Grounding:** QA fix #1B's renderer-bounds measurement read the vendor prefab's
      EDITOR/REFERENCE pose (the vendor ships a crouched cartoon pose), not the animated
@@ -221,37 +240,43 @@ Production enemy VISUAL foundation only — zero enemy gameplay changes:
 
 0. **REQUIRED FIRST STEP — run `Tools > Operation Outbreak > Set Up Basic
    Infected Production Visual`** (rebuilds the controller with the cadence
-   multiplier, applies the DETERMINISTIC FBX-derived grounding offset −1.005, and
-   writes the clip-derived walk reference + death window onto the prefab), save,
-   and commit the regenerated `OO_BasicInfected.controller` plus the modified
-   `Zombie_Prototype.prefab`. The tool's console log reports grounding Y
-   (expect -1.005), death window (≈ 3.1 s) and walk cadence reference.
+   multiplier, applies the DETERMINISTIC FBX-derived grounding offset −1.005,
+   assigns the source-controlled OO URP zombie materials to every production
+   renderer, and writes the clip-derived walk reference + death window onto the
+   prefab), save, and commit the regenerated `OO_BasicInfected.controller` plus the
+   modified `Zombie_Prototype.prefab`. The tool's console log reports grounding Y
+   (-1.005), death window (≈ 3.1 s), death state resolution, assigned renderer
+   count and walk cadence reference.
 1. Basic Infected spawns with the Stylized Zombie visual.
-2. **Feet sit on the lane** — no floating, no significant sinking.
-3. Prototype enemy mesh is hidden (not rendered).
-4. Zombie walks while pursuing (idle when still).
-5. **Walk cadence sync (Bug 4):** footstep/cycle cadence approximately matches
+2. **Correct textures/materials appear — NO magenta/pink** (OO URP materials
+   active on LOD0 and LOD1).
+3. **Feet sit on the lane** — no floating, no significant sinking.
+4. Prototype enemy mesh is hidden (not rendered).
+5. Zombie walks while pursuing (idle when still).
+6. **Walk cadence sync (Bug 4):** footstep/cycle cadence approximately matches
    translation speed — no obvious foot skating.
-6. Zombie faces the player correctly.
-7. Zombie attack animation plays when attacking (attack timing unchanged).
-8. Existing damage timing still works (unchanged).
-9. **Continuous bullets produce readable hit feedback with NO head/body
-   vibration** (QA fix #2: cooldown-gated flash — one pulse per ~0.35 s, no
-   fire-rate strobe).
-10. **Death animation visibly plays once to completion** (QA fix #2: direct
-    crossfade into the terminal Death state; ~2.8 s clip + 0.3 s margin window),
-    uninterrupted, then the zombie deactivates.
-11. Dead enemy cannot move or attack.
-12. Mission kill/wave accounting remains correct (3 sections, 12 enemies,
+7. Zombie faces the player correctly.
+8. Zombie attack animation plays when attacking (attack timing unchanged).
+9. Existing damage timing still works (unchanged).
+10. **Continuous bullets produce readable hit feedback with NO head/body
+    vibration** (QA fix #2: cooldown-gated flash — one pulse per ~0.35 s, no
+    fire-rate strobe).
+11. **Death animation visibly plays once to completion** (QA fix #3:
+    deterministic `Animator.Play` into the terminal Death state at time 0; ~2.8 s
+    clip + 0.3 s margin window), uninterrupted, then the zombie deactivates.
+12. Dead enemy cannot move or attack.
+13. Mission kill/wave accounting remains correct (3 sections, 12 enemies,
     9 BASIC / 3 RUNNER, Mission Complete exactly once).
-13. Multiple zombies animate independently.
-14. Enemy separation still works.
-15. LOD/prefab rendering produces no obvious errors.
-16. Player Toon Soldier remains unaffected (shooting, aim, muzzle, animations).
-17. Console remains clean.
-18. Full EditMode suite passes — expect **154/154** (153 previous + 1 new
-    QA-fix-#12B Toon Soldier animator persistence round-trip test; the controller
-    tests require step 0 to have been run once).
+14. Multiple zombies animate independently.
+15. Enemy separation still works.
+16. LOD/prefab rendering produces no obvious errors (both LODs textured).
+17. Player Toon Soldier remains unaffected (shooting, aim, muzzle, animations).
+18. Console remains clean.
+19. Full EditMode suite passes — expect **158/158** (154 previous + 4 new
+    QA-fix-#3 tests: direct death entry targets the layer-0 Death state, URP
+    shader check on both OO materials, vendor texture wiring check, and the
+    deterministic material-selection rule; the controller tests require step 0 to
+    have been run once).
 
 ## What Milestone 1P.5 delivered
 
