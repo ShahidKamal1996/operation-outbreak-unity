@@ -24,6 +24,16 @@ namespace OperationOutbreak.Enemies
     /// DEATH: Died latches the bridge - the Dead bool is set, a pending Attack trigger
     /// is cleared, and locomotion parameters are frozen so the death clip plays once
     /// and the enemy can never animate out of it.
+    ///
+    /// DEATH PRESENTATION (1Q FINAL - hybrid animation -> ragdoll): with a ragdoll
+    /// configured, the death clip is the animation LEAD-IN (deathRagdollHandoffSeconds,
+    /// default 0.30 s); the bridge then hands the skeleton to physics exactly once
+    /// (EnemyRagdoll.ActivateRagdoll - Animator disabled, bodies non-kinematic,
+    /// ragdoll colliders enabled). Physics completes the fall; the presentation
+    /// completes after the settle window. While the ragdoll is active the bridge
+    /// writes NOTHING (no Animator parameters, no corpse-Y correction). Without a
+    /// ragdoll (prototype fallback) the animation-only path and its time-driven
+    /// grounding remain exactly as before.
     /// </summary>
     [DisallowMultipleComponent]
     public sealed class EnemyAnimationBridge : MonoBehaviour
@@ -158,6 +168,33 @@ namespace OperationOutbreak.Enemies
                  "[0, 0.05]; the setup tool writes the default 0.02 every run.")]
         [SerializeField] private float deathGroundingContactMargin = DefaultDeathGroundingContactMargin;
 
+        // ------------------------------------------------ hybrid animation -> ragdoll death
+
+        [Header("Hybrid Ragdoll Death (1Q Final Production Death Upgrade)")]
+        [Tooltip("Ragdoll component authored on this enemy by the setup tool. When " +
+                 "configured, the death presentation hands off to physics after the " +
+                 "animation lead-in; when missing, the legacy animation-only path is " +
+                 "used (prototype fallback stays intact).")]
+        [SerializeField] private EnemyRagdoll ragdoll;
+
+        [Tooltip("Animation lead-in: how long the one-shot Death clip plays before " +
+                 "the skeleton is handed to ragdoll physics. Chosen against the " +
+                 "actual clip (0.25-0.40 s band): by this point the body is already " +
+                 "starting to fall, so physics completes the fall naturally.")]
+        [Min(0f)]
+        [SerializeField] private float deathRagdollHandoffSeconds = 0.3f;
+
+        [Tooltip("How long the corpse stays in ragdoll physics before the death " +
+                 "presentation counts as complete (the existing deactivation wait, " +
+                 "production hold and safety timeout still apply). Long enough for " +
+                 "the fall to settle on the road; the corpse never stays forever.")]
+        [Min(0.1f)]
+        [SerializeField] private float deathRagdollSettleSeconds = 0.6f;
+
+        private float _ragdollHandoffElapsed;
+        private float _ragdollActivationTime = -1f;
+        private bool _ragdollHandoffDone;
+
         private Transform _productionVisual;
         private float _standingProductionVisualY;
         private bool _deathClipFinished;
@@ -203,13 +240,39 @@ namespace OperationOutbreak.Enemies
         }
 
         /// <summary>
-        /// QA fix #6 - pure gate: the death-only grounding correction applies only
-        /// after the death latch. While the enemy lives, the standing
-        /// ProductionVisual offset is never touched.
+        /// QA fix #6 / 1Q FINAL - pure gate: the animation-path death grounding
+        /// applies only after the death latch AND while the ragdoll is NOT active.
+        /// Once physics owns the corpse, the ProductionVisual Y correction must
+        /// never run - the two systems must not fight. While the enemy lives, the
+        /// standing ProductionVisual offset is never touched either.
         /// </summary>
-        public static bool ShouldApplyDeathGrounding(bool deathLatched)
+        public static bool ShouldApplyDeathGrounding(bool deathLatched, bool ragdollActive)
         {
-            return deathLatched;
+            return deathLatched && !ragdollActive;
+        }
+
+        /// <summary>
+        /// 1Q FINAL - pure handoff gate: the skeleton is handed to ragdoll physics
+        /// exactly once the animation lead-in has elapsed. Before that the Death
+        /// clip (and ONLY the Death clip) is driving the skeleton. Static and
+        /// side-effect free for EditMode tests.
+        /// </summary>
+        public static bool ShouldHandoffToRagdoll(float leadInElapsed, float handoffSeconds)
+        {
+            return leadInElapsed >= Mathf.Max(0f, handoffSeconds);
+        }
+
+        /// <summary>
+        /// 1Q FINAL - pure completion gate for the ragdoll path: with the ragdoll
+        /// active, the presentation completes when the corpse has had its full
+        /// physics settle window (there is no clip-finish or grounding tolerance to
+        /// wait for - the ground contact is produced by physics itself). The
+        /// animation-only path keeps the QA fix #9 gate
+        /// (ShouldCompleteDeathPresentation below). Static for EditMode tests.
+        /// </summary>
+        public static bool ShouldCompleteRagdollPresentation(bool ragdollActive, bool ragdollSettled)
+        {
+            return ragdollActive && ragdollSettled;
         }
 
         /// <summary>
@@ -228,8 +291,11 @@ namespace OperationOutbreak.Enemies
         /// the grounding blend progress over [start, end]. Smoothstep eases the
         /// lowering in and out so it visually MERGES with the fall animation
         /// instead of reading as a separate correction. Clamped to [0, 1]; a
-        /// degenerate (zero/negative-width) window completes exactly at the end
-        /// point. Static and side-effect free for EditMode tests.
+        /// degenerate (zero/negative-width) window is treated as NEVER OPENING
+        /// (progress stays 0) - the corpse-Y correction stays off entirely. The
+        /// 1Q FINAL ragdoll setup tool relies on exactly this to bypass the
+        /// animation grounding (it zeroes the window). Static and side-effect
+        /// free for EditMode tests.
         /// </summary>
         public static float ComputeDeathGroundingProgress(
             float deathNormalizedTime, float startNormalizedTime, float endNormalizedTime)
@@ -238,7 +304,9 @@ namespace OperationOutbreak.Enemies
 
             if (window <= 0f)
             {
-                return deathNormalizedTime >= endNormalizedTime ? 1f : 0f;
+                // A degenerate window must never slam the visual down - it reads
+                // as "grounding disabled" (the ragdoll bypass contract).
+                return 0f;
             }
 
             float linear = Mathf.Clamp01((deathNormalizedTime - startNormalizedTime) / window);
@@ -364,7 +432,24 @@ namespace OperationOutbreak.Enemies
         {
             get
             {
-                if (!_deathLatched || !_deathClipFinished)
+                if (!_deathLatched)
+                {
+                    return false;
+                }
+
+                // 1Q FINAL - hybrid ragdoll path: once physics owns the corpse, the
+                // presentation completes after the settle window (ground contact is
+                // produced by physics itself - no clip/grounding wait applies).
+                if (ragdoll != null && ragdoll.IsRagdollActive)
+                {
+                    float settleElapsed = Time.time - _ragdollActivationTime;
+                    return ShouldCompleteRagdollPresentation(
+                        true, settleElapsed >= Mathf.Max(0f, deathRagdollSettleSeconds));
+                }
+
+                // Animation-only path (prototype fallback or ragdoll not configured):
+                // the QA fix #9 gate - clip finished AND grounding settled.
+                if (!_deathClipFinished)
                 {
                     return false;
                 }
@@ -395,6 +480,11 @@ namespace OperationOutbreak.Enemies
             if (animator == null)
             {
                 animator = GetComponentInChildren<Animator>(true);
+            }
+
+            if (ragdoll == null)
+            {
+                ragdoll = GetComponent<EnemyRagdoll>();
             }
 
             if (animator != null)
@@ -434,6 +524,9 @@ namespace OperationOutbreak.Enemies
             _deathLatched = false;
             _deathPresentationStarted = false;
             _deathClipFinished = false;
+            _ragdollHandoffElapsed = 0f;
+            _ragdollActivationTime = -1f;
+            _ragdollHandoffDone = false;
             RestoreStandingProductionVisualY();
             RestoreGameplayColliders();
         }
@@ -450,6 +543,15 @@ namespace OperationOutbreak.Enemies
             // (or the enemy) is disabled, so the prefab state is never polluted by a
             // death grounding correction.
             RestoreStandingProductionVisualY();
+
+            // 1Q FINAL - reuse reset: the ragdoll must never survive into the next
+            // spawn (pooled enemies would otherwise come back collapsed). Restores
+            // bone poses, zeroes velocities, re-kinematics bodies, disables ragdoll
+            // colliders and re-enables the Animator.
+            if (ragdoll != null)
+            {
+                ragdoll.RestoreForReuse(animator);
+            }
         }
 
         private void Update()
@@ -459,12 +561,20 @@ namespace OperationOutbreak.Enemies
                 return;
             }
 
-            // QA fix #10 - after the death latch, ONLY the death-time-driven
-            // grounding blend runs: locomotion parameters stay frozen so Death
-            // plays cleanly, and the production visual lowers to the STABLE final
-            // grounded Y as a function of the Death clip's normalized time. There
-            // is no measurement, no target chasing and no post-animation settle.
-            if (ShouldApplyDeathGrounding(_deathLatched))
+            bool ragdollActive = ragdoll != null && ragdoll.IsRagdollActive;
+
+            // 1Q FINAL - once physics owns the corpse, the bridge writes NOTHING:
+            // no Animator parameters, no ProductionVisual Y correction.
+            if (ragdollActive)
+            {
+                return;
+            }
+
+            // QA fix #10 / 1Q FINAL - after the death latch (and while the ragdoll
+            // is still inactive), ONLY the death presentation runs: the animation
+            // lead-in + ragdoll handoff, or the legacy time-driven grounding blend.
+            // Locomotion parameters stay frozen so Death plays cleanly.
+            if (ShouldApplyDeathGrounding(_deathLatched, ragdollActive))
             {
                 UpdateDeathPresentationVisual();
                 return;
@@ -680,29 +790,48 @@ namespace OperationOutbreak.Enemies
         }
 
         /// <summary>
-        /// QA fix #10/#11 - runs once per frame after the death latch and drives the
-        /// corpse grounding PURELY from the Death clip's normalized time:
+        /// QA fix #10 / 1Q FINAL - runs once per frame after the death latch and
+        /// drives the death presentation:
         ///
+        ///   HYBRID RAGDOLL PATH (ragdoll configured by the setup tool):
+        ///   the one-shot Death clip plays as the lead-in for
+        ///   deathRagdollHandoffSeconds (default 0.30 s - the body is already
+        ///   starting to fall inside the clip), then the skeleton is handed to
+        ///   physics exactly once: the Animator is disabled inside
+        ///   EnemyRagdoll.ActivateRagdoll, the bodies become non-kinematic and
+        ///   the ragdoll colliders enable. Physics completes the fall and
+        ///   establishes ground contact; NO ProductionVisual Y correction ever
+        ///   runs while the ragdoll is active (the two systems never fight).
+        ///
+        ///   ANIMATION-ONLY PATH (no ragdoll configured - prototype fallback):
         ///   deathT  = Base Layer.Death normalized time (clamped, non-looping)
-        ///   blendT  = smoothstep(remap(deathT, start=0.25, end=0.85))
+        ///   blendT  = smoothstep(remap(deathT, start, end))
         ///   finalY  = serializedDeathGroundedY - contactMargin (QA fix #11)
         ///   nextY   = clampDownward(currentY, lerp(standingY, finalY, blendT))
         ///
-        /// The final grounded Y is a STABLE value measured once at setup time and
-        /// serialized on this component - it is never resampled at runtime. The
-        /// contact margin (small, downward-only, clamped) is the QA fix #11
-        /// calibration so the corpse ends in a very slight contact with the road
-        /// instead of hovering. The lowering happens DURING the fall (merging with
-        /// the death animation) and is complete at normalized ~0.85, well before
-        /// the clip-finish gate at 0.999: no hover, no second downward motion, no
-        /// post-animation settle, no visible sinking. After the clip finishes (and
-        /// the Y is within tolerance of the final target) no further writes occur.
         /// Only the ProductionVisual child's Y is ever written - the gameplay
         /// root, collider and the standing offset for Idle/Walk/Attack are
         /// untouched.
         /// </summary>
         private void UpdateDeathPresentationVisual()
         {
+            // 1Q FINAL - hybrid handoff: the Death clip is the lead-in. Tick the
+            // handoff timer; when it opens, activate the ragdoll EXACTLY ONCE and
+            // never return to the animation/grounding path again.
+            if (ragdoll != null && ragdoll.IsConfigured && !_ragdollHandoffDone)
+            {
+                _ragdollHandoffElapsed += Time.deltaTime;
+
+                if (ShouldHandoffToRagdoll(_ragdollHandoffElapsed, deathRagdollHandoffSeconds))
+                {
+                    _ragdollHandoffDone = true;
+                    _ragdollActivationTime = Time.time;
+                    ragdoll.ActivateRagdoll(animator);
+                }
+
+                return;
+            }
+
             if (_productionVisual == null)
             {
                 return;
@@ -798,6 +927,12 @@ namespace OperationOutbreak.Enemies
 
             deathGroundingCompletionTolerance = Mathf.Max(0f, deathGroundingCompletionTolerance);
             deathGroundingContactMargin = ClampDeathGroundingContactMargin(deathGroundingContactMargin);
+
+            // 1Q FINAL - hybrid ragdoll death timings: the lead-in stays inside the
+            // 0.25-0.40 s band of the death clip's fall, the settle window is long
+            // enough for ground contact but never indefinite.
+            deathRagdollHandoffSeconds = Mathf.Clamp(deathRagdollHandoffSeconds, 0f, 2f);
+            deathRagdollSettleSeconds = Mathf.Clamp(deathRagdollSettleSeconds, 0.1f, 3f);
         }
 #endif
     }

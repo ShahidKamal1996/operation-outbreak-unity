@@ -533,6 +533,52 @@
   QA fix #6–#9 "sinking" failure). Calibration drift like this is corrected by
   re-running the setup tool, not by runtime logic.
 
+### AD-1Q-10: Hybrid animation → ragdoll death (1Q FINAL production direction)
+
+- **Decision:** animation-only corpse grounding (fixes #6–#11) was still
+  visibly hovering in manual QA, so the production death is now a two-stage
+  HYBRID: the one-shot `Base Layer.Death` clip plays as an animation LEAD-IN
+  for a configurable `deathRagdollHandoffSeconds` (default 0.30 s, inside the
+  required 0.25–0.40 s band — the clip's body is already falling there), then
+  the bridge hands the skeleton to physics exactly once. Physics naturally
+  completes the fall and establishes ground contact: the corpse can no longer
+  hover because the ground contact is produced by the physics engine itself,
+  not by a calibrated Y offset. The presentation completes after the settle
+  window (0.6 s); the existing hold (0.15 s) and safety timeout (4 s) still
+  bound the corpse lifetime.
+- **Mobile strategy:** 11 major humanoid bones only (Hips, Spine, Head,
+  upper/lower arms, upper/lower legs — no fingers/toes/hands/feet), ONE
+  primitive collider per bone (capsule along long bones, sphere for the head;
+  radius derived from bone length, capped 0.3), ConfigurableJoints with hard
+  symmetric limits (spine 45°, head 80°, shoulder 100°, elbow 120°, hip/knee
+  90°), locked linear motion, no projection, no interpolation, discrete
+  collision detection. While alive every ragdoll body is KINEMATIC and every
+  ragdoll collider is DISABLED — zero physics cost for living enemies, and the
+  gameplay CapsuleCollider stays the only live collider. Corpse-vs-corpse
+  physics is practically avoided: connected joints never self-collide, live
+  capsules disable the moment their owner dies, and the corpse lives only for
+  the short settle window.
+- **Reset/reuse:** `EnemyRagdoll` captures each bone's authored pose at runtime
+  (prefab-independent) and `RestoreForReuse` (called by the bridge on
+  OnDisable) restores poses parent-before-child, zeroes velocities, restores
+  kinematic states, disables ragdoll colliders, re-enables the Animator and
+  clears the latch — a pooled enemy can never spawn collapsed.
+- **The animation grounding does not fight the ragdoll:** when the ragdoll is
+  configured, the setup tool zeroes the grounding window (0 → 0), the bridge's
+  grounding gate is ragdoll-aware, and once physics owns the corpse the bridge
+  writes nothing at all (no Animator parameters, no ProductionVisual Y).
+- **Authoring:** `Tools > Operation Outbreak > Set Up Basic Infected Ragdoll`
+  (also called by the production visual setup tool) resolves bones from the
+  imported StylizedZombieAvatar via `Animator.GetBoneTransform` —
+  no hand-authored FBX fileIDs, no manual collider/joint creation. It is
+  validation-first: if any bone is missing, nothing is modified.
+- **Preserved:** full-path `Animator.Play("Base Layer.Death")`, one-shot latch,
+  death clip speed 1, root motion OFF (alive), gameplay CapsuleCollider
+  lifecycle, standing grounding −1.005, walk/attack cadence, gameplay speed
+  2.5, materials, immediate death accounting, kill/section/mission flow,
+  prototype fallback (no production visual → animation-only path), Toon
+  Soldier.
+
 ## UNKNOWN / open questions
 
 - Pre-1P architecture rationale for gates (1J series) could not be recovered (original

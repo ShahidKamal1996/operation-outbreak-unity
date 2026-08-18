@@ -35,6 +35,11 @@ namespace OperationOutbreak.EditorTools
     ///      death Y (EnemyAnimationBridge.deathGroundedVisualY) plus the small
     ///      downward contact margin (0.02) and the death-time grounding window
     ///      (0.25 -> 0.85 normalized). The runtime never resamples the death pose.
+    ///   8. 1Q FINAL - configures the hybrid animation -> ragdoll death via
+    ///      EnemyRagdollSetup (11 major humanoid bones, primitive colliders,
+    ///      ConfigurableJoints; bodies authored kinematic, colliders authored
+    ///      disabled; handoff 0.30 s / settle 0.6 s; the animation grounding
+    ///      window is zeroed so corpse-Y correction never fights physics).
     ///
     /// FALLBACK: if the production prefab cannot be resolved the tool aborts with a
     /// dialog and modifies nothing - the prototype visual keeps working exactly as
@@ -640,6 +645,14 @@ namespace OperationOutbreak.EditorTools
                     zombieSo.ApplyModifiedPropertiesWithoutUndo();
                 }
 
+                // 1Q FINAL - hybrid animation -> ragdoll death: deterministic
+                // ragdoll authoring on the production skeleton (11 major humanoid
+                // bones, kinematic while alive, colliders disabled) + bridge wiring
+                // (handoff/settle timings + animation-grounding bypass). Validation-
+                // first: if any bone is missing the ragdoll is skipped and the
+                // animation-only death path keeps working.
+                bool ragdollReady = EnemyRagdollSetup.ConfigureRagdollOnContents(contents);
+
                 PrefabUtility.SaveAsPrefabAsset(contents, ZombiePrefabPath);
                 AnimationClip walkClipForLog = EnemyAnimationSetup.ResolveClip(EnemyAnimationSetup.WalkFbxPath);
                 AnimationClip deathClipForLog = EnemyAnimationSetup.ResolveClip(EnemyAnimationSetup.DeathFbxPath);
@@ -667,6 +680,7 @@ namespace OperationOutbreak.EditorTools
                     $"death grounding window: {DeathGroundingStartNormalizedTime:0.00} -> {DeathGroundingEndNormalizedTime:0.00} normalized, " +
                     $"death window: {(deathClipForLog != null ? (deathClipForLog.length + DeathPresentationMarginSeconds).ToString("0.00") : "n/a")} s, " +
                     $"death state resolves: {deathResolves}, " +
+                    $"hybrid ragdoll death: {(ragdollReady ? "configured (animation lead-in + physics fall)" : "NOT configured (animation-only fallback)")}, " +
                     $"materials assigned: {assignedRenderers} renderers -> OO_Zombie URP materials, " +
                     $"walk cadence reference: {(walkClipForLog != null && walkClipForLog.averageSpeed.magnitude > 0.01f ? walkClipForLog.averageSpeed.magnitude.ToString("0.00") : "1.30 (fallback)")} u/s. " +
                     "Commit the modified Zombie_Prototype.prefab.", contents);

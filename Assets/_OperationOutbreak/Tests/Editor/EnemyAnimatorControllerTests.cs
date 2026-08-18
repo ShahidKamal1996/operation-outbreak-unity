@@ -397,18 +397,28 @@ namespace OperationOutbreak.Tests
         // ============================================ QA fix #6 (death grounding)
 
         [Test]
-        public void DeathGroundingAppliesOnlyAfterTheDeathLatch()
+        public void DeathGroundingAppliesOnlyAfterTheDeathLatchAndNeverDuringRagdoll()
         {
             // The death-only grounding correction must never touch the production
             // visual while the enemy lives - the standing offset stays authoritative
-            // for Idle/Walk/Attack.
+            // for Idle/Walk/Attack. And once the ragdoll owns the corpse, the
+            // corpse-Y correction must NOT run - the two systems must never fight.
             Assert.IsTrue(
-                EnemyAnimationBridge.ShouldApplyDeathGrounding(true),
-                "After the death latch the grounding correction must be allowed.");
+                EnemyAnimationBridge.ShouldApplyDeathGrounding(true, false),
+                "After the death latch (ragdoll inactive) the grounding correction " +
+                "must be allowed.");
             Assert.IsFalse(
-                EnemyAnimationBridge.ShouldApplyDeathGrounding(false),
+                EnemyAnimationBridge.ShouldApplyDeathGrounding(false, false),
                 "While the enemy lives, no death grounding may be applied - the " +
                 "standing ProductionVisual offset is untouched.");
+            Assert.IsFalse(
+                EnemyAnimationBridge.ShouldApplyDeathGrounding(true, true),
+                "While the ragdoll is active, NO corpse-Y correction may run - " +
+                "physics owns the corpse and the blend must not fight it.");
+            Assert.IsFalse(
+                EnemyAnimationBridge.ShouldApplyDeathGrounding(false, true),
+                "The ragdoll flag alone (without the death latch) must not enable " +
+                "any grounding either.");
         }
 
         [Test]
@@ -897,6 +907,14 @@ namespace OperationOutbreak.Tests
             Assert.IsNotNull(
                 bridge.GetMethod("ApplyDeathGroundingContactMargin", Any),
                 "The QA fix #11 contact-margin application must exist.");
+
+            // 1Q FINAL - the hybrid ragdoll handoff/completion gates must exist.
+            Assert.IsNotNull(
+                bridge.GetMethod("ShouldHandoffToRagdoll", Any),
+                "The animation -> ragdoll handoff gate must exist on the bridge.");
+            Assert.IsNotNull(
+                bridge.GetMethod("ShouldCompleteRagdollPresentation", Any),
+                "The ragdoll presentation completion gate must exist on the bridge.");
         }
 
         [Test]
@@ -1101,6 +1119,309 @@ namespace OperationOutbreak.Tests
                 EnemyVisualSetup.ProductionVisualGroundingOffsetY,
                 0.001f,
                 "The standing grounding offset must remain -1.005.");
+        }
+
+        // ============================== 1Q FINAL (hybrid animation -> ragdoll death)
+
+        [Test]
+        public void RagdollPhysicsAppliesOnlyWhenConfiguredAndActivated()
+        {
+            // Physics may drive the skeleton ONLY when the ragdoll is both
+            // configured by the setup tool AND activated by the death handoff.
+            Assert.IsFalse(
+                EnemyRagdoll.ShouldApplyRagdollPhysics(false, false),
+                "No configuration and no activation - no physics.");
+            Assert.IsFalse(
+                EnemyRagdoll.ShouldApplyRagdollPhysics(true, false),
+                "Configured but not yet activated (alive) - the Animator still " +
+                "controls the skeleton, bodies stay kinematic.");
+            Assert.IsFalse(
+                EnemyRagdoll.ShouldApplyRagdollPhysics(false, true),
+                "An activation flag without a configuration must never hand off.");
+            Assert.IsTrue(
+                EnemyRagdoll.ShouldApplyRagdollPhysics(true, true),
+                "Configured AND activated - physics owns the corpse.");
+        }
+
+        [Test]
+        public void AliveRagdollStateIsEnforcedUntilActivation()
+        {
+            // The ALIVE enforcement (kinematic bodies + disabled ragdoll colliders)
+            // applies at all times except while the ragdoll stage is active.
+            Assert.IsTrue(
+                EnemyRagdoll.ShouldEnforceAliveRagdollState(false),
+                "While the ragdoll is inactive (alive, and after the reuse reset) " +
+                "the alive state must be enforced.");
+            Assert.IsFalse(
+                EnemyRagdoll.ShouldEnforceAliveRagdollState(true),
+                "During the ragdoll stage the bodies must be free to fall.");
+        }
+
+        [Test]
+        public void RagdollHandoffWaitsForTheConfiguredLeadIn()
+        {
+            // The skeleton hands off to physics exactly once the animation lead-in
+            // has elapsed - the Death clip (and ONLY the Death clip) drives the
+            // skeleton before that, so the Animator is disabled only at handoff.
+            Assert.IsFalse(
+                EnemyAnimationBridge.ShouldHandoffToRagdoll(0.29f, 0.3f),
+                "Inside the lead-in the Animator must keep controlling the skeleton.");
+            Assert.IsTrue(
+                EnemyAnimationBridge.ShouldHandoffToRagdoll(0.3f, 0.3f),
+                "At the handoff time the ragdoll must take over exactly once.");
+            Assert.IsTrue(
+                EnemyAnimationBridge.ShouldHandoffToRagdoll(0.5f, 0.3f),
+                "Past the handoff time the gate stays open (one-shot is enforced by " +
+                "the bridge's _ragdollHandoffDone latch).");
+
+            // The configured lead-in sits inside the required 0.25-0.40 s band.
+            Assert.GreaterOrEqual(
+                EnemyRagdollSetup.DefaultHandoffSeconds, 0.25f,
+                "The handoff must not fire before the clip visibly starts falling.");
+            Assert.LessOrEqual(
+                EnemyRagdollSetup.DefaultHandoffSeconds, 0.4f,
+                "The handoff must fire before the animated fall ends.");
+        }
+
+        [Test]
+        public void RagdollSettleTimeEndsThePresentation()
+        {
+            // With the ragdoll active, the presentation completes on the physics
+            // settle window alone (ground contact comes from physics, not from a
+            // clip or a Y tolerance). The settle time must be positive so the
+            // corpse is briefly readable before the existing deactivation.
+            Assert.IsTrue(
+                EnemyAnimationBridge.ShouldCompleteRagdollPresentation(true, true),
+                "Ragdoll active + settle window elapsed - presentation complete.");
+            Assert.IsFalse(
+                EnemyAnimationBridge.ShouldCompleteRagdollPresentation(true, false),
+                "The corpse must not despawn before its physics settle window ends.");
+            Assert.IsFalse(
+                EnemyAnimationBridge.ShouldCompleteRagdollPresentation(false, true),
+                "The ragdoll completion gate must not apply to the animation-only path.");
+
+            Assert.Greater(
+                EnemyRagdollSetup.DefaultSettleSeconds, 0f,
+                "The ragdoll settle window must be positive.");
+        }
+
+        [Test]
+        public void RequiredRagdollBonesAreTheMajorHumanoidBonesOnly()
+        {
+            // The mobile ragdoll covers exactly the 11 major humanoid bones: hips,
+            // spine, head and the upper/lower limbs. Fingers, toes, hands and feet
+            // are deliberately excluded (mobile budget).
+            string[] bones = EnemyRagdollSetup.RequiredBoneNames;
+
+            Assert.AreEqual(11, bones.Length, "Exactly 11 major bones must be configured.");
+
+            var set = new HashSet<string>(bones);
+            Assert.AreEqual(bones.Length, set.Count, "Bone names must be unique.");
+
+            Assert.IsTrue(set.Contains("Hips"), "Hips are the physics root.");
+            Assert.IsTrue(set.Contains("Spine"), "The spine must be a ragdoll body.");
+            Assert.IsTrue(set.Contains("Head"), "The head must be a ragdoll body.");
+            Assert.IsTrue(set.Contains("LeftUpperArm") && set.Contains("RightUpperArm"),
+                "Both upper arms must be ragdoll bodies.");
+            Assert.IsTrue(set.Contains("LeftLowerArm") && set.Contains("RightLowerArm"),
+                "Both lower arms must be ragdoll bodies.");
+            Assert.IsTrue(set.Contains("LeftUpperLeg") && set.Contains("RightUpperLeg"),
+                "Both upper legs must be ragdoll bodies.");
+            Assert.IsTrue(set.Contains("LeftLowerLeg") && set.Contains("RightLowerLeg"),
+                "Both lower legs must be ragdoll bodies.");
+
+            foreach (string bone in bones)
+            {
+                string lower = bone.ToLowerInvariant();
+                Assert.IsFalse(
+                    lower.Contains("finger") || lower.Contains("toe") ||
+                    lower.Contains("hand") || lower.Contains("foot"),
+                    $"'{bone}' is a minor bone and must NOT be part of the mobile ragdoll.");
+            }
+
+            // Hips come first: the reuse reset restores parent-before-child.
+            Assert.AreEqual("Hips", bones[0],
+                "The array must start with the Hips (parent-before-child contract).");
+        }
+
+        [Test]
+        public void RagdollJointParentsAreDeterministic()
+        {
+            // Every bone hangs off a fixed parent; every parent is itself a
+            // configured bone; the hips are the physics root.
+            var required = new HashSet<string>(EnemyRagdollSetup.RequiredBoneNames);
+
+            Assert.IsNull(
+                EnemyRagdollSetup.GetJointParentBoneName("Hips"),
+                "The hips are the physics root - no joint, no parent.");
+            Assert.AreEqual("Hips", EnemyRagdollSetup.GetJointParentBoneName("Spine"),
+                "The spine hangs off the hips.");
+            Assert.AreEqual("Spine", EnemyRagdollSetup.GetJointParentBoneName("Head"),
+                "The head hangs off the spine.");
+            Assert.AreEqual("Spine", EnemyRagdollSetup.GetJointParentBoneName("LeftUpperArm"),
+                "The left upper arm hangs off the spine.");
+            Assert.AreEqual("Spine", EnemyRagdollSetup.GetJointParentBoneName("RightUpperArm"),
+                "The right upper arm hangs off the spine.");
+            Assert.AreEqual("LeftUpperArm", EnemyRagdollSetup.GetJointParentBoneName("LeftLowerArm"),
+                "The left forearm hangs off the left upper arm.");
+            Assert.AreEqual("RightUpperArm", EnemyRagdollSetup.GetJointParentBoneName("RightLowerArm"),
+                "The right forearm hangs off the right upper arm.");
+            Assert.AreEqual("Hips", EnemyRagdollSetup.GetJointParentBoneName("LeftUpperLeg"),
+                "The left thigh hangs off the hips.");
+            Assert.AreEqual("Hips", EnemyRagdollSetup.GetJointParentBoneName("RightUpperLeg"),
+                "The right thigh hangs off the hips.");
+            Assert.AreEqual("LeftUpperLeg", EnemyRagdollSetup.GetJointParentBoneName("LeftLowerLeg"),
+                "The left shin hangs off the left thigh.");
+            Assert.AreEqual("RightUpperLeg", EnemyRagdollSetup.GetJointParentBoneName("RightLowerLeg"),
+                "The right shin hangs off the right thigh.");
+
+            foreach (string bone in required)
+            {
+                string parent = EnemyRagdollSetup.GetJointParentBoneName(bone);
+                Assert.IsTrue(
+                    parent == null || required.Contains(parent),
+                    $"The parent '{parent}' of '{bone}' must itself be a configured bone.");
+            }
+        }
+
+        [Test]
+        public void RagdollColliderShapesAreDeterministic()
+        {
+            // Long bones (limbs/torso) get capsules along their length; short bones
+            // (the head) get spheres. The radius derives from the bone length,
+            // floored and capped, so no bone can ever be absurdly thick.
+            Assert.IsTrue(
+                EnemyRagdollSetup.ShouldUseCapsuleCollider(0.2f),
+                "A 0.2 m bone (forearm/shin) must use a capsule.");
+            Assert.IsFalse(
+                EnemyRagdollSetup.ShouldUseCapsuleCollider(0.05f),
+                "A 0.05 m bone (head) must use a sphere.");
+
+            Assert.AreEqual(
+                0.09f,
+                EnemyRagdollSetup.ComputeColliderRadius(0.2f),
+                0.0001f,
+                "Radius = boneLength * 0.9 / 2 = 0.09 for a 0.2 m bone.");
+            Assert.AreEqual(
+                EnemyRagdollSetup.ColliderRadiusCap,
+                EnemyRagdollSetup.ComputeColliderRadius(1f),
+                0.0001f,
+                "A huge bone must clamp to the radius cap.");
+            Assert.Greater(
+                EnemyRagdollSetup.ComputeColliderRadius(0.001f), 0f,
+                "Even a tiny bone gets a positive (floored) radius.");
+        }
+
+        [Test]
+        public void RagdollMassesAreDeterministicAndHipsHeavy()
+        {
+            // Masses are fixed per bone group, hips-heaviest, and all inside a sane
+            // mobile range.
+            string[] bones = EnemyRagdollSetup.RequiredBoneNames;
+            float hipsMass = 0f;
+            float total = 0f;
+
+            foreach (string bone in bones)
+            {
+                float mass = EnemyRagdollSetup.GetBoneMass(bone);
+                Assert.Greater(mass, 0.2f, $"'{bone}' must have a positive mass.");
+                Assert.Less(mass, 5f, $"'{bone}' mass must stay in a sane range.");
+                total += mass;
+
+                if (bone == "Hips")
+                {
+                    hipsMass = mass;
+                }
+            }
+
+            Assert.Greater(hipsMass, 0f, "The hips must have a mass.");
+
+            foreach (string bone in bones)
+            {
+                Assert.LessOrEqual(
+                    EnemyRagdollSetup.GetBoneMass(bone), hipsMass,
+                    $"'{bone}' must not be heavier than the hips.");
+            }
+
+            Assert.Less(total, 15f,
+                "The whole ragdoll must stay lightweight for mobile.");
+        }
+
+        [Test]
+        public void RagdollJointAngularLimitsAreSane()
+        {
+            // Symmetric hard limits per bone group: free enough to fall naturally,
+            // tight enough to never look rubbery. The hips have no joint (0).
+            string[] bones = EnemyRagdollSetup.RequiredBoneNames;
+
+            foreach (string bone in bones)
+            {
+                float limit = EnemyRagdollSetup.GetJointAngularLimitDegrees(bone);
+
+                if (bone == "Hips")
+                {
+                    Assert.AreEqual(0f, limit, 0.0001f,
+                        "The hips are the physics root - no joint limit.");
+                    continue;
+                }
+
+                Assert.GreaterOrEqual(limit, 30f,
+                    $"'{bone}' limit must allow a natural fall.");
+                Assert.LessOrEqual(limit, 120f,
+                    $"'{bone}' limit must prevent rubbery over-rotation.");
+            }
+        }
+
+        [Test]
+        public void RagdollSetupWritesTheGroundingBypass()
+        {
+            // With the ragdoll configured, the setup tool zeroes the animation-path
+            // grounding window, so the corpse-Y blend is a no-op and can never
+            // fight ragdoll physics.
+            Assert.AreEqual(
+                0f,
+                EnemyRagdollSetup.GroundingBypassStartNormalizedTime,
+                0.0001f,
+                "The bypassed grounding window must start at 0.");
+            Assert.AreEqual(
+                0f,
+                EnemyRagdollSetup.GroundingBypassEndNormalizedTime,
+                0.0001f,
+                "The bypassed grounding window must end at 0.");
+
+            // Zero-width window -> zero progress at every death normalized time.
+            for (int step = 0; step <= 100; step++)
+            {
+                float deathT = step / 100f;
+                float progress = EnemyAnimationBridge.ComputeDeathGroundingProgress(
+                    deathT,
+                    EnemyRagdollSetup.GroundingBypassStartNormalizedTime,
+                    EnemyRagdollSetup.GroundingBypassEndNormalizedTime);
+
+                Assert.AreEqual(0f, progress, 0.0001f,
+                    $"deathT={deathT}: a bypassed window must produce zero grounding " +
+                    "progress (no corpse-Y correction during ragdoll physics).");
+            }
+        }
+
+        [Test]
+        public void ReuseResetRequiresAllRestoreGroups()
+        {
+            // A pooled enemy must never spawn collapsed or drifting: the reset only
+            // counts as complete when kinematic states, collider states AND
+            // velocities have all been restored. Missing any group is a fail.
+            Assert.IsTrue(
+                EnemyRagdoll.IsReuseResetComplete(true, true, true),
+                "All restore groups done - the reset is complete.");
+            Assert.IsFalse(
+                EnemyRagdoll.IsReuseResetComplete(false, true, true),
+                "Kinematic states not restored - bodies would still be simulated.");
+            Assert.IsFalse(
+                EnemyRagdoll.IsReuseResetComplete(true, false, true),
+                "Ragdoll colliders still enabled - the reused enemy would collide.");
+            Assert.IsFalse(
+                EnemyRagdoll.IsReuseResetComplete(true, true, false),
+                "Velocities not zeroed - the reused enemy could drift on its next death.");
         }
 
         [Test]

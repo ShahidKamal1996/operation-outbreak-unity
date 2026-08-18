@@ -367,6 +367,40 @@ Production enemy VISUAL foundation only — zero enemy gameplay changes:
     Re-run `Tools > Operation Outbreak > Set Up Basic Infected Production
     Visual` and commit the regenerated prefab (the measured Y and the vertical
     profile are in the console log).
+18. **1Q FINAL (2026-08-19) — hybrid animation → ragdoll death (approved
+    production direction):** animation-only corpse grounding was still visibly
+    hovering after fix #11, so the production death is now a two-stage hybrid:
+    (1) the existing one-shot `Base Layer.Death` clip plays as an ANIMATION
+    LEAD-IN for a configurable `deathRagdollHandoffSeconds` (default 0.30 s,
+    inside the required 0.25–0.40 s band — the clip's body is already starting
+    its fall there); (2) the bridge hands the skeleton to RAGDOLL PHYSICS
+    exactly once (`EnemyRagdoll.ActivateRagdoll`: Animator disabled, bodies
+    non-kinematic, ragdoll colliders enabled), and physics naturally completes
+    the fall and establishes ground contact — no corpse-Y correction, no hover,
+    no sinking. The presentation completes after the physics settle window
+    (`deathRagdollSettleSeconds` 0.6 s), then the existing production hold
+    (0.15 s) and safety timeout (4 s) despawn the corpse. New
+    `EnemyRagdoll` runtime component keeps the ragdoll inert while alive
+    (bodies KINEMATIC, colliders DISABLED — the gameplay CapsuleCollider stays
+    the only live collider) and provides the full REUSE RESET (authored bone
+    poses restored parent-before-child, velocities zeroed, kinematic states
+    restored, colliders disabled, Animator re-enabled, latch cleared) called by
+    the bridge on OnDisable — a pooled enemy can never spawn collapsed. New
+    `Tools > Operation Outbreak > Set Up Basic Infected Ragdoll` (also called
+    by the production visual setup tool) authors the ragdoll deterministically
+    from the StylizedZombieAvatar: 11 major humanoid bones (Hips, Spine, Head,
+    upper/lower arms, upper/lower legs — NO fingers/toes/hands/feet),
+    primitive colliders (capsule along long bones, sphere for the head, radius
+    from bone length capped at 0.3), ConfigurableJoints with symmetric hard
+    limits per bone group (spine 45°, head 80°, shoulder 100°, elbow 120°,
+    hip/knee 90°), locked linear motion, no projection, discrete collision
+    detection, no interpolation — mobile-friendly. When the ragdoll is
+    configured the tool ZEROES the animation grounding window
+    (`deathGroundingStart/EndNormalizedTime = 0`), so the corpse-Y blend is a
+    no-op and the two systems can never fight; the prototype (no production
+    visual) keeps the animation-only path. Gameplay, accounting, walk/attack,
+    materials, standing grounding (−1.005), root motion OFF and the Toon
+    Soldier are untouched.
 9. **QA fix #2 (2026-08-17) — floating, vibration and death still unresolved:**
    - **Grounding:** QA fix #1B's renderer-bounds measurement read the vendor prefab's
      EDITOR/REFERENCE pose (the vendor ships a crouched cartoon pose), not the animated
@@ -399,16 +433,20 @@ Production enemy VISUAL foundation only — zero enemy gameplay changes:
    multiplier, applies the DETERMINISTIC FBX-derived grounding offset −1.005,
    assigns the source-controlled OO URP zombie materials to every production
    renderer, measures the near-final death pose (vertical profile 0.95/0.99/0.999,
-   calibration at the true near-end pose t=0.999) and writes the stable final
-   death grounded Y + the small contact margin (0.02) + grounding window
-   (0.25 → 0.85) and the clip-derived walk reference + death window onto the
-   prefab), save, and commit the regenerated
-   `OO_BasicInfected.controller` plus the modified `Zombie_Prototype.prefab`. The
-   tool's console log reports grounding Y (-1.005), the vertical profile (lowest
-   corpse world Y per sample — the QA fix #11 diagnosis), the measured final
-   death grounded Y + contact margin (or the documented fallback −1.5 with a
-   warning), death window (≈ 3.1 s), death state resolution, assigned renderer
-   count and walk cadence reference.
+   calibration at the true near-end pose t=0.999), writes the stable final
+   death grounded Y + the small contact margin (0.02), and — 1Q FINAL —
+   CONFIGURES THE HYBRID RAGDOLL DEATH (11 major humanoid bones, primitive
+   colliders, ConfigurableJoints, handoff 0.30 s, settle 0.6 s, animation
+   grounding window zeroed so corpse-Y correction never fights physics)), save,
+   and commit the regenerated `OO_BasicInfected.controller` plus the modified
+   `Zombie_Prototype.prefab`. The tool's console log reports grounding Y
+   (-1.005), the vertical profile (lowest corpse world Y per sample), the
+   measured final death grounded Y + contact margin (or the documented fallback
+   −1.5 with a warning), the ragdoll bone/joint/handoff summary (or the abort
+   warning — the prefab is then NOT saved), death window (≈ 3.1 s), death state
+   resolution, assigned renderer count and walk cadence reference.
+   `Tools > Operation Outbreak > Set Up Basic Infected Ragdoll` re-runs the
+   ragdoll step alone.
 1. Basic Infected spawns with the Stylized Zombie visual.
 2. **Correct textures/materials appear — NO magenta/pink** (OO URP materials
    active on LOD0 and LOD1).
@@ -423,9 +461,17 @@ Production enemy VISUAL foundation only — zero enemy gameplay changes:
 10. **Continuous bullets produce readable hit feedback with NO head/body
     vibration** (QA fix #2: cooldown-gated flash — one pulse per ~0.35 s, no
     fire-rate strobe).
-11. **Death animation visibly plays once to completion** (QA fix #4: full-path
-    `Animator.Play("Base Layer.Death")` on layer 0 at time 0; ~2.8 s clip + 0.3 s
-    margin window), uninterrupted, then the zombie deactivates.
+11. **Hybrid ragdoll death (1Q FINAL):** lethal damage registers immediately
+    (accounting unchanged); movement/attacks stop; the gameplay CapsuleCollider
+    disables; the one-shot Death clip plays as the animation LEAD-IN (full-path
+    `Animator.Play("Base Layer.Death")`, layer 0, time 0); after ~0.30 s the
+    Animator stops controlling the skeleton and the corpse hands off to ragdoll
+    physics — the body falls naturally, hits the road and settles with real
+    ground contact (no hover, no Y-correction sinking). The corpse stays still
+    briefly (~0.6 s settle + 0.15 s hold), then deactivates. Run
+    `Tools > Operation Outbreak > Test Force Death On Selected Animator` to
+    verify the clip entry alone (it does NOT activate the ragdoll — gameplay
+    death does).
 11b. **Isolation check (if death still fails):** select a spawned zombie in Play
      Mode and run `Tools > Operation Outbreak > Test Force Death On Selected
      Animator` — the console reports every precondition and the state after the
@@ -433,24 +479,27 @@ Production enemy VISUAL foundation only — zero enemy gameplay changes:
      and must log a HIGHER normalized time (one-shot + progression proof). If the
      zombie animates there, the problem is sequencing, not clip/avatar setup.
 12. Dead enemy cannot move or attack.
-12b. **The lowering happens DURING the fall** (QA fix #10): the corpse blends
-     from the standing Y to the final grounded Y as a smoothstep of the Death
-     clip's normalized time (0.25 → 0.85), so the final lying pose is ALREADY
-     resting on the road when the animation ends. **Final pose calibration
-     (QA fix #11):** the final lying pose must very slightly CONTACT the road —
-     prefer a tiny intersection over any visible hovering, and never a deep
-     sink. The desired sequence is: upright → killed → falls → body naturally
-     approaches the road → final lying pose contacts the road → corpse stays
-     completely still briefly → disappears. There must be NO hover-then-sink
-     ("sinking in water") and NEVER an upward pop. After the clip ends the
-     visual is written no further — fully stationary.
+12b. **Ragdoll physics own the corpse after the handoff:** during the lead-in
+     the Death clip is the only driver; after the handoff there is NO
+     ProductionVisual Y correction (the animation grounding window is zeroed by
+     the setup tool) — the corpse is physics-only. The desired sequence is:
+     upright → killed → death clip starts → handoff at ~0.30 s → physics fall
+     completes → corpse rests on the road with real contact → stays still
+     briefly → disappears. No hover, no sinking, no upward pop.
 12c. **Dead collider disabled:** the CapsuleCollider turns off at death and the
      next spawned enemy has it enabled again (QA fix #7).
-12d. **Corpse disappears only AFTER the grounded pose is reached:** the enemy
-     stays visible until the bridge reports presentation complete (clip finished
-     + final grounded Y reached within tolerance — both satisfied the moment the
-     clip ends because the grounding finishes at 0.85), plus a short hold — no
-     vanishing before the corpse rests (QA fixes #9/#10).
+12d. **Corpse disappears only AFTER the physics settle:** the enemy stays
+     visible until the bridge reports the ragdoll presentation complete (settle
+     window elapsed), plus the production hold — no vanishing mid-fall.
+12e. **Reuse reset:** after a zombie dies and the spawner reuses the enemy, it
+     must come back UPRIGHT and animating — bones at their authored pose, no
+     residual velocity, ragdoll colliders off, bodies kinematic, Animator
+     running, gameplay capsule colliding. A pooled enemy must NEVER spawn
+     collapsed.
+12f. **Alive state:** while alive (and during the lead-in), no ragdoll collider
+     collides and no ragdoll body is simulated — the zombie moves/attacks
+     exactly as before (mobile perf: keep an eye on frame time with several
+     enemies alive).
 13. Mission kill/wave accounting remains correct (3 sections, 12 enemies,
     9 BASIC / 3 RUNNER, Mission Complete exactly once).
 14. Multiple zombies animate independently.
@@ -458,14 +507,17 @@ Production enemy VISUAL foundation only — zero enemy gameplay changes:
 16. LOD/prefab rendering produces no obvious errors (both LODs textured).
 17. Player Toon Soldier remains unaffected (shooting, aim, muzzle, animations).
 18. Console remains clean.
-19. Full EditMode suite passes — expect **187/187** (184 previous; QA fix #11
-    ADDED 3: true-near-end calibration-sample pin (≥0.99, <1.0, ordered profile
-    ending on the calibration sample), downward-only-and-small contact margin
-    (clamp + application matrix), and final-Y-stays-at-or-below-measured-Y
-    (near-end vs early-sample scenario + margin + standing −1.005 pin); the
-    no-post-animation-settle-path reflection test now also pins the allowed
-    death-time-driven path; the fallback-default test additionally pins the
-    contact-margin default 0.02; the controller tests require step 0 to have
+19. Full EditMode suite passes — expect **198/198** (187 previous; the 1Q FINAL
+    hybrid ragdoll upgrade ADDED 11: ragdoll-physics-only-when-configured-and-
+    activated, alive-state-enforced-until-activation, handoff-waits-for-the-
+    configured-lead-in (0.25–0.40 s band), ragdoll-settle-time-ends-the-
+    presentation, major-humanoid-bones-only (11 bones, no fingers/toes/hands/
+    feet, Hips first), deterministic joint parents, deterministic collider
+    shapes, deterministic hips-heavy masses, sane joint angular limits,
+    grounding-bypass-window-zeroed (no corpse-Y correction during ragdoll), and
+    reuse-reset-requires-all-restore-groups; the grounding gate test now also
+    pins "never during ragdoll", and the reflection test pins the ragdoll
+    handoff/completion gates exist; the controller tests require step 0 to have
     been run once).
 
 ## What Milestone 1P.5 delivered
