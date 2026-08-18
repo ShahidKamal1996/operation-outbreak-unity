@@ -398,11 +398,17 @@
 
 - **Death entry:** `CrossFadeInFixedTime` is a TRANSITION REQUEST whose start can be
   delayed by same-frame state machine evaluation (e.g. the AnyState Attack
-  self-transition). Deterministic rule: the bridge now calls
-  `animator.Play(DeathStateHash, 0, 0f)` — an immediate, transition-independent
-  switch of the base layer into the terminal Death state at normalized time 0 — with
-  the Dead bool kept as the parameter-driven backup. The setup tool validates the
-  Death state + clip resolve before finishing and warns otherwise.
+  self-transition). Deterministic rule: the bridge calls
+  `animator.Play(StringToHash("Base Layer.Death"), 0, 0f)` — an immediate,
+  transition-independent switch of the base layer into the terminal Death state at
+  normalized time 0 — with the Dead bool kept as the parameter-driven backup.
+  QA fix #4: Animator.Play targets states by the FULL PATH hash, not the short
+  state name (Unity's documented contract); the bridge and the controller tool
+  share `BaseLayerName` / `DeathStateFullPath` / `DeathPlayLayer` constants, the
+  tool pins the base machine's name to "Base Layer" and validates it, and an
+  editor isolation diagnostic (`EnemyDeathDiagnostics`) forces death without any
+  gameplay involvement. The setup tool validates the Death state + clip resolve
+  before finishing and warns otherwise.
 - **Materials:** the vendor `.mat` files use the BUILT-IN Standard shader (renders
   magenta under URP); local vendor-material conversions are NOT portable and are
   forbidden. Operation Outbreak owns URP/Lit materials

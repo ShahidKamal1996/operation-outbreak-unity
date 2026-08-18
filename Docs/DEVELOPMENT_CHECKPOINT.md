@@ -211,6 +211,22 @@ Production enemy VISUAL foundation only — zero enemy gameplay changes:
      production renderer (LOD0 + LOD1) on every run, selected from the current
      vendor material name ("02" → OO_Zombie_02, else OO_Zombie_01). The vendor
      package assets are left untouched.
+10. **QA fix #4 (2026-08-18) — full-path death state targeting:** the death entry
+    used `Animator.Play` with the SHORT state name hash
+    (`Animator.StringToHash("Death")`), but Unity's documented Play contract is the
+    FULL state path hash (`"Base Layer.Death"`); the short name can fail to resolve
+    in a generated controller, leaving the enemy in its previous state until the
+    parameter-driven transition — exactly the observed "death never visibly plays".
+    Fix: shared constants `EnemyAnimationBridge.BaseLayerName` /
+    `DeathStateFullPath` / `DeathPlayLayer = 0`; the bridge plays
+    `Animator.StringToHash("Base Layer.Death")` on layer 0 at normalized time 0;
+    the controller tool pins the base state machine's name to the shared constant
+    and validates it. New editor isolation diagnostic
+    (`Tools > Operation Outbreak > Test Force Death On Selected Animator`) forces
+    the death presentation with NO gameplay involvement and logs every precondition
+    (enabled / controller / layers / avatar / state resolution) plus the reported
+    state after the forced entry — answering whether the clip/avatar setup itself
+    can play Death.
 9. **QA fix #2 (2026-08-17) — floating, vibration and death still unresolved:**
    - **Grounding:** QA fix #1B's renderer-bounds measurement read the vendor prefab's
      EDITOR/REFERENCE pose (the vendor ships a crouched cartoon pose), not the animated
@@ -261,9 +277,14 @@ Production enemy VISUAL foundation only — zero enemy gameplay changes:
 10. **Continuous bullets produce readable hit feedback with NO head/body
     vibration** (QA fix #2: cooldown-gated flash — one pulse per ~0.35 s, no
     fire-rate strobe).
-11. **Death animation visibly plays once to completion** (QA fix #3:
-    deterministic `Animator.Play` into the terminal Death state at time 0; ~2.8 s
-    clip + 0.3 s margin window), uninterrupted, then the zombie deactivates.
+11. **Death animation visibly plays once to completion** (QA fix #4: full-path
+    `Animator.Play("Base Layer.Death")` on layer 0 at time 0; ~2.8 s clip + 0.3 s
+    margin window), uninterrupted, then the zombie deactivates.
+11b. **Isolation check (if death still fails):** select a spawned zombie in Play
+     Mode and run `Tools > Operation Outbreak > Test Force Death On Selected
+     Animator` — the console reports every precondition and the state after the
+     forced entry; if the zombie animates there, the problem is sequencing, not
+     clip/avatar setup.
 12. Dead enemy cannot move or attack.
 13. Mission kill/wave accounting remains correct (3 sections, 12 enemies,
     9 BASIC / 3 RUNNER, Mission Complete exactly once).
@@ -272,7 +293,11 @@ Production enemy VISUAL foundation only — zero enemy gameplay changes:
 16. LOD/prefab rendering produces no obvious errors (both LODs textured).
 17. Player Toon Soldier remains unaffected (shooting, aim, muzzle, animations).
 18. Console remains clean.
-19. Full EditMode suite passes — expect **158/158** (154 previous + 4 new
+19. Full EditMode suite passes — expect **161/161** (158 previous + 3 new
+    QA-fix-#4 tests: full-path hash shared with layer-0 targeting, generated
+    controller contains the exact 'Base Layer.Death' path, and the path survives a
+    rebuild + forced reimport; the controller tests require step 0 to have been run
+    once).
     QA-fix-#3 tests: direct death entry targets the layer-0 Death state, URP
     shader check on both OO materials, vendor texture wiring check, and the
     deterministic material-selection rule; the controller tests require step 0 to

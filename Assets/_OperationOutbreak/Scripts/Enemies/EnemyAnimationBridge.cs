@@ -45,16 +45,36 @@ namespace OperationOutbreak.Enemies
 
         /// <summary>
         /// QA fix #2 - the controller's Death STATE name, shared with the
-        /// controller-authoring tool so the bridge's direct death crossfade always
+        /// controller-authoring tool so the bridge's direct death entry always
         /// targets the real state.
         /// </summary>
         public const string DeathStateName = "Death";
+
+        /// <summary>
+        /// QA fix #4 - the base layer's state machine name, shared with the controller
+        /// tool (the tool names the base machine exactly this), so the full state path
+        /// hash below always resolves.
+        /// </summary>
+        public const string BaseLayerName = "Base Layer";
+
+        /// <summary>
+        /// QA fix #4 - Animator.Play targets states by their FULL PATH hash
+        /// ("Base Layer.Death"), not by the short state name. Unity's documented
+        /// Play contract is the full path; the short-name hash used previously could
+        /// fail to resolve the state in the generated controller, leaving the enemy
+        /// in its previous state until the parameter-driven transition kicked in -
+        /// which is why the death animation never visibly played.
+        /// </summary>
+        public const string DeathStateFullPath = BaseLayerName + "." + DeathStateName;
+
+        /// <summary>QA fix #4 - the layer index Animator.Play switches into for death.</summary>
+        public const int DeathPlayLayer = 0;
 
         private static readonly int SpeedHash = Animator.StringToHash(SpeedParameter);
         private static readonly int AttackHash = Animator.StringToHash(AttackParameter);
         private static readonly int DeadHash = Animator.StringToHash(DeadParameter);
         private static readonly int LocomotionSpeedMultiplierHash = Animator.StringToHash(LocomotionSpeedMultiplierParameter);
-        private static readonly int DeathStateHash = Animator.StringToHash(DeathStateName);
+        private static readonly int DeathStateFullPathHash = Animator.StringToHash(DeathStateFullPath);
 
         [Header("Locomotion Cadence Sync (Milestone 1Q Bug 4)")]
         [Tooltip("Gameplay speed (units/second) at which the walk clip's foot cadence " +
@@ -189,25 +209,49 @@ namespace OperationOutbreak.Enemies
 
             _deathLatched = true;
 
+            // Death outranks everything: clear a queued Attack trigger, freeze the
+            // locomotion inputs, latch the Dead parameter, and switch the base layer
+            // straight into the Death state. See ForceDeathPresentation.
+            ForceDeathPresentation(animator);
+        }
+
+        /// <summary>
+        /// QA fix #4 - the deterministic death entry, also used as the isolation test
+        /// hook: resets the Attack trigger, freezes Speed and the locomotion
+        /// multiplier, latches Dead, then switches the BASE layer into the Death state
+        /// via Animator.Play with the FULL state path hash ("Base Layer.Death") at
+        /// normalized time 0 - immediate and independent of AnyState transition
+        /// evaluation. The Death state has no exits, so nothing can animate the enemy
+        /// out of it. Static so an editor diagnostic can force it without any
+        /// gameplay involvement (no damage, no hit feedback, no Died event, no
+        /// despawn logic).
+        /// </summary>
+        public static void ForceDeathPresentation(Animator animator)
+        {
             if (animator == null)
             {
                 return;
             }
 
-            // Death outranks everything: clear a queued Attack trigger so it cannot
-            // consume the transition after death, freeze the locomotion inputs, and
-            // latch the Dead parameter.
             animator.ResetTrigger(AttackHash);
             animator.SetFloat(SpeedHash, 0f);
             animator.SetFloat(LocomotionSpeedMultiplierHash, 1f);
             animator.SetBool(DeadHash, true);
 
-            // QA fix #3 - DETERMINISTIC death entry: Play switches the base layer into
-            // the Death state immediately at normalized time 0, independent of AnyState
-            // transition evaluation, transition durations, or same-frame trigger races.
-            // The Dead bool above remains as the parameter-driven backup path. The
-            // Death state has no exits, so nothing can animate the enemy out of it.
-            animator.Play(DeathStateHash, 0, 0f);
+            // Full-path hash: Unity's documented Play contract is "Base Layer.Death",
+            // not the bare state name.
+            animator.Play(DeathStateFullPathHash, DeathPlayLayer, 0f);
+        }
+
+        /// <summary>
+        /// Instance convenience for the editor diagnostic menu: forces the death
+        /// presentation on this bridge's Animator (no gameplay involved) and latches
+        /// the bridge so Update can no longer drive locomotion parameters.
+        /// </summary>
+        public void ForceDeathPresentation()
+        {
+            _deathLatched = true;
+            ForceDeathPresentation(animator);
         }
 
 #if UNITY_EDITOR

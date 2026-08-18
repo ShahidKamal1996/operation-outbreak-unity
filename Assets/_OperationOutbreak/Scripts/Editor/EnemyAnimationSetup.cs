@@ -119,6 +119,11 @@ namespace OperationOutbreak.EditorTools
 
             AnimatorStateMachine root = controller.layers[0].stateMachine;
 
+            // QA fix #4 - the base state machine's name is part of the full state
+            // path the bridge uses for Animator.Play ("Base Layer.Death"). Pin it to
+            // the shared constant so the full-path hash always resolves.
+            root.name = EnemyAnimationBridge.BaseLayerName;
+
             // IDLE - zombie idle (loops in its FBX import settings).
             AnimatorState idleState = root.AddState(IdleState, new Vector3(290f, 60f, 0f));
             idleState.motion = idle;
@@ -254,6 +259,15 @@ namespace OperationOutbreak.EditorTools
             }
 
             AnimatorStateMachine root = controller.layers[0].stateMachine;
+
+            // QA fix #4 - the full death path depends on the base machine's name.
+            if (root.name != EnemyAnimationBridge.BaseLayerName)
+            {
+                problems.Add("The base layer's state machine must be named '" +
+                             EnemyAnimationBridge.BaseLayerName + "' (is '" + root.name +
+                             "'), otherwise the bridge's full-path death hash '" +
+                             EnemyAnimationBridge.DeathStateFullPath + "' cannot resolve.");
+            }
 
             if (root.defaultState == null)
             {

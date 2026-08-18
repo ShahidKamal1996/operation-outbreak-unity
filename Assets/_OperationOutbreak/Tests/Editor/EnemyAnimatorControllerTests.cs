@@ -238,6 +238,82 @@ namespace OperationOutbreak.Tests
                 "The Death state must play the zombie death clip.");
         }
 
+        // ============================================ QA fix #4 (full-path death entry)
+
+        [Test]
+        public void DeathStateFullPathHashIsSharedAndTargetsLayerZero()
+        {
+            // QA fix #4 regression: Animator.Play must target the FULL state path
+            // ("Base Layer.Death"), not the bare short state name, and the base layer
+            // is layer 0.
+            Assert.AreEqual(
+                "Base Layer.Death",
+                EnemyAnimationBridge.DeathStateFullPath,
+                "The shared death full path must remain 'Base Layer.Death'.");
+
+            Assert.AreNotEqual(
+                Animator.StringToHash(EnemyAnimationBridge.DeathStateName),
+                Animator.StringToHash(EnemyAnimationBridge.DeathStateFullPath),
+                "The short-name hash and the full-path hash must be DIFFERENT values - " +
+                "using the short name with Animator.Play is exactly what could fail to " +
+                "resolve the state.");
+
+            Assert.AreEqual(0, EnemyAnimationBridge.DeathPlayLayer,
+                "The deterministic death entry must target the base layer (layer 0).");
+        }
+
+        [Test]
+        public void GeneratedControllerContainsTheExactDeathStatePath()
+        {
+            // The full path "Base Layer.Death" is well-formed only when the base
+            // state machine is named 'Base Layer' and the Death state exists in it.
+            AnimatorController controller = AssetDatabase.LoadAssetAtPath<AnimatorController>(
+                EnemyAnimationSetup.ControllerPath);
+
+            Assert.IsNotNull(controller, "Controller asset missing - run the rebuild tool.");
+            Assert.GreaterOrEqual(controller.layers.Length, 1,
+                "The controller needs its base layer.");
+
+            Assert.AreEqual(
+                EnemyAnimationBridge.BaseLayerName,
+                controller.layers[0].stateMachine.name,
+                "The base layer's state machine must carry the shared 'Base Layer' name, " +
+                "otherwise the full-path death hash cannot resolve.");
+
+            Assert.IsNotNull(
+                FindState(controller.layers[0].stateMachine, EnemyAnimationBridge.DeathStateName),
+                "The Death state must exist on the base layer for the full path to resolve.");
+        }
+
+        [Test]
+        public void DeathStatePathSurvivesControllerRebuild()
+        {
+            // The full path must survive a rebuild + forced reimport so the bridge's
+            // Animator.Play hash keeps resolving after every setup run.
+            Assert.IsTrue(EnemyAnimationSetup.RebuildController(),
+                "The enemy controller rebuild must succeed.");
+
+            AssetDatabase.SaveAssets();
+            AssetDatabase.ImportAsset(
+                EnemyAnimationSetup.ControllerPath, ImportAssetOptions.ForceUpdate);
+
+            AnimatorController reloaded = AssetDatabase.LoadAssetAtPath<AnimatorController>(
+                EnemyAnimationSetup.ControllerPath);
+
+            Assert.IsNotNull(reloaded, "The controller must reacquire after reimport.");
+            Assert.GreaterOrEqual(reloaded.layers.Length, 1,
+                "The base layer must survive the rebuild.");
+
+            Assert.AreEqual(
+                EnemyAnimationBridge.BaseLayerName,
+                reloaded.layers[0].stateMachine.name,
+                "The base layer name must survive the rebuild so the full death path stays valid.");
+
+            Assert.IsNotNull(
+                FindState(reloaded.layers[0].stateMachine, EnemyAnimationBridge.DeathStateName),
+                "The Death state must survive the rebuild.");
+        }
+
         [Test]
         public void ProductionZombieMaterialsUseTheUrpLitShader()
         {
