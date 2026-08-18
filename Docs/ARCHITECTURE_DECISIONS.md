@@ -627,6 +627,84 @@
   `Tools > Operation Outbreak > Debug Basic Infected Ragdoll` menu prints the
   same report.
 
+## Milestone 1S decisions
+
+### AD-1S-1: Variant differences are DATA, not classes
+
+- **Decision:** there remains exactly ONE reusable enemy gameplay framework.
+  `EnemyArchetypeDefinition` (ScriptableObject) is pure variant data:
+  identity (stable id + display name), gameplay tuning (health, speed, damage,
+  attack interval/range, separation), presentation references (production
+  visual source, locomotion profile, controller load path, cadence reference,
+  requires-ragdoll). `ZombieController.ApplyArchetype` and
+  `EnemyAnimationBridge.ApplyArchetype` READ the definition at spawn and
+  nothing else changes — no `BasicZombieController` / `RunnerZombieController`
+  may ever exist (reflection-pinned by tests). Applying null is a no-op, so
+  the verified Basic defaults stay authoritative for every spawn path that
+  never heard of archetypes.
+- **Ownership:** gameplay authority = ZombieController; presentation =
+  EnemyAnimationBridge/EnemyRagdoll; variant tuning = the definition asset;
+  spawner = EnemySpawner (composition + bookkeeping). Death/ragdoll timings
+  deliberately stay PREFAB-owned (shared by every variant) — they are not
+  variant data and are not exposed on the definition.
+
+### AD-1S-2: Locomotion presentation is a per-archetype controller profile, not a code branch
+
+- **Decision:** a variant's locomotion is an AnimatorController authored by
+  the SAME tool as the Basic controller (`EnemyAnimationSetup` generalized:
+  `ResolveLocomotionClipPath("Walk"|"Run")` + parameterized rebuild and
+  validation). The state machine contract — Speed/Attack/Dead/
+  LocomotionSpeedMultiplier parameters, state names, and the
+  `Base Layer.Death` full path — is identical across profiles; only the
+  locomotion state's clip differs (walk for Basic, the reserved run clip for
+  Runner). At spawn the bridge swaps `animator.runtimeAnimatorController` to
+  the profile the definition declares (loaded through Resources) and writes
+  the profile's cadence reference. No `if (runner) play X` exists in gameplay
+  code.
+- **Basic keeps the prefab default:** the Basic definition declares an empty
+  controller path, so the verified prefab controller is never even re-assigned
+  (zero regression surface). The Runner controller lives under
+  `Resources/EnemyArchetypes/` so the runtime can load it by path without
+  scene wiring or per-variant code; until the tool generates it, validation
+  and the runtime both fail LOUDLY (never silently).
+
+### AD-1S-3: One shared gameplay prefab for all production variants
+
+- **Decision:** every production archetype spawns the SAME
+  `Zombie_Prototype.prefab` (production visual, hybrid ragdoll and bridge
+  baked in) and differs only by the applied definition. No prefab duplication
+  for variants. The legacy `Runner_Prototype.prefab` remains solely for the
+  current scene's untouched 1N composition (prototype fallback); the 1T
+  mission foundation will migrate compositions to the 1S seam.
+- **Spawner seam:** `EnemySpawner.SpawnEnemy(id/definition)` and
+  `SpawnEnemyWithDefinition(definition, position)` instantiate the shared
+  prefab, apply the definition, then run the exact bookkeeping every other
+  spawn runs (SetTarget, Died subscription, tracking, EnemySpawned report).
+  The existing 1N section path is byte-untouched in this milestone.
+
+### AD-1S-4: The hybrid ragdoll death is a shared system, validated per archetype
+
+- **Decision:** the verified hybrid death (lead-in → stabilized ragdoll
+  handoff → settle → despawn; collider lifecycle; reuse reset) is identical
+  for every production archetype because it lives on the shared prefab.
+  A definition declares `requiresRagdoll`, and the editor validator checks
+  the shared prefab actually carries a configured `EnemyRagdoll` — a
+  production archetype can never silently ship without the death system it
+  declares. Future variants may override death ONLY through explicit new
+  data fields, never by forking the system.
+
+### AD-1S-5: Archetypes fail loudly, never silently
+
+- **Decision:** three layers of validation: (1) pure definition checks
+  (`CollectDefinitionProblems`: id/name/ranges/locomotion setup), (2) pure
+  duplicate-id detection (`FindDuplicateArchetypeIds`), (3) editor asset
+  checks (`Tools > Operation Outbreak > Validate Enemy Archetypes`: production
+  prefab resolves, shared ragdoll configured, declared controller exists).
+  At runtime the registry logs errors for duplicate or unknown ids and the
+  bridge logs a clear error for a missing locomotion controller; every
+  failure path degrades to the verified Basic behaviour rather than stalling
+  or spawning incorrectly.
+
 ## UNKNOWN / open questions
 
 - Pre-1P architecture rationale for gates (1J series) could not be recovered (original

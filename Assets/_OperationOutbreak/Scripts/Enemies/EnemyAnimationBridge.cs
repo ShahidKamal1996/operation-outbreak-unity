@@ -793,6 +793,71 @@ namespace OperationOutbreak.Enemies
         }
 
         /// <summary>
+        /// Milestone 1S - applies the data-driven archetype's LOCOMOTION
+        /// PRESENTATION to this bridge at spawn time. There is no variant branch
+        /// in gameplay code: the definition's data decides what happens.
+        ///
+        ///   - locomotionReferenceSpeed (> 0) becomes the bridge's cadence
+        ///     reference, so each variant's locomotion clip cadence matches its
+        ///     configured movement speed (the same mechanism the 1Q setup tool
+        ///     used for the Basic walk).
+        ///   - locomotionResourcesPath (non-empty) loads the variant's
+        ///     RuntimeAnimatorController and swaps it onto the Animator. The
+        ///     controller is authored by the same tool as the Basic controller
+        ///     (same state names/parameters), so the bridge contract - Speed,
+        ///     Attack, Dead, LocomotionSpeedMultiplier and the full
+        ///     "Base Layer.Death" path - is identical for every variant.
+        ///   - A missing controller fails LOUDLY (error log) instead of silently
+        ///     spawning a variant with the wrong presentation; the enemy keeps
+        ///     the prefab's default controller so the mission loop never stalls.
+        ///
+        /// A NULL definition is a no-op: the prefab's verified values (controller
+        /// and cadence reference) stay authoritative.
+        /// </summary>
+        public void ApplyArchetype(EnemyArchetypeDefinition definition)
+        {
+            if (definition == null)
+            {
+                return;
+            }
+
+            if (definition.LocomotionReferenceSpeed > 0f)
+            {
+                walkReferenceSpeed = definition.LocomotionReferenceSpeed;
+            }
+
+            string resourcesPath = definition.LocomotionResourcesPath;
+
+            if (string.IsNullOrEmpty(resourcesPath))
+            {
+                return;
+            }
+
+            if (animator == null)
+            {
+                Debug.LogError(
+                    "[1S] Archetype '" + definition.ArchetypeId + "' declares a locomotion " +
+                    "controller but this enemy has no Animator - the prefab's default " +
+                    "presentation stays in use.", this);
+                return;
+            }
+
+            RuntimeAnimatorController controller = Resources.Load<RuntimeAnimatorController>(resourcesPath);
+
+            if (controller == null)
+            {
+                Debug.LogError(
+                    "[1S] Archetype '" + definition.ArchetypeId + "' locomotion controller is " +
+                    "MISSING at Resources path '" + resourcesPath + "'. The enemy keeps the " +
+                    "prefab's default controller - run Tools > Operation Outbreak > Rebuild " +
+                    "Runner Animator Controller and commit the generated asset.", this);
+                return;
+            }
+
+            animator.runtimeAnimatorController = controller;
+        }
+
+        /// <summary>
         /// QA fix #10 / 1Q FINAL - runs once per frame after the death latch and
         /// drives the death presentation:
         ///

@@ -36,6 +36,16 @@ namespace OperationOutbreak.EditorTools
         public const string ControllerPath =
             "Assets/_OperationOutbreak/Art/Animations/Enemies/OO_BasicInfected.controller";
 
+        /// <summary>
+        /// Milestone 1S - the Runner locomotion controller. It lives under a
+        /// Resources folder so the runtime archetype application can load it by
+        /// path (Resources.Load) without any per-variant code. Authored by the
+        /// same tool as the Basic controller, with the SAME state machine shape
+        /// and parameter contract; only the locomotion state's clip differs.
+        /// </summary>
+        public const string RunnerControllerPath =
+            "Assets/_OperationOutbreak/Resources/EnemyArchetypes/OO_Runner.controller";
+
         public const string IdleFbxPath =
             "Assets/_OperationOutbreak/Art/Animations/Enemies/Mixamo/zombie idle.fbx";
 
@@ -79,30 +89,68 @@ namespace OperationOutbreak.EditorTools
             return null;
         }
 
+        /// <summary>
+        /// Milestone 1S - pure locomotion profile -> clip mapping shared by the
+        /// controller tool and the tests. "Walk" resolves the Basic walk clip,
+        /// "Run" resolves the reserved Runner run clip; anything else resolves
+        /// to nothing (callers report the missing locomotion setup).
+        /// </summary>
+        public static string ResolveLocomotionClipPath(string locomotionProfileName)
+        {
+            if (locomotionProfileName == EnemyArchetypeDefinition.RunProfile)
+            {
+                return RunFbxPath;
+            }
+
+            if (locomotionProfileName == EnemyArchetypeDefinition.WalkProfile)
+            {
+                return WalkFbxPath;
+            }
+
+            return null;
+        }
+
         [MenuItem("Tools/Operation Outbreak/Rebuild Basic Infected Animator Controller")]
         public static bool RebuildController()
         {
+            return RebuildController(ControllerPath, EnemyArchetypeDefinition.WalkProfile);
+        }
+
+        /// <summary>
+        /// Milestone 1S - authors a locomotion controller for the given profile.
+        /// The Basic controller uses the walk clip; the Runner controller uses the
+        /// reserved run clip. Everything else (state names, parameters, cadence
+        /// wiring, terminal Death) is IDENTICAL, so the shared bridge contract
+        /// never changes between variants.
+        /// </summary>
+        public static bool RebuildController(string controllerPath, string locomotionProfileName)
+        {
+            string locomotionFbxPath = ResolveLocomotionClipPath(locomotionProfileName);
+
             AnimationClip idle = ResolveClip(IdleFbxPath);
-            AnimationClip walk = ResolveClip(WalkFbxPath);
+            AnimationClip locomotion = locomotionFbxPath != null ? ResolveClip(locomotionFbxPath) : null;
             AnimationClip attack = ResolveClip(AttackFbxPath);
             AnimationClip death = ResolveClip(DeathFbxPath);
 
-            if (idle == null || walk == null || attack == null || death == null)
+            if (idle == null || locomotion == null || attack == null || death == null)
             {
                 EditorUtility.DisplayDialog(
-                    "Basic Infected Animator",
-                    "Could not resolve the Mixamo zombie clips.\nCheck that these assets exist and contain clips:\n" +
-                    IdleFbxPath + "\n" + WalkFbxPath + "\n" + AttackFbxPath + "\n" + DeathFbxPath,
+                    "Enemy Animator",
+                    "Could not resolve the Mixamo zombie clips for profile '" + locomotionProfileName + "'.\n" +
+                    "Check that these assets exist and contain clips:\n" +
+                    IdleFbxPath + "\n" + (locomotionFbxPath ?? "(no locomotion profile)") + "\n" +
+                    AttackFbxPath + "\n" + DeathFbxPath,
                     "OK");
                 return false;
             }
 
-            // Rebuild IN PLACE so the asset GUID stays stable (the enemy visual setup
-            // tool assigns the controller by reference).
-            AnimatorController controller = AssetDatabase.LoadAssetAtPath<AnimatorController>(ControllerPath);
+            // Rebuild IN PLACE so the asset GUID stays stable (references by guid
+            // keep resolving; the archetype application loads the Runner controller
+            // through its Resources path).
+            AnimatorController controller = AssetDatabase.LoadAssetAtPath<AnimatorController>(controllerPath);
             if (controller == null)
             {
-                controller = AnimatorController.CreateAnimatorControllerAtPath(ControllerPath);
+                controller = AnimatorController.CreateAnimatorControllerAtPath(controllerPath);
             }
             else
             {
@@ -132,7 +180,7 @@ namespace OperationOutbreak.EditorTools
             // WALK - zombie walk (loops). Basic Infected walks by design; the run clip
             // is reserved for future Runner variants.
             AnimatorState walkState = root.AddState(WalkState, new Vector3(290f, 180f, 0f));
-            walkState.motion = walk;
+            walkState.motion = locomotion;
 
             // Milestone 1Q Bug 4 - cadence sync: ONLY the Walk state's playback speed
             // is driven by LocomotionSpeedMultiplier, computed by the bridge from the
@@ -199,8 +247,8 @@ namespace OperationOutbreak.EditorTools
             EditorUtility.SetDirty(controller);
             AssetDatabase.SaveAssets();
             Debug.Log(
-                "[1Q] Basic Infected controller rebuilt with resolved clips: " +
-                $"idle='{idle.name}', walk='{walk.name}', attack='{attack.name}', death='{death.name}'. " +
+                "[1Q/1S] Locomotion controller rebuilt for profile '" + locomotionProfileName + "': " +
+                $"idle='{idle.name}', locomotion='{locomotion.name}', attack='{attack.name}', death='{death.name}'. " +
                 "Save and commit the regenerated controller asset.", controller);
             return true;
         }
@@ -230,27 +278,47 @@ namespace OperationOutbreak.EditorTools
         /// Shared, side-effect-free validation used by both the menu validator and the
         /// EditMode tests: returns every problem found, or an empty list on success.
         /// </summary>
+        /// <summary>Validates the verified Basic controller (walk locomotion).</summary>
         public static List<string> CollectValidationProblems()
+        {
+            return CollectValidationProblems(ControllerPath, EnemyArchetypeDefinition.WalkProfile);
+        }
+
+        /// <summary>
+        /// Milestone 1S - validates a locomotion controller for the given
+        /// profile. The state machine contract (parameters, state names, base
+        /// machine name, terminal one-shot Death) is identical for every
+        /// profile; only the locomotion clip that the Walk state must resolve
+        /// changes.
+        /// </summary>
+        public static List<string> CollectValidationProblems(
+            string controllerPath, string locomotionProfileName)
         {
             List<string> problems = new List<string>();
 
             AnimatorController controller =
-                AssetDatabase.LoadAssetAtPath<AnimatorController>(ControllerPath);
+                AssetDatabase.LoadAssetAtPath<AnimatorController>(controllerPath);
 
             if (controller == null)
             {
-                problems.Add("Controller asset missing at " + ControllerPath);
+                problems.Add("Controller asset missing at " + controllerPath);
                 return problems;
             }
 
+            string locomotionFbxPath = ResolveLocomotionClipPath(locomotionProfileName);
+
             AnimationClip idle = ResolveClip(IdleFbxPath);
-            AnimationClip walk = ResolveClip(WalkFbxPath);
+            AnimationClip locomotion = locomotionFbxPath != null ? ResolveClip(locomotionFbxPath) : null;
             AnimationClip run = ResolveClip(RunFbxPath);
+            AnimationClip walk = ResolveClip(WalkFbxPath);
             AnimationClip attack = ResolveClip(AttackFbxPath);
             AnimationClip death = ResolveClip(DeathFbxPath);
 
             if (idle == null) problems.Add("No AnimationClip found in " + IdleFbxPath);
-            if (walk == null) problems.Add("No AnimationClip found in " + WalkFbxPath);
+            if (locomotion == null && locomotionFbxPath != null)
+            {
+                problems.Add("No AnimationClip found in " + locomotionFbxPath);
+            }
             if (attack == null) problems.Add("No AnimationClip found in " + AttackFbxPath);
             if (death == null) problems.Add("No AnimationClip found in " + DeathFbxPath);
 
@@ -304,9 +372,10 @@ namespace OperationOutbreak.EditorTools
             }
             else
             {
-                if (walkState.motion != walk)
+                if (walkState.motion != locomotion)
                 {
-                    problems.Add(WalkState + " motion does not resolve to the " + WalkFbxPath + " clip.");
+                    problems.Add(WalkState + " motion does not resolve to the " +
+                                 (locomotionFbxPath ?? "(no profile)") + " clip.");
                 }
 
                 // Bug 4: cadence sync must be wired on the Walk state only.
@@ -323,15 +392,22 @@ namespace OperationOutbreak.EditorTools
                 }
             }
 
-            // The run clip must stay reserved for future Runner variants.
-            if (run != null && root.states != null)
+            // Milestone 1S - each profile owns exactly ONE locomotion clip: the
+            // Walk profile must not contain the run clip, the Run profile must
+            // not contain the walk clip.
+            string reservedFbxPath =
+                locomotionProfileName == EnemyArchetypeDefinition.WalkProfile ? RunFbxPath : WalkFbxPath;
+            AnimationClip reservedClip = ResolveClip(reservedFbxPath);
+
+            if (reservedClip != null && root.states != null)
             {
                 foreach (ChildAnimatorState child in root.states)
                 {
-                    if (child.state.motion == run)
+                    if (child.state.motion == reservedClip)
                     {
-                        problems.Add("The zombie run clip must NOT be part of Basic Infected " +
-                                     "locomotion - it is reserved for future Runner variants.");
+                        problems.Add("The clip in " + reservedFbxPath + " must NOT be part of the '" +
+                                     locomotionProfileName + "' locomotion profile - every variant " +
+                                     "owns exactly one locomotion presentation.");
                     }
                 }
             }
@@ -474,6 +550,86 @@ namespace OperationOutbreak.EditorTools
             }
 
             problems.Add("Enemy bridge parameter '" + parameterName + "' is missing.");
+        }
+
+        // ------------------------------------------------------------------
+        // Milestone 1S - Runner locomotion authoring.
+        // ------------------------------------------------------------------
+
+        /// <summary>The committed Runner archetype definition asset (patched by the
+        /// Runner rebuild with the measured run-clip cadence reference).</summary>
+        public const string RunnerArchetypeAssetPath =
+            "Assets/_OperationOutbreak/Resources/EnemyArchetypes/EnemyArchetype_Runner.asset";
+
+        /// <summary>
+        /// Milestone 1S - authors the Runner locomotion controller (same state
+        /// machine as the Basic controller, run clip in the locomotion state),
+        /// then patches the Runner archetype's locomotionReferenceSpeed from the
+        /// run clip's measured average speed (the same QA fix #1C rule the Basic
+        /// setup used for the walk clip). Commit the generated controller and the
+        /// updated archetype asset afterwards.
+        /// </summary>
+        [MenuItem("Tools/Operation Outbreak/Rebuild Runner Animator Controller")]
+        public static void RebuildRunnerController()
+        {
+            if (!RebuildController(RunnerControllerPath, EnemyArchetypeDefinition.RunProfile))
+            {
+                return;
+            }
+
+            EnemyArchetypeDefinition runner =
+                AssetDatabase.LoadAssetAtPath<EnemyArchetypeDefinition>(RunnerArchetypeAssetPath);
+
+            if (runner == null)
+            {
+                Debug.LogWarning(
+                    "[1S] Runner controller rebuilt, but no Runner archetype asset found at " +
+                    RunnerArchetypeAssetPath + " - the cadence reference was not patched.", null);
+                return;
+            }
+
+            AnimationClip runClip = ResolveClip(RunFbxPath);
+
+            if (runClip == null || runClip.averageSpeed.magnitude <= 0.01f)
+            {
+                Debug.LogWarning(
+                    "[1S] Runner controller rebuilt, but the run clip's average speed is " +
+                    "unmeasurable - the archetype keeps its documented placeholder cadence " +
+                    "reference.", runner);
+                return;
+            }
+
+            var runnerSo = new SerializedObject(runner);
+            SerializedProperty reference = runnerSo.FindProperty("locomotionReferenceSpeed");
+
+            if (reference == null)
+            {
+                Debug.LogWarning("[1S] Runner archetype has no locomotionReferenceSpeed field.", runner);
+                return;
+            }
+
+            float measured = runClip.averageSpeed.magnitude;
+            reference.floatValue = measured;
+            runnerSo.ApplyModifiedPropertiesWithoutUndo();
+            EditorUtility.SetDirty(runner);
+            AssetDatabase.SaveAssets();
+
+            Debug.Log(
+                "[1S] Runner archetype cadence reference patched to the measured run-clip " +
+                $"average speed: {measured:0.0000} u/s. Commit the updated archetype asset " +
+                "alongside the generated OO_Runner.controller.", runner);
+
+            // Report any structural problems in the fresh Runner controller.
+            List<string> problems = CollectValidationProblems(
+                RunnerControllerPath, EnemyArchetypeDefinition.RunProfile);
+
+            if (problems.Count > 0)
+            {
+                foreach (string problem in problems)
+                {
+                    Debug.LogWarning("[1S] Runner controller: " + problem);
+                }
+            }
         }
     }
 }

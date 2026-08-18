@@ -85,6 +85,17 @@ namespace OperationOutbreak.Enemies
         public int AttackDamage => attackDamage;
 
         /// <summary>
+        /// Milestone 1S - read-only authored attack interval and range, following
+        /// the same 1O rule: getters only, so an archetype application is the only
+        /// writer and the serialized/definition values stay the single source of
+        /// truth.
+        /// </summary>
+        public float AttackInterval => attackInterval;
+
+        /// <summary>Milestone 1S - read-only authored attack range (see AttackInterval).</summary>
+        public float AttackRange => attackRange;
+
+        /// <summary>
         /// Milestone 1O - raised after this enemy takes damage, carrying the amount.
         /// Diagnostics counts projectile hits with it. Purely a notification: it is raised
         /// after the health maths has already completed and no listener can alter it.
@@ -177,6 +188,40 @@ namespace OperationOutbreak.Enemies
             {
                 ResolvePlayerHealth();
             }
+        }
+
+        /// <summary>
+        /// Milestone 1S - applies a data-driven archetype definition to this enemy
+        /// at SPAWN TIME. The shared gameplay authority stays this component; the
+        /// definition is only the tuning data it reads.
+        ///
+        /// A NULL definition is a deliberate no-op: the prefab's serialized
+        /// (verified Basic Infected) values remain authoritative, so a spawn path
+        /// that never heard of archetypes keeps spawning byte-identically.
+        ///
+        /// Health is re-seeded from the archetype's max health because OnEnable
+        /// may already have seeded from the prefab's authored value before the
+        /// definition was applied. Call this at spawn, before the first combat
+        /// frame, exactly once per reuse.
+        /// </summary>
+        public void ApplyArchetype(EnemyArchetypeDefinition definition)
+        {
+            if (definition == null)
+            {
+                return;
+            }
+
+            moveSpeed = definition.MoveSpeed;
+            maxHealth = definition.MaxHealth;
+            attackDamage = definition.AttackDamage;
+            attackInterval = definition.AttackInterval;
+            attackRange = definition.AttackRange;
+            separationRadius = definition.SeparationRadius;
+            separationStrength = definition.SeparationStrength;
+
+            // Spawn-time re-seed: the archetype's max health becomes the enemy's
+            // full health for this reuse cycle.
+            CurrentHealth = Mathf.Max(1, maxHealth);
         }
 
         /// <summary>

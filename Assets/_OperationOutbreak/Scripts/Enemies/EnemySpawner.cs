@@ -199,6 +199,74 @@ namespace OperationOutbreak.Enemies
             return archetype != null && archetype.prefab != null ? archetype.prefab : zombiePrefab;
         }
 
+        // ------------------------------------------------------------------
+        // Milestone 1S - data-driven archetype spawn seam.
+        //
+        // The existing mission composition path above (1N EnemySpawnEntry +
+        // prefab library) is deliberately UNTOUCHED: the current mission keeps
+        // spawning exactly what it always spawned. These overloads are the seam
+        // future mission definitions (1T+) use to request an enemy BY ITS 1S
+        // ARCHETYPE DEFINITION. Both paths converge on the same single spawn
+        // bookkeeping (SetTarget, Died subscription, _activeEnemies tracking,
+        // EnemySpawned report), so completion counting, auto-aim and death
+        // handling stay type-agnostic.
+        // ------------------------------------------------------------------
+
+        /// <summary>
+        /// Milestone 1S - spawns an enemy by ARCHETYPE DEFINITION ID through the
+        /// shared gameplay prefab. Unknown/empty ids resolve to the default
+        /// (verified Basic Infected), mirroring the 1N fallback rule.
+        /// </summary>
+        public ZombieController SpawnEnemy(string archetypeId)
+        {
+            EnemyArchetypeDefinition definition =
+                EnemyArchetypeRegistry.ResolveRequestedArchetype(archetypeId);
+
+            return SpawnEnemy(definition);
+        }
+
+        /// <summary>
+        /// Milestone 1S - spawns an enemy configured by the given archetype
+        /// definition, at the spawner's centre lane slot. A null definition is
+        /// the verified default (no tuning applied).
+        /// </summary>
+        public ZombieController SpawnEnemy(EnemyArchetypeDefinition definition)
+        {
+            return SpawnEnemyWithDefinition(definition, GetSpawnPosition(1));
+        }
+
+        /// <summary>
+        /// Milestone 1S - the core seam: instantiate the SHARED gameplay prefab,
+        /// apply the definition (gameplay values + presentation profile), then
+        /// run the exact bookkeeping every other spawn runs. This is the single
+        /// entry point 1T mission definitions will call per spawn request.
+        /// </summary>
+        public ZombieController SpawnEnemyWithDefinition(
+            EnemyArchetypeDefinition definition, Vector3 position)
+        {
+            if (zombiePrefab == null)
+            {
+                Debug.LogError("[1S] No shared enemy prefab assigned to the spawner.", this);
+                return null;
+            }
+
+            ZombieController zombie = Instantiate(zombiePrefab, position, Quaternion.identity);
+
+            // Apply BEFORE SetTarget/tracking so the enemy's first combat frame
+            // already runs with the archetype's tuning (and its health re-seed).
+            EnemyArchetypeApplication.Apply(zombie.gameObject, definition);
+
+            zombie.SetTarget(playerTarget, playerHealth);
+            zombie.Died += HandleEnemyDied;
+            _activeEnemies.Add(zombie);
+
+            EnemySpawned?.Invoke(zombie, new EnemySpawnReport(
+                definition != null ? definition.ArchetypeId : EnemyArchetypeId.Basic,
+                -1, position, position, 0f, minimumSpawnStandoff));
+
+            return zombie;
+        }
+
         /// <summary>
         /// Milestone 1N.1 - moves a spawn point <paramref name="offset"/> units closer to the
         /// player along the lane, then clamps the result so the shortcut can never produce an

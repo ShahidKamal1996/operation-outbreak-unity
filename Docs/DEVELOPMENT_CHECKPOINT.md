@@ -28,8 +28,10 @@
 | Gate systems (1J series) | Development paused per milestone briefs. NOT resumed by 1P. |
 | **1P — weapon & combat feel foundation** | **VERIFIED** (2026-08-16 — project owner's local Unity QA; see "Manual Unity QA" below) |
 | **1P.5 — Toon Soldier visual integration** | **VERIFIED** (owner QA 2026-08-17: EditMode 137/137, animations/aim/grounding/muzzle all accepted) |
-| **1Q — production enemy foundation (Basic Infected)** | **IMPLEMENTED — AWAITING MANUAL UNITY QA** (2026-08-17) |
-| 1R | NOT STARTED — begin only when the project owner authorizes it after 1Q QA. |
+| **1Q — production enemy foundation (Basic Infected)** | **VERIFIED** (2026-08-19 — owner manual Unity QA PASSED; EditMode 205/205; verified assets committed by the owner at `0ca4d76` "Milestone 1Q: save verified production zombie ragdoll assets") |
+| 1R — enemy animation & death foundation | **VERIFIED through the extended 1Q delivery** (roadmap reconciliation: 1R's scope was fully delivered and QA-verified during the 1Q implementation/QA cycle — hybrid animation → ragdoll death, stabilized ragdoll, collider lifecycle, reuse/reset. NOT rebuilt separately.) |
+| **1S — enemy variant architecture** | **IMPLEMENTED — AWAITING MANUAL UNITY QA** (2026-08-19) |
+| 1T | NOT STARTED — begin only when the project owner authorizes it after 1S QA. |
 
 ## What Milestone 1P delivered
 
@@ -589,6 +591,115 @@ Production enemy VISUAL foundation only — zero enemy gameplay changes:
     test pins the anatomical per-axis hinge-like limits; the reflection test
     pins the renamed one-shot handoff gate; the controller tests require step 0
     to have been run once).
+
+## What Milestone 1S delivered
+
+Data-driven enemy variant architecture — ONE reusable gameplay framework,
+variant differences from data only:
+
+1. **Enemy archetype definition** — `EnemyArchetypeDefinition`
+   (ScriptableObject, assets under
+   `Assets/_OperationOutbreak/Resources/EnemyArchetypes/`): identity
+   (`archetypeId`, `displayName`), gameplay tuning (max health, move speed,
+   attack damage/interval/range, separation radius/strength), presentation
+   (production visual source path, locomotion profile name, locomotion
+   controller Resources path, cadence reference, requires-ragdoll flag). All
+   fields are read-only at runtime.
+2. **Ownership stays clean** — `ZombieController` remains the single gameplay
+   authority (it READS a definition at spawn via `ApplyArchetype`, including a
+   spawn-time health re-seed); `EnemyAnimationBridge` remains the single
+   presentation bridge (it READS the definition's locomotion profile at spawn
+   via `ApplyArchetype`: controller swap + cadence reference). No variant
+   branch exists anywhere in gameplay code, and NO per-variant controller
+   class exists (reflection-pinned by tests).
+3. **Basic Infected migration** — `EnemyArchetype_Basic.asset` replicates the
+   VERIFIED 1Q values byte-for-byte (health 3, speed 2.5, damage 1, interval
+   1, range 1.25, separation 1.1/1.5, cadence reference 0.29091793 = the
+   verified prefab serialization, Walk profile, shared prefab controller — no
+   swap). Applying it to the shared prefab is numerically a no-op.
+4. **Runner preparation** — `EnemyArchetype_Runner.asset` validates the
+   architecture: speed 4.5, health 2, same shared controller, `Run`
+   locomotion profile mapping to the reserved Mixamo `zombie run` clip. The
+   Runner's controller is authored by the SAME tool as the Basic controller
+   (`Tools > Operation Outbreak > Rebuild Runner Animator Controller` writes
+   `Assets/_OperationOutbreak/Resources/EnemyArchetypes/OO_Runner.controller`
+   — identical state machine, run clip in the locomotion state — and patches
+   the archetype's cadence reference from the run clip's measured average
+   speed). Full Runner mission/content belongs to the later Chapter 1 Runner
+   milestone; this milestone only proves the framework supports it.
+5. **Runtime registry** — `EnemyArchetypeRegistry` resolves stable ids from
+   `Resources.LoadAll` (no scene wiring, build-safe), reports duplicate ids as
+   errors (first asset wins) and resolves null/empty/unknown requests to the
+   DEFAULT (`basic_infected`) — the verified Basic behaviour for every caller
+   that asks for nothing.
+6. **Spawner seam** — `EnemySpawner.SpawnEnemy(string archetypeId)` /
+   `SpawnEnemy(EnemyArchetypeDefinition)` /
+   `SpawnEnemyWithDefinition(definition, position)`: instantiate the SHARED
+   gameplay prefab, apply the definition, then run the exact bookkeeping every
+   other spawn runs (SetTarget, Died subscription, `_activeEnemies` tracking,
+   `EnemySpawned` report). The existing 1N mission composition path is
+   deliberately UNTOUCHED — the current mission keeps spawning exactly what it
+   always spawned. 1T mission definitions will call this seam.
+7. **Prefab strategy** — ONE shared gameplay prefab
+   (`Zombie_Prototype.prefab`) for every production variant; variants differ
+   only by applied data (stats + controller swap). No prefab duplication. The
+   legacy `Runner_Prototype.prefab` remains ONLY for the current scene's 1N
+   composition (prototype fallback) and is not part of the new architecture.
+8. **Animation/profile strategy** — locomotion presentation is a
+   per-archetype AnimatorController profile: same state machine contract
+   (Speed/Attack/Dead/LocomotionSpeedMultiplier, `Base Layer.Death` full
+   path), different locomotion clip. `EnemyAnimationSetup` was generalized
+   (`ResolveLocomotionClipPath`, parameterized rebuild + validation) — no
+   hard-coded "if runner play X" anywhere.
+9. **Hybrid ragdoll stays SHARED** — death accounting, animation lead-in,
+   stabilized handoff, collider lifecycle and reset/reuse all live on the
+   shared prefab and are identical for every production archetype. The
+   definition only declares `requiresRagdoll` (editor-validated against the
+   shared prefab); no variant forks the death system.
+10. **Validation** — definition-level checks (stable id, ranges, locomotion
+    setup, run profile requires its controller), duplicate-id detection and
+    asset-level checks (production prefab resolves, shared prefab ragdoll
+    configured, runner controller exists) via
+    `Tools > Operation Outbreak > Validate Enemy Archetypes`. Broken
+    archetypes fail loudly in editor/dev QA; runtime spawns also log clear
+    errors (missing controller, unknown id) instead of silently spawning
+    incorrectly.
+11. **Debug spawns** — `Tools > Operation Outbreak > Spawn Basic Infected
+    (Debug)` / `Spawn Runner (Debug)` prove the shared framework in Play Mode
+    (mission-tracked through the spawner seam when a spawner is in the scene).
+
+## Manual Unity QA checklist for 1S
+
+0. **REQUIRED FIRST STEP — run `Tools > Operation Outbreak > Rebuild Runner
+   Animator Controller`**, save, and commit the generated
+   `Assets/_OperationOutbreak/Resources/EnemyArchetypes/OO_Runner.controller`
+   (and the patched `EnemyArchetype_Runner.asset` if its cadence reference
+   changed). Then run `Tools > Operation Outbreak > Validate Enemy
+   Archetypes` — it must PASS (before the runner controller is generated it
+   correctly reports the missing controller as an error; that is the
+   fail-loudly behaviour working).
+1. The existing current mission looks and plays EXACTLY as before: 9 BASIC +
+   3 RUNNER entries from the 1N composition, identical visuals, speeds,
+   3 sections, Mission Complete exactly once. No new console errors.
+2. Basic stats/animation/death behaviour unchanged (speed 2.5, health 3,
+   walk cadence, hit feedback, hybrid ragdoll death).
+3. In Play Mode run `Tools > Operation Outbreak > Spawn Runner (Debug)`: the
+   spawned Runner uses the SAME shared framework — Stylized Zombie visual,
+   configured higher speed (4.5), RUN animation, same attack, same hybrid
+   ragdoll death, same collider lifecycle and reuse reset.
+4. Run `Tools > Operation Outbreak > Spawn Basic Infected (Debug)` after the
+   Runner: Basic still behaves exactly as before.
+5. Kill the debug-spawned enemies: death lead-in → stabilized ragdoll fall →
+   settle → despawn (no random dancing), reused enemies respawn upright.
+6. Mission counts/sections/Mission Complete remain unchanged after the debug
+   spawns (or restart and re-verify the mission).
+7. Console clean (the only expected logs are the 1S debug/validation logs).
+8. Full EditMode suite passes — expect **216/216** (205 previous + 11 new
+   1S tests: verified Basic values, production Basic presentation, shared
+   controller application, run clip/profile resolution, unique stable ids,
+   invalid-archetype rejection, spawner seam resolution, default-to-Basic
+   behaviour, no duplicated controller classes, shared ragdoll across
+   archetypes, runner controller tool path pin).
 
 ## What Milestone 1P.5 delivered
 
