@@ -784,8 +784,8 @@ namespace OperationOutbreak.EditorTools
             }
 
             body.mass = mass;
-            body.drag = RigidbodyDrag;
-            body.angularDrag = RagdollAngularDrag;
+            body.linearDamping = RigidbodyDrag;
+            body.angularDamping = RagdollAngularDrag;
             body.useGravity = true;
             body.isKinematic = true;                 // alive: never simulated
             body.interpolation = RigidbodyInterpolation.None;
