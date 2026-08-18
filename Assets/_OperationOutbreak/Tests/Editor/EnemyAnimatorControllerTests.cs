@@ -388,6 +388,75 @@ namespace OperationOutbreak.Tests
             }
         }
 
+        // ============================================ QA fix #6 (death grounding)
+
+        [Test]
+        public void DeathGroundingAppliesOnlyAfterTheDeathLatch()
+        {
+            // The death-only grounding correction must never touch the production
+            // visual while the enemy lives - the standing offset stays authoritative
+            // for Idle/Walk/Attack.
+            Assert.IsTrue(
+                EnemyAnimationBridge.ShouldApplyDeathGrounding(true),
+                "After the death latch the grounding correction must be allowed.");
+            Assert.IsFalse(
+                EnemyAnimationBridge.ShouldApplyDeathGrounding(false),
+                "While the enemy lives, no death grounding may be applied - the " +
+                "standing ProductionVisual offset is untouched.");
+        }
+
+        [Test]
+        public void DeathPoseMeasurementWaitsForTheLateClipThreshold()
+        {
+            // The measurement must sample the LATE death pose (the lying corpse), never
+            // the standing pose at the clip start.
+            Assert.IsFalse(
+                EnemyAnimationBridge.ShouldMeasureDeathGrounding(0.1f, 0.9f),
+                "Early in the clip the pose is still standing - no measurement yet.");
+            Assert.IsTrue(
+                EnemyAnimationBridge.ShouldMeasureDeathGrounding(0.9f, 0.9f),
+                "At the sample threshold the near-final pose may be measured.");
+            Assert.IsTrue(
+                EnemyAnimationBridge.ShouldMeasureDeathGrounding(0.95f, 0.9f),
+                "Past the threshold the measurement must still be allowed.");
+        }
+
+        [Test]
+        public void DeathGroundingTargetPlacesThePoseLowestPointOnTheGround()
+        {
+            // Pure grounding maths: in enemy-root local space the ground sits at -1,
+            // so a corpse pose whose lowest point is at poseLocalY requires the
+            // visual holder at groundLocalY - poseLocalY.
+            Assert.AreEqual(
+                -0.7f,
+                EnemyAnimationBridge.ComputeDeathGroundingTargetY(-0.3f, -1f),
+                0.0001f,
+                "A corpse lying with its lowest point 0.3 below the instance origin " +
+                "must raise the visual to -0.7.");
+
+            // Consistency with the standing FBX-derived offset: the vendor mesh's
+            // lowest vertex is +0.536 cm above the model root, so a standing pose
+            // measured through the same formula reproduces the standing grounding.
+            Assert.AreEqual(
+                -1.00536f,
+                EnemyAnimationBridge.ComputeDeathGroundingTargetY(0.00536f, -1f),
+                0.0001f,
+                "The standing-pose measurement must reproduce the deterministic " +
+                "standing offset (-1.00536), proving the formula is consistent.");
+        }
+
+        [Test]
+        public void StandingProductionVisualOffsetRemainsUnchanged()
+        {
+            // QA fix #6 must not change the standing grounding for Idle/Walk/Attack -
+            // only a death-only additional correction may exist.
+            Assert.AreEqual(
+                -1.005f,
+                EnemyVisualSetup.ProductionVisualGroundingOffsetY,
+                0.001f,
+                "The deterministic standing grounding offset must stay -1.005.");
+        }
+
         [Test]
         public void ProductionZombieMaterialsUseTheUrpLitShader()
         {

@@ -244,6 +244,22 @@ Production enemy VISUAL foundation only — zero enemy gameplay changes:
     - The controller tool pins the Death state to speed 1, no speed parameter, and
       the `AnyState → Death` transition to `canTransitionToSelf = false` (validated),
       so nothing in the state machine can re-enter Death and restart the clip.
+12. **QA fix #6 (2026-08-18) — corpse death grounding:** with death working, QA saw
+    the corpse's final pose hovering above the road. Cause: the production visual's
+    standing grounding offset (-1.005) is correct for the standing Idle/Walk/Attack
+    pose, but the Mixamo death clip lies the body down (root motion OFF, gameplay
+    root fixed at y=1), so the resting pose's lowest point sits above the lane.
+    Fix (presentation only): after the death latch, the bridge waits until the death
+    clip reaches `deathGroundingSampleNormalizedTime` (0.9), then measures the
+    corpse pose's lowest point from the real skinned mesh
+    (`TryMeasureDeathPoseLowestLocalY`) and smoothly blends the ProductionVisual's
+    local Y toward `ComputeDeathGroundingTargetY` over
+    `deathGroundingBlendDuration` (0.35 s) — corpse settles onto the road near the
+    end of the fall, no teleporting. A serialized fallback offset
+    (`deathGroundingOffsetY` 0.6) applies only when measurement is unavailable; the
+    standing offset is captured at Awake and restored on disable/reset. The gameplay
+    root, collider and root-motion policy are untouched, and the one-shot death
+    latch from QA fix #5 is unchanged.
 9. **QA fix #2 (2026-08-17) — floating, vibration and death still unresolved:**
    - **Grounding:** QA fix #1B's renderer-bounds measurement read the vendor prefab's
      EDITOR/REFERENCE pose (the vendor ships a crouched cartoon pose), not the animated
@@ -304,6 +320,8 @@ Production enemy VISUAL foundation only — zero enemy gameplay changes:
      and must log a HIGHER normalized time (one-shot + progression proof). If the
      zombie animates there, the problem is sequencing, not clip/avatar setup.
 12. Dead enemy cannot move or attack.
+12b. **Corpse settles onto the road** near the end of the death animation — no
+     hovering, no sinking (QA fix #6).
 13. Mission kill/wave accounting remains correct (3 sections, 12 enemies,
     9 BASIC / 3 RUNNER, Mission Complete exactly once).
 14. Multiple zombies animate independently.
@@ -311,7 +329,10 @@ Production enemy VISUAL foundation only — zero enemy gameplay changes:
 16. LOD/prefab rendering produces no obvious errors (both LODs textured).
 17. Player Toon Soldier remains unaffected (shooting, aim, muzzle, animations).
 18. Console remains clean.
-19. Full EditMode suite passes — expect **164/164** (161 previous + 3 new
+19. Full EditMode suite passes — expect **168/168** (164 previous + 4 new
+    QA-fix-#6 tests: death-grounding gate, late-pose measurement threshold, pure
+    grounding-target maths (incl. standing-offset consistency), and the unchanged
+    standing offset pin; the controller tests require step 0 to have been run once).
     QA-fix-#5 tests: one-shot presentation gate truth table, non-looping full
     death clip, and Death state unit-speed/no-exits/no-self-re-entry; the
     controller tests require step 0 to have been run once).

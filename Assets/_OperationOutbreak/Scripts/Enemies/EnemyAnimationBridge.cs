@@ -96,6 +96,42 @@ namespace OperationOutbreak.Enemies
         private bool _deathLatched;
         private bool _deathPresentationStarted;
 
+        // ------------------------------------------------------------------ death grounding
+
+        [Header("Death Grounding (Milestone 1Q QA fix #6)")]
+        [Tooltip("Height of the enemy gameplay root above the lane surface. The corpse " +
+                 "grounding is computed in root-local space against this value.")]
+        [Min(0.1f)]
+        [SerializeField] private float enemyRootGroundHeight = 1f;
+
+        [Tooltip("Fallback extra lowering (in meters) applied to the production visual " +
+                 "during the death presentation, used only when the death-pose measurement " +
+                 "is unavailable.")]
+        [Min(0f)]
+        [SerializeField] private float deathGroundingOffsetY = 0.6f;
+
+        [Tooltip("Seconds over which the death grounding correction blends in, so the " +
+                 "corpse settles smoothly instead of teleporting.")]
+        [Min(0.05f)]
+        [SerializeField] private float deathGroundingBlendDuration = 0.35f;
+
+        [Tooltip("Normalized time of the death clip at which the corpse pose is measured. " +
+                 "The measurement must happen late in the fall, when the pose is close to " +
+                 "its final resting shape.")]
+        [Range(0.5f, 0.99f)]
+        [SerializeField] private float deathGroundingSampleNormalizedTime = 0.9f;
+
+        [Tooltip("Measure the corpse's lowest point from the actual animated death pose " +
+                 "and ground the production visual to it; fall back to deathGroundingOffsetY " +
+                 "only when the measurement is unavailable.")]
+        [SerializeField] private bool useMeasuredDeathGrounding = true;
+
+        private Transform _productionVisual;
+        private float _standingProductionVisualY;
+        private float _deathGroundingTargetY;
+        private bool _deathGroundingMeasured;
+        private Mesh _deathPoseBakeMesh;
+
         /// <summary>
         /// QA fix #5 - pure one-shot gate for the death presentation. Animator.Play
         /// with normalizedTime 0 MUST execute exactly once per death: any repeated
@@ -129,6 +165,38 @@ namespace OperationOutbreak.Enemies
             return Mathf.Clamp(planarSpeed / reference, safeMinimum, safeMaximum);
         }
 
+        /// <summary>
+        /// QA fix #6 - pure gate: the death-only grounding correction applies only
+        /// after the death latch. While the enemy lives, the standing
+        /// ProductionVisual offset is never touched.
+        /// </summary>
+        public static bool ShouldApplyDeathGrounding(bool deathLatched)
+        {
+            return deathLatched;
+        }
+
+        /// <summary>
+        /// QA fix #6 - pure gate: the death-pose measurement happens only once the
+        /// death clip has advanced to (or past) the sample threshold, so the measured
+        /// pose is the near-final lying pose and never the standing pose.
+        /// </summary>
+        public static bool ShouldMeasureDeathGrounding(float normalizedTime, float sampleThreshold)
+        {
+            return normalizedTime >= Mathf.Max(0.01f, sampleThreshold);
+        }
+
+        /// <summary>
+        /// QA fix #6 - pure computation: the production visual's target local Y that
+        /// places the corpse's lowest pose point on the ground plane. In enemy-root
+        /// local space the ground sits at -enemyRootGroundHeight, so a pose whose
+        /// lowest point is at poseLocalY requires the visual holder at
+        /// groundLocalY - poseLocalY.
+        /// </summary>
+        public static float ComputeDeathGroundingTargetY(float lowestPoseLocalY, float groundLocalY)
+        {
+            return groundLocalY - lowestPoseLocalY;
+        }
+
         private void Awake()
         {
             if (zombie == null)
@@ -146,6 +214,13 @@ namespace OperationOutbreak.Enemies
                 // Enforced in code as well as in the prefab: animation must never move the enemy.
                 animator.applyRootMotion = false;
             }
+
+            // QA fix #6 - the production visual's standing local Y is captured once,
+            // so the death-only grounding can blend from it and restore to it.
+            _productionVisual = transform.Find("ProductionVisual");
+            _standingProductionVisualY = _productionVisual != null
+                ? _productionVisual.localPosition.y
+                : 0f;
         }
 
         private void OnEnable()
@@ -155,6 +230,13 @@ namespace OperationOutbreak.Enemies
                 zombie.DamagedPlayer += HandleAttack;
                 zombie.Died += HandleDied;
             }
+
+            // Fresh spawn (or scene reload) state: presentation and grounding flags
+            // reset, and the production visual returns to its standing offset.
+            _deathLatched = false;
+            _deathPresentationStarted = false;
+            _deathGroundingMeasured = false;
+            RestoreStandingProductionVisualY();
         }
 
         private void OnDisable()
@@ -164,13 +246,26 @@ namespace OperationOutbreak.Enemies
                 zombie.DamagedPlayer -= HandleAttack;
                 zombie.Died -= HandleDied;
             }
+
+            // QA fix #6 - leave the visual at its standing offset when this component
+            // (or the enemy) is disabled, so the prefab state is never polluted by a
+            // death grounding correction.
+            RestoreStandingProductionVisualY();
         }
 
         private void Update()
         {
-            if (animator == null || _deathLatched)
+            if (animator == null)
             {
-                // Once dead the locomotion parameters are frozen so Death plays cleanly.
+                return;
+            }
+
+            // QA fix #6 - after the death latch, ONLY the death grounding correction
+            // runs: locomotion parameters stay frozen so Death plays cleanly, and the
+            // production visual settles smoothly onto the road.
+            if (ShouldApplyDeathGrounding(_deathLatched))
+            {
+                UpdateDeathGrounding();
                 return;
             }
 
@@ -285,12 +380,153 @@ namespace OperationOutbreak.Enemies
             return true;
         }
 
+        /// <summary>
+        /// QA fix #6 - runs once per frame after the death latch: waits until the
+        /// death clip has advanced to the sample threshold, then measures the corpse
+        /// pose's lowest point from the real skinned mesh (or falls back to the
+        /// serialized offset) and smoothly blends the production visual's local Y
+        /// toward the computed grounding target. Only the ProductionVisual child's Y
+        /// is ever written - the gameplay root, collider and standing offset for
+        /// Idle/Walk/Attack are untouched.
+        /// </summary>
+        private void UpdateDeathGrounding()
+        {
+            if (_productionVisual == null)
+            {
+                return;
+            }
+
+            if (!_deathGroundingMeasured)
+            {
+                AnimatorStateInfo deathStateInfo = animator.GetCurrentAnimatorStateInfo(DeathPlayLayer);
+
+                if (!deathStateInfo.IsName(DeathStateName) ||
+                    !ShouldMeasureDeathGrounding(deathStateInfo.normalizedTime, deathGroundingSampleNormalizedTime))
+                {
+                    // The clip has not reached the measurement point yet (or the
+                    // Animator has not entered Death) - keep the standing pose.
+                    return;
+                }
+
+                float groundLocalY = -enemyRootGroundHeight;
+
+                if (useMeasuredDeathGrounding && TryMeasureDeathPoseLowestLocalY(out float lowestPoseLocalY))
+                {
+                    _deathGroundingTargetY = ComputeDeathGroundingTargetY(lowestPoseLocalY, groundLocalY);
+                }
+                else
+                {
+                    // Documented fallback: lower the visual by the serialized offset.
+                    _deathGroundingTargetY = _standingProductionVisualY - Mathf.Max(0f, deathGroundingOffsetY);
+                }
+
+                _deathGroundingMeasured = true;
+            }
+
+            // Smooth settle: move toward the target over the configured duration so
+            // the corpse eases onto the road instead of teleporting.
+            float currentY = _productionVisual.localPosition.y;
+            float totalDistance = Mathf.Max(0.0001f, Mathf.Abs(_deathGroundingTargetY - _standingProductionVisualY));
+            float step = totalDistance / Mathf.Max(0.05f, deathGroundingBlendDuration) * Time.deltaTime;
+            float newY = Mathf.MoveTowards(currentY, _deathGroundingTargetY, step);
+
+            Vector3 position = _productionVisual.localPosition;
+            position.y = newY;
+            _productionVisual.localPosition = position;
+        }
+
+        /// <summary>
+        /// QA fix #6 - bakes the production skinned mesh once per death and returns
+        /// the lowest vertex Y in the zombie instance root's local space. Because the
+        /// measurement is gated to the late death pose, this is the corpse's resting
+        /// lowest point, not the standing feet.
+        /// </summary>
+        private bool TryMeasureDeathPoseLowestLocalY(out float lowestLocalY)
+        {
+            lowestLocalY = 0f;
+
+            if (_productionVisual == null)
+            {
+                return false;
+            }
+
+            SkinnedMeshRenderer renderer = null;
+            foreach (SkinnedMeshRenderer candidate in
+                     _productionVisual.GetComponentsInChildren<SkinnedMeshRenderer>(true))
+            {
+                if (candidate.sharedMesh != null && candidate.sharedMesh.vertexCount > 0)
+                {
+                    renderer = candidate;
+                    break;
+                }
+            }
+
+            if (renderer == null)
+            {
+                return false;
+            }
+
+            if (_deathPoseBakeMesh == null)
+            {
+                _deathPoseBakeMesh = new Mesh();
+            }
+
+            renderer.BakeMesh(_deathPoseBakeMesh);
+            Vector3[] vertices = _deathPoseBakeMesh.vertices;
+
+            if (vertices == null || vertices.Length == 0)
+            {
+                return false;
+            }
+
+            // The instance root is the direct child of ProductionVisual; its local
+            // space is the reference the standing grounding offset was authored in.
+            Transform instanceRoot = _productionVisual.childCount > 0
+                ? _productionVisual.GetChild(0)
+                : _productionVisual;
+
+            float minimum = float.MaxValue;
+
+            foreach (Vector3 vertex in vertices)
+            {
+                float localY = instanceRoot.InverseTransformPoint(renderer.transform.TransformPoint(vertex)).y;
+
+                if (localY < minimum)
+                {
+                    minimum = localY;
+                }
+            }
+
+            lowestLocalY = minimum;
+            return true;
+        }
+
+        /// <summary>
+        /// QA fix #6 - returns the production visual to the standing local Y captured
+        /// in Awake (x/z preserved). Idempotent and safe at any time.
+        /// </summary>
+        private void RestoreStandingProductionVisualY()
+        {
+            if (_productionVisual == null)
+            {
+                return;
+            }
+
+            Vector3 position = _productionVisual.localPosition;
+            position.y = _standingProductionVisualY;
+            _productionVisual.localPosition = position;
+        }
+
 #if UNITY_EDITOR
         private void OnValidate()
         {
             walkReferenceSpeed = Mathf.Max(0.1f, walkReferenceSpeed);
             minimumLocomotionMultiplier = Mathf.Max(0.1f, minimumLocomotionMultiplier);
             maximumLocomotionMultiplier = Mathf.Max(minimumLocomotionMultiplier, maximumLocomotionMultiplier);
+            enemyRootGroundHeight = Mathf.Max(0.1f, enemyRootGroundHeight);
+            deathGroundingOffsetY = Mathf.Max(0f, deathGroundingOffsetY);
+            deathGroundingBlendDuration = Mathf.Max(0.05f, deathGroundingBlendDuration);
+            deathGroundingSampleNormalizedTime = Mathf.Clamp(deathGroundingSampleNormalizedTime, 0.5f, 0.99f);
         }
 #endif
     }

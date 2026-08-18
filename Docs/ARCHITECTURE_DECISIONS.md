@@ -409,6 +409,15 @@
   editor isolation diagnostic (`EnemyDeathDiagnostics`) forces death without any
   gameplay involvement. The setup tool validates the Death state + clip resolve
   before finishing and warns otherwise.
+- **Death grounding (QA fix #6):** the standing ProductionVisual offset is
+  authored for the standing pose only. When the corpse lies down, the bridge waits
+  for the death clip to reach a late sample threshold (0.9 normalized), measures
+  the actual lying pose's lowest point from the baked skinned mesh, and smoothly
+  blends the ProductionVisual's local Y to `groundLocalY - lowestPoseLocalY`
+  (root-local ground = -enemyRootGroundHeight). Standing Y is captured at Awake and
+  restored on disable/reset; a serialized fallback offset applies only when
+  measurement is unavailable. Gameplay root, collider and root motion stay
+  untouched.
 - **One-shot rule (QA fix #5):** the death presentation must be idempotent.
   `Animator.Play` with normalizedTime 0 runs exactly once per death, gated by
   `ShouldStartDeathPresentation(deathLatched, presentationStarted)`; repeated
