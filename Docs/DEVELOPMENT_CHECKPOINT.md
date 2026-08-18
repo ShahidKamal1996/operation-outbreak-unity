@@ -285,6 +285,19 @@ Production enemy VISUAL foundation only — zero enemy gameplay changes:
       them once at death (`DisableGameplayColliders`, right after the one-shot
       gate), and restores the snapshot on OnEnable (`ApplyColliderEnabledStates`) so
       reused enemies collide again. The visual death animation is never affected.
+14. **QA fix #8 (2026-08-18) — downward-only death settle:** QA saw the zombie move
+    UPWARD before settling: the first grounding sample (normalized ~0.9) can still
+    catch the body mid-fall, producing a target ABOVE the current visual Y; the
+    settle then lifted the visual before the clip-end refinement brought it back
+    down. Fix — MONOTONIC DOWNWARD-ONLY rule: the death-grounding target starts at
+    the standing ceiling and may only ever move downward.
+    `ClampDeathGroundingTargetDownwardOnly(previousTarget, computedTarget,
+    standingCeiling)` = min(previous, min(computed, ceiling)) is applied to every
+    measurement AND refinement pass; the blend loop re-asserts
+    `target = min(target, currentVisualY)` each frame. An upward "correction" (the
+    corpse already below the ground) is discarded — a small sink is preferred to an
+    upward pop. The settle still reaches the ground for genuine downward
+    corrections, and no grounding movement occurs until a downward target exists.
 9. **QA fix #2 (2026-08-17) — floating, vibration and death still unresolved:**
    - **Grounding:** QA fix #1B's renderer-bounds measurement read the vendor prefab's
      EDITOR/REFERENCE pose (the vendor ships a crouched cartoon pose), not the animated
@@ -346,8 +359,9 @@ Production enemy VISUAL foundation only — zero enemy gameplay changes:
      zombie animates there, the problem is sequencing, not clip/avatar setup.
 12. Dead enemy cannot move or attack.
 12b. **Corpse settles onto the road** near the end of the death animation — no
-     hovering, no sinking (QA fixes #6/#7; the console prints one death-grounding
-     log per pass with lowestCorpseWorldY / groundWorldY / deltaY / targetVisualY).
+     hovering, no sinking, and NEVER an upward pop (QA fixes #6/#7/#8: world-space
+     measurement, downward-only monotonic clamp; the console prints one
+     death-grounding log per pass with computedTargetY vs clampedTargetY).
 12c. **Dead collider disabled:** the CapsuleCollider turns off at death and the
      next spawned enemy has it enabled again (QA fix #7).
 13. Mission kill/wave accounting remains correct (3 sections, 12 enemies,
@@ -357,7 +371,10 @@ Production enemy VISUAL foundation only — zero enemy gameplay changes:
 16. LOD/prefab rendering produces no obvious errors (both LODs textured).
 17. Player Toon Soldier remains unaffected (shooting, aim, muzzle, animations).
 18. Console remains clean.
-19. Full EditMode suite passes — expect **172/172** (168 previous − 1 replaced
+19. Full EditMode suite passes — expect **176/176** (172 previous + 4 new
+    QA-fix-#8 tests: downward-only target clamp, refinement monotonicity, no
+    movement until a downward target exists, and downward settle still reaches the
+    ground; the controller tests require step 0 to have been run once).
     local-space test + 5 new QA-fix-#7 tests: world-delta target formula, corpse-
     lands-on-lane invariant matrix, refinement gate, collider capture/apply round-
     trip, and mismatched-size guard; the controller tests require step 0 to have

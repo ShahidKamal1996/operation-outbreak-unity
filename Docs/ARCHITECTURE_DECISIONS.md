@@ -426,6 +426,12 @@
   bridge captures the ROOT-level gameplay colliders' authored enabled states in
   Awake, disables them once at death, and restores the snapshot on OnEnable for
   reuse. The visual death animation is unaffected.
+- **Monotonic downward-only settle (QA fix #8):** the death-grounding target starts
+  at the standing ceiling and may only ever move downward:
+  `min(previousTarget, min(computedTarget, standingCeiling))` applied to every
+  measurement/refinement pass, re-asserted against the current visual Y each frame.
+  Upward corrections (corpse already below ground) are discarded — a small sink is
+  preferred to an upward pop. Genuine downward corrections still reach the lane.
 - **One-shot rule (QA fix #5):** the death presentation must be idempotent.
   `Animator.Play` with normalizedTime 0 runs exactly once per death, gated by
   `ShouldStartDeathPresentation(deathLatched, presentationStarted)`; repeated

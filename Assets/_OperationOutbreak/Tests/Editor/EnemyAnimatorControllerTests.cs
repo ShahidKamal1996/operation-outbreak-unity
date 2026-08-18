@@ -565,6 +565,100 @@ namespace OperationOutbreak.Tests
             }
         }
 
+        // ============================================ QA fix #8 (downward-only settle)
+
+        [Test]
+        public void DeathGroundingTargetNeverRaisesTheVisual()
+        {
+            // The monotonic rule: the clamped target may never exceed the standing
+            // ceiling nor a previous pass's target. A mid-fall measurement that would
+            // LIFT the visual is discarded - only downward targets are accepted.
+            const float StandingCeiling = -1.005f;
+
+            // Computed target ABOVE the standing ceiling (mid-fall corpse) -> clamped
+            // to the ceiling (no upward movement from standing).
+            Assert.AreEqual(
+                StandingCeiling,
+                EnemyAnimationBridge.ClampDeathGroundingTargetDownwardOnly(
+                    StandingCeiling, -0.6f, StandingCeiling),
+                0.0001f,
+                "A mid-fall sample that would lift the visual must be discarded.");
+
+            // Computed target BELOW the ceiling (corpse near the ground) -> accepted.
+            Assert.AreEqual(
+                -1.355f,
+                EnemyAnimationBridge.ClampDeathGroundingTargetDownwardOnly(
+                    StandingCeiling, -1.355f, StandingCeiling),
+                0.0001f,
+                "A downward settle target must be accepted.");
+
+            // Computed target below the ceiling but ABOVE an earlier target -> the
+            // earlier (lower) target wins: refinement can never raise the visual.
+            Assert.AreEqual(
+                -1.355f,
+                EnemyAnimationBridge.ClampDeathGroundingTargetDownwardOnly(
+                    -1.355f, -1.2f, StandingCeiling),
+                0.0001f,
+                "A later pass must never raise the target above an earlier one.");
+        }
+
+        [Test]
+        public void DeathGroundingRefinementCannotIncreaseLocalY()
+        {
+            // Two-pass simulation: pass 1 settles to t1; the clip-end refinement
+            // computes t2 (which may be higher because the fall moved). The clamped
+            // sequence must be monotonic non-increasing.
+            const float StandingCeiling = -1.005f;
+
+            float targetAfterPass1 = EnemyAnimationBridge.ClampDeathGroundingTargetDownwardOnly(
+                StandingCeiling, -1.355f, StandingCeiling);
+
+            float targetAfterRefinement = EnemyAnimationBridge.ClampDeathGroundingTargetDownwardOnly(
+                targetAfterPass1, -1.2f, StandingCeiling);
+
+            Assert.GreaterOrEqual(targetAfterPass1, targetAfterRefinement,
+                "The refinement must never raise the target above the first pass.");
+            Assert.AreEqual(-1.355f, targetAfterRefinement, 0.0001f,
+                "The refinement must keep the lower first-pass target.");
+        }
+
+        [Test]
+        public void StandingYIsUnchangedUntilADownwardTargetIsMeasured()
+        {
+            // Before any downward target exists, the grounded target must equal the
+            // standing ceiling - meaning the settle loop has zero distance to travel
+            // and the standing visual Y is untouched.
+            const float StandingCeiling = -1.005f;
+
+            float target = EnemyAnimationBridge.ClampDeathGroundingTargetDownwardOnly(
+                StandingCeiling, -0.4f, StandingCeiling);
+
+            Assert.AreEqual(StandingCeiling, target, 0.0001f,
+                "With only upward measurements available, the target must stay at the " +
+                "standing ceiling so no grounding movement happens at all.");
+        }
+
+        [Test]
+        public void DownwardSettleStillReachesTheGround()
+        {
+            // The clamp must not prevent a genuine downward correction from reaching
+            // the lane: a corpse floating above the road produces a lower target and
+            // that target passes through unchanged.
+            const float StandingCeiling = -1.005f;
+            float currentVisualY = StandingCeiling;
+            float computed = EnemyAnimationBridge.ComputeDeathGroundedTargetLocalY(
+                currentVisualY, 0.35f, 0f); // corpse 0.35 above the lane
+
+            float clamped = EnemyAnimationBridge.ClampDeathGroundingTargetDownwardOnly(
+                StandingCeiling, computed, StandingCeiling);
+
+            Assert.AreEqual(computed, clamped, 0.0001f,
+                "The downward correction must pass through the clamp unchanged, so the " +
+                "corpse still settles onto the road.");
+            Assert.AreEqual(-1.355f, clamped, 0.0001f,
+                "The settle must reach the ground (standing -1.005 - 0.35 = -1.355).");
+        }
+
         [Test]
         public void ProductionZombieMaterialsUseTheUrpLitShader()
         {

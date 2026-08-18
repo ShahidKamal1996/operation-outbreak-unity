@@ -218,7 +218,22 @@ namespace OperationOutbreak.Enemies
         }
 
         /// <summary>
-        /// QA fix #7 - pure gate: a final REFINEMENT measurement runs only once the
+        /// QA fix #8 - pure monotonic rule: the death-grounding target may only ever
+        /// move DOWNWARD (or stay put). It can never exceed the standing ceiling, and
+        /// a later pass (the clip-end refinement) can never raise the target above an
+        /// earlier one. If a measurement says the corpse is already below the ground,
+        /// the upward "correction" is DISCARDED - a small sink is preferable to an
+        /// obvious upward pop. Returns the clamped target.
+        /// </summary>
+        public static float ClampDeathGroundingTargetDownwardOnly(
+            float previousTargetY, float computedTargetY, float standingCeilingY)
+        {
+            float clampedToCeiling = Mathf.Min(computedTargetY, standingCeilingY);
+            return Mathf.Min(previousTargetY, clampedToCeiling);
+        }
+
+        /// <summary>
+        /// QA fix #8 - pure gate: a final REFINEMENT measurement runs only once the
         /// death clip has essentially completed, so the target is recomputed from the
         /// true resting pose (the fall still moves slightly between the first sample
         /// and the end, which is what left the corpse floating).
@@ -253,6 +268,11 @@ namespace OperationOutbreak.Enemies
                 ? _productionVisual.localPosition.y
                 : 0f;
 
+            // QA fix #8 - the death-grounding target starts AT the standing ceiling:
+            // until a measurement produces a LOWER target, no grounding movement can
+            // occur at all (this is what removes the upward pop before settling).
+            _deathGroundingTargetY = _standingProductionVisualY;
+
             // QA fix #7 - capture the ROOT-level gameplay colliders (the prototype
             // CapsuleCollider lives on the enemy root) and their authored enabled
             // states so the death lifecycle can disable them and reuse can restore
@@ -278,6 +298,7 @@ namespace OperationOutbreak.Enemies
             _deathPresentationStarted = false;
             _deathGroundingMeasured = false;
             _deathGroundingRefined = false;
+            _deathGroundingTargetY = _standingProductionVisualY;
             RestoreStandingProductionVisualY();
             RestoreGameplayColliders();
         }
@@ -552,6 +573,12 @@ namespace OperationOutbreak.Enemies
             // Smooth settle: move toward the target over the configured duration so
             // the corpse eases onto the road instead of teleporting.
             float currentY = _productionVisual.localPosition.y;
+
+            // QA fix #8 - defensive re-assertion of the monotonic rule: whatever else
+            // happened, the target may never sit ABOVE the visual's current Y, so the
+            // settle below can only move the visual downward or keep it still.
+            _deathGroundingTargetY = Mathf.Min(_deathGroundingTargetY, currentY);
+
             float totalDistance = Mathf.Max(0.0001f, Mathf.Abs(_deathGroundingTargetY - currentY));
             float step = totalDistance / Mathf.Max(0.05f, deathGroundingBlendDuration) * Time.deltaTime;
             float newY = Mathf.MoveTowards(currentY, _deathGroundingTargetY, step);
@@ -575,24 +602,35 @@ namespace OperationOutbreak.Enemies
 
             if (useMeasuredDeathGrounding && TryMeasureDeathPoseLowestWorldY(out float lowestCorpseWorldY))
             {
-                _deathGroundingTargetY = ComputeDeathGroundedTargetLocalY(
+                float computedTarget = ComputeDeathGroundedTargetLocalY(
                     currentVisualLocalY, lowestCorpseWorldY, groundWorldY);
 
+                // QA fix #8 - MONOTONIC DOWNWARD-ONLY rule: the target may never rise
+                // above the standing ceiling nor above a previous pass's target. A
+                // mid-fall sample that would lift the visual is discarded, and the
+                // clip-end refinement can only move the target further down.
+                _deathGroundingTargetY = ClampDeathGroundingTargetDownwardOnly(
+                    _deathGroundingTargetY, computedTarget, _standingProductionVisualY);
+
                 Debug.Log(
-                    "[1Q QA fix #7] Death grounding " + (isRefinement ? "refinement" : "measurement") + ": " +
+                    "[1Q QA fix #7/#8] Death grounding " + (isRefinement ? "refinement" : "measurement") + ": " +
                     $"standingVisualY={_standingProductionVisualY:0.000}, currentVisualY={currentVisualLocalY:0.000}, " +
                     $"lowestCorpseWorldY={lowestCorpseWorldY:0.000}, groundWorldY={groundWorldY:0.000}, " +
-                    $"deltaY={groundWorldY - lowestCorpseWorldY:0.000}, targetVisualY={_deathGroundingTargetY:0.000}.", this);
+                    $"computedTargetY={computedTarget:0.000}, clampedTargetY={_deathGroundingTargetY:0.000} " +
+                    $"(downward-only, never above {_standingProductionVisualY:0.000}).", this);
             }
             else
             {
-                // Documented fallback: lower the visual by the serialized offset.
-                _deathGroundingTargetY = _standingProductionVisualY - Mathf.Max(0f, deathGroundingOffsetY);
+                // Documented fallback: lower the visual by the serialized offset,
+                // clamped by the same monotonic downward-only rule.
+                float computedTarget = _standingProductionVisualY - Mathf.Max(0f, deathGroundingOffsetY);
+                _deathGroundingTargetY = ClampDeathGroundingTargetDownwardOnly(
+                    _deathGroundingTargetY, computedTarget, _standingProductionVisualY);
 
                 Debug.LogWarning(
-                    "[1Q QA fix #7] Death grounding fallback (measurement unavailable): " +
-                    $"targetVisualY={_deathGroundingTargetY:0.000} (standing {_standingProductionVisualY:0.000} - " +
-                    $"{Mathf.Max(0f, deathGroundingOffsetY):0.000}).", this);
+                    "[1Q QA fix #7/#8] Death grounding fallback (measurement unavailable): " +
+                    $"clampedTargetY={_deathGroundingTargetY:0.000} (standing {_standingProductionVisualY:0.000} - " +
+                    $"{Mathf.Max(0f, deathGroundingOffsetY):0.000}, downward-only).", this);
             }
         }
 
