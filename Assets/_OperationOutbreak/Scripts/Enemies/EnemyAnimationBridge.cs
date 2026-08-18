@@ -121,6 +121,12 @@ namespace OperationOutbreak.Enemies
         [Range(0.5f, 0.99f)]
         [SerializeField] private float deathGroundingSampleNormalizedTime = 0.9f;
 
+        [Tooltip("Normalized time at which a FINAL refinement measurement recomputes the " +
+                 "grounding target from the true resting pose (QA fix #7: the fall still " +
+                 "moves slightly after the first sample).")]
+        [Range(0.9f, 1f)]
+        [SerializeField] private float deathGroundingRefineNormalizedTime = 0.99f;
+
         [Tooltip("Measure the corpse's lowest point from the actual animated death pose " +
                  "and ground the production visual to it; fall back to deathGroundingOffsetY " +
                  "only when the measurement is unavailable.")]
@@ -130,7 +136,15 @@ namespace OperationOutbreak.Enemies
         private float _standingProductionVisualY;
         private float _deathGroundingTargetY;
         private bool _deathGroundingMeasured;
+        private bool _deathGroundingRefined;
         private Mesh _deathPoseBakeMesh;
+
+        // QA fix #7 - gameplay collider lifecycle: the prototype prefab's CapsuleCollider
+        // lives on the enemy ROOT. Its original enabled state is captured once and
+        // restored on reuse, so a dead corpse stops colliding but the next enemy works.
+        private Collider[] _gameplayColliders;
+        private bool[] _gameplayColliderEnabledStates;
+        private bool _gameplayCollidersCaptured;
 
         /// <summary>
         /// QA fix #5 - pure one-shot gate for the death presentation. Animator.Play
@@ -186,15 +200,32 @@ namespace OperationOutbreak.Enemies
         }
 
         /// <summary>
-        /// QA fix #6 - pure computation: the production visual's target local Y that
-        /// places the corpse's lowest pose point on the ground plane. In enemy-root
-        /// local space the ground sits at -enemyRootGroundHeight, so a pose whose
-        /// lowest point is at poseLocalY requires the visual holder at
-        /// groundLocalY - poseLocalY.
+        /// QA fix #7 - pure computation, WORLD-SPACE DELTA form. Given the corpse's
+        /// lowest visible vertex WORLD Y (measured while the visual is still at its
+        /// current offset) and the lane surface WORLD Y, returns the ProductionVisual
+        /// local Y that places that vertex exactly on the surface:
+        ///   targetLocalY = currentVisualLocalY + (groundWorldY - lowestCorpseWorldY)
+        /// This is valid because the visual's parent chain (the enemy gameplay root)
+        /// is identity-rotated and identity-scaled: a world-space Y delta equals a
+        /// local-Y delta. Measuring everything in ONE space (world) removes the
+        /// instance-root/renderer/local-frame ambiguity that made the QA fix #6
+        /// correction miss the road.
         /// </summary>
-        public static float ComputeDeathGroundingTargetY(float lowestPoseLocalY, float groundLocalY)
+        public static float ComputeDeathGroundedTargetLocalY(
+            float currentVisualLocalY, float lowestCorpseWorldY, float groundWorldY)
         {
-            return groundLocalY - lowestPoseLocalY;
+            return currentVisualLocalY + (groundWorldY - lowestCorpseWorldY);
+        }
+
+        /// <summary>
+        /// QA fix #7 - pure gate: a final REFINEMENT measurement runs only once the
+        /// death clip has essentially completed, so the target is recomputed from the
+        /// true resting pose (the fall still moves slightly between the first sample
+        /// and the end, which is what left the corpse floating).
+        /// </summary>
+        public static bool ShouldRefineDeathGrounding(float normalizedTime, float refineThreshold)
+        {
+            return normalizedTime >= Mathf.Max(0.01f, refineThreshold);
         }
 
         private void Awake()
@@ -221,6 +252,14 @@ namespace OperationOutbreak.Enemies
             _standingProductionVisualY = _productionVisual != null
                 ? _productionVisual.localPosition.y
                 : 0f;
+
+            // QA fix #7 - capture the ROOT-level gameplay colliders (the prototype
+            // CapsuleCollider lives on the enemy root) and their authored enabled
+            // states so the death lifecycle can disable them and reuse can restore
+            // them. Children of the visual subtree are deliberately ignored.
+            _gameplayColliders = GetComponents<Collider>();
+            _gameplayColliderEnabledStates = CaptureColliderEnabledStates(_gameplayColliders);
+            _gameplayCollidersCaptured = _gameplayColliders != null && _gameplayColliders.Length > 0;
         }
 
         private void OnEnable()
@@ -232,11 +271,15 @@ namespace OperationOutbreak.Enemies
             }
 
             // Fresh spawn (or scene reload) state: presentation and grounding flags
-            // reset, and the production visual returns to its standing offset.
+            // reset, the production visual returns to its standing offset, and any
+            // colliders a previous death disabled are restored to their authored
+            // enabled states (QA fix #7 - reused enemies must collide again).
             _deathLatched = false;
             _deathPresentationStarted = false;
             _deathGroundingMeasured = false;
+            _deathGroundingRefined = false;
             RestoreStandingProductionVisualY();
+            RestoreGameplayColliders();
         }
 
         private void OnDisable()
@@ -326,7 +369,85 @@ namespace OperationOutbreak.Enemies
             }
 
             _deathPresentationStarted = true;
+
+            // QA fix #7 - the dead corpse is presentation-only: disable the gameplay
+            // colliders immediately after death is registered (never interrupting the
+            // visual death animation, which is purely Animator-driven). Their
+            // authored states are restored on reuse by OnEnable.
+            DisableGameplayColliders();
+
             ForceDeathPresentation(animator);
+        }
+
+        /// <summary>
+        /// QA fix #7 - pure capture: snapshots every collider's enabled state. Static
+        /// and side-effect free for EditMode tests.
+        /// </summary>
+        public static bool[] CaptureColliderEnabledStates(Collider[] colliders)
+        {
+            if (colliders == null)
+            {
+                return null;
+            }
+
+            bool[] states = new bool[colliders.Length];
+
+            for (int i = 0; i < colliders.Length; i++)
+            {
+                states[i] = colliders[i] != null && colliders[i].enabled;
+            }
+
+            return states;
+        }
+
+        /// <summary>
+        /// QA fix #7 - pure application: writes an enabled-state snapshot back onto the
+        /// colliders. Guards length mismatches and null entries. Static and
+        /// side-effect free for EditMode tests.
+        /// </summary>
+        public static void ApplyColliderEnabledStates(Collider[] colliders, bool[] states)
+        {
+            if (colliders == null || states == null || colliders.Length != states.Length)
+            {
+                return;
+            }
+
+            for (int i = 0; i < colliders.Length; i++)
+            {
+                if (colliders[i] != null)
+                {
+                    colliders[i].enabled = states[i];
+                }
+            }
+        }
+
+        /// <summary>
+        /// QA fix #7 - disables all captured gameplay colliders (idempotent). Called
+        /// exactly once per death, right after the one-shot death gate.
+        /// </summary>
+        private void DisableGameplayColliders()
+        {
+            if (!_gameplayCollidersCaptured || _gameplayColliders == null)
+            {
+                return;
+            }
+
+            bool[] disabled = new bool[_gameplayColliders.Length]; // all false
+            ApplyColliderEnabledStates(_gameplayColliders, disabled);
+        }
+
+        /// <summary>
+        /// QA fix #7 - restores the authored collider enabled states captured in Awake.
+        /// Called on OnEnable so reused enemies collide correctly.
+        /// </summary>
+        private void RestoreGameplayColliders()
+        {
+            if (!_gameplayCollidersCaptured)
+            {
+                return;
+            }
+
+            ApplyColliderEnabledStates(_gameplayColliders, _gameplayColliderEnabledStates);
         }
 
         /// <summary>
@@ -381,12 +502,14 @@ namespace OperationOutbreak.Enemies
         }
 
         /// <summary>
-        /// QA fix #6 - runs once per frame after the death latch: waits until the
+        /// QA fix #6/#7 - runs once per frame after the death latch: waits until the
         /// death clip has advanced to the sample threshold, then measures the corpse
-        /// pose's lowest point from the real skinned mesh (or falls back to the
-        /// serialized offset) and smoothly blends the production visual's local Y
-        /// toward the computed grounding target. Only the ProductionVisual child's Y
-        /// is ever written - the gameplay root, collider and standing offset for
+        /// pose's lowest point in WORLD space and smoothly blends the production
+        /// visual's local Y toward the world-delta grounding target. A final
+        /// refinement pass at clip completion recomputes the target from the true
+        /// resting pose (the fall still moves slightly after the first sample, which
+        /// is what left the corpse floating). Only the ProductionVisual child's Y is
+        /// ever written - the gameplay root, collider and standing offset for
         /// Idle/Walk/Attack are untouched.
         /// </summary>
         private void UpdateDeathGrounding()
@@ -396,37 +519,40 @@ namespace OperationOutbreak.Enemies
                 return;
             }
 
-            if (!_deathGroundingMeasured)
+            AnimatorStateInfo deathStateInfo = animator.GetCurrentAnimatorStateInfo(DeathPlayLayer);
+
+            if (!deathStateInfo.IsName(DeathStateName))
             {
-                AnimatorStateInfo deathStateInfo = animator.GetCurrentAnimatorStateInfo(DeathPlayLayer);
+                return;
+            }
 
-                if (!deathStateInfo.IsName(DeathStateName) ||
-                    !ShouldMeasureDeathGrounding(deathStateInfo.normalizedTime, deathGroundingSampleNormalizedTime))
+            bool wantMeasure =
+                !_deathGroundingMeasured &&
+                ShouldMeasureDeathGrounding(deathStateInfo.normalizedTime, deathGroundingSampleNormalizedTime);
+
+            bool wantRefine =
+                _deathGroundingMeasured &&
+                !_deathGroundingRefined &&
+                ShouldRefineDeathGrounding(deathStateInfo.normalizedTime, deathGroundingRefineNormalizedTime);
+
+            if (wantMeasure || wantRefine)
+            {
+                RecomputeDeathGroundingTarget(wantRefine);
+
+                if (wantMeasure)
                 {
-                    // The clip has not reached the measurement point yet (or the
-                    // Animator has not entered Death) - keep the standing pose.
-                    return;
-                }
-
-                float groundLocalY = -enemyRootGroundHeight;
-
-                if (useMeasuredDeathGrounding && TryMeasureDeathPoseLowestLocalY(out float lowestPoseLocalY))
-                {
-                    _deathGroundingTargetY = ComputeDeathGroundingTargetY(lowestPoseLocalY, groundLocalY);
+                    _deathGroundingMeasured = true;
                 }
                 else
                 {
-                    // Documented fallback: lower the visual by the serialized offset.
-                    _deathGroundingTargetY = _standingProductionVisualY - Mathf.Max(0f, deathGroundingOffsetY);
+                    _deathGroundingRefined = true;
                 }
-
-                _deathGroundingMeasured = true;
             }
 
             // Smooth settle: move toward the target over the configured duration so
             // the corpse eases onto the road instead of teleporting.
             float currentY = _productionVisual.localPosition.y;
-            float totalDistance = Mathf.Max(0.0001f, Mathf.Abs(_deathGroundingTargetY - _standingProductionVisualY));
+            float totalDistance = Mathf.Max(0.0001f, Mathf.Abs(_deathGroundingTargetY - currentY));
             float step = totalDistance / Mathf.Max(0.05f, deathGroundingBlendDuration) * Time.deltaTime;
             float newY = Mathf.MoveTowards(currentY, _deathGroundingTargetY, step);
 
@@ -436,14 +562,52 @@ namespace OperationOutbreak.Enemies
         }
 
         /// <summary>
-        /// QA fix #6 - bakes the production skinned mesh once per death and returns
-        /// the lowest vertex Y in the zombie instance root's local space. Because the
-        /// measurement is gated to the late death pose, this is the corpse's resting
-        /// lowest point, not the standing feet.
+        /// QA fix #7 - recomputes the grounding target from a WORLD-SPACE measurement
+        /// and logs the full calculation once per pass, so manual QA can verify the
+        /// maths from the console.
         /// </summary>
-        private bool TryMeasureDeathPoseLowestLocalY(out float lowestLocalY)
+        private void RecomputeDeathGroundingTarget(bool isRefinement)
         {
-            lowestLocalY = 0f;
+            // The lane surface's world Y, derived from the gameplay root height (the
+            // root rides at y=1; the lane is at y=0).
+            float groundWorldY = transform.position.y - enemyRootGroundHeight;
+            float currentVisualLocalY = _productionVisual.localPosition.y;
+
+            if (useMeasuredDeathGrounding && TryMeasureDeathPoseLowestWorldY(out float lowestCorpseWorldY))
+            {
+                _deathGroundingTargetY = ComputeDeathGroundedTargetLocalY(
+                    currentVisualLocalY, lowestCorpseWorldY, groundWorldY);
+
+                Debug.Log(
+                    "[1Q QA fix #7] Death grounding " + (isRefinement ? "refinement" : "measurement") + ": " +
+                    $"standingVisualY={_standingProductionVisualY:0.000}, currentVisualY={currentVisualLocalY:0.000}, " +
+                    $"lowestCorpseWorldY={lowestCorpseWorldY:0.000}, groundWorldY={groundWorldY:0.000}, " +
+                    $"deltaY={groundWorldY - lowestCorpseWorldY:0.000}, targetVisualY={_deathGroundingTargetY:0.000}.", this);
+            }
+            else
+            {
+                // Documented fallback: lower the visual by the serialized offset.
+                _deathGroundingTargetY = _standingProductionVisualY - Mathf.Max(0f, deathGroundingOffsetY);
+
+                Debug.LogWarning(
+                    "[1Q QA fix #7] Death grounding fallback (measurement unavailable): " +
+                    $"targetVisualY={_deathGroundingTargetY:0.000} (standing {_standingProductionVisualY:0.000} - " +
+                    $"{Mathf.Max(0f, deathGroundingOffsetY):0.000}).", this);
+            }
+        }
+
+        /// <summary>
+        /// QA fix #7 - bakes the production skinned mesh once per death and returns
+        /// the lowest vertex WORLD Y. Measuring in world space removes every
+        /// instance-root/renderer/local-frame ambiguity from QA fix #6: the baked
+        /// vertices are transformed through the renderer transform into world space,
+        /// and the correction is computed as a pure world-space delta applied to the
+        /// visual's local Y (valid because the parent chain is identity-rotated and
+        /// identity-scaled).
+        /// </summary>
+        private bool TryMeasureDeathPoseLowestWorldY(out float lowestWorldY)
+        {
+            lowestWorldY = 0f;
 
             if (_productionVisual == null)
             {
@@ -479,25 +643,19 @@ namespace OperationOutbreak.Enemies
                 return false;
             }
 
-            // The instance root is the direct child of ProductionVisual; its local
-            // space is the reference the standing grounding offset was authored in.
-            Transform instanceRoot = _productionVisual.childCount > 0
-                ? _productionVisual.GetChild(0)
-                : _productionVisual;
-
             float minimum = float.MaxValue;
 
             foreach (Vector3 vertex in vertices)
             {
-                float localY = instanceRoot.InverseTransformPoint(renderer.transform.TransformPoint(vertex)).y;
+                float worldY = renderer.transform.TransformPoint(vertex).y;
 
-                if (localY < minimum)
+                if (worldY < minimum)
                 {
-                    minimum = localY;
+                    minimum = worldY;
                 }
             }
 
-            lowestLocalY = minimum;
+            lowestWorldY = minimum;
             return true;
         }
 
@@ -527,6 +685,7 @@ namespace OperationOutbreak.Enemies
             deathGroundingOffsetY = Mathf.Max(0f, deathGroundingOffsetY);
             deathGroundingBlendDuration = Mathf.Max(0.05f, deathGroundingBlendDuration);
             deathGroundingSampleNormalizedTime = Mathf.Clamp(deathGroundingSampleNormalizedTime, 0.5f, 0.99f);
+            deathGroundingRefineNormalizedTime = Mathf.Clamp(deathGroundingRefineNormalizedTime, 0.9f, 1f);
         }
 #endif
     }

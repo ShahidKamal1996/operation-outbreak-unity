@@ -409,15 +409,23 @@
   editor isolation diagnostic (`EnemyDeathDiagnostics`) forces death without any
   gameplay involvement. The setup tool validates the Death state + clip resolve
   before finishing and warns otherwise.
-- **Death grounding (QA fix #6):** the standing ProductionVisual offset is
-  authored for the standing pose only. When the corpse lies down, the bridge waits
-  for the death clip to reach a late sample threshold (0.9 normalized), measures
-  the actual lying pose's lowest point from the baked skinned mesh, and smoothly
-  blends the ProductionVisual's local Y to `groundLocalY - lowestPoseLocalY`
-  (root-local ground = -enemyRootGroundHeight). Standing Y is captured at Awake and
-  restored on disable/reset; a serialized fallback offset applies only when
-  measurement is unavailable. Gameplay root, collider and root motion stay
-  untouched.
+- **Death grounding (QA fix #6, corrected in #7):** the standing ProductionVisual
+  offset is authored for the standing pose only. When the corpse lies down, the
+  bridge waits for the death clip to reach a late sample threshold (0.9 normalized),
+  measures the actual lying pose's lowest point, and smoothly blends the
+  ProductionVisual's local Y toward the grounded target. QA fix #7 correction:
+  ALL measurements are now WORLD-SPACE — lowest corpse vertex measured as a world
+  Y, lane derived as `rootWorldY - enemyRootGroundHeight`, target =
+  `currentVisualLocalY + (groundWorldY - lowestCorpseWorldY)` (a world delta
+  applied to local Y; valid because the parent chain is identity-rotated/scaled).
+  A refinement pass at normalized 0.99 re-targets from the true resting pose, and
+  one diagnostic log per pass prints the full calculation. Standing Y is captured
+  at Awake and restored on disable/reset; a serialized fallback offset applies only
+  when measurement is unavailable. Gameplay root and root motion stay untouched.
+- **Collider lifecycle (QA fix #7):** the dead corpse is presentation-only. The
+  bridge captures the ROOT-level gameplay colliders' authored enabled states in
+  Awake, disables them once at death, and restores the snapshot on OnEnable for
+  reuse. The visual death animation is unaffected.
 - **One-shot rule (QA fix #5):** the death presentation must be idempotent.
   `Animator.Play` with normalizedTime 0 runs exactly once per death, gated by
   `ShouldStartDeathPresentation(deathLatched, presentationStarted)`; repeated

@@ -422,39 +422,147 @@ namespace OperationOutbreak.Tests
         }
 
         [Test]
-        public void DeathGroundingTargetPlacesThePoseLowestPointOnTheGround()
+        public void DeathGroundingTargetIsAWorldSpaceDeltaAppliedToVisualLocalY()
         {
-            // Pure grounding maths: in enemy-root local space the ground sits at -1,
-            // so a corpse pose whose lowest point is at poseLocalY requires the
-            // visual holder at groundLocalY - poseLocalY.
+            // QA fix #7: the target is computed in ONE consistent space - world. The
+            // world-space delta (groundWorldY - lowestCorpseWorldY) is added to the
+            // visual's current local Y (valid because the parent chain is identity).
             Assert.AreEqual(
-                -0.7f,
-                EnemyAnimationBridge.ComputeDeathGroundingTargetY(-0.3f, -1f),
+                -1.355f,
+                EnemyAnimationBridge.ComputeDeathGroundedTargetLocalY(-1.005f, 0.35f, 0f),
                 0.0001f,
-                "A corpse lying with its lowest point 0.3 below the instance origin " +
-                "must raise the visual to -0.7.");
+                "A corpse whose lowest point sits at world y=0.35 must lower the visual " +
+                "by 0.35 (from -1.005 to -1.355) to rest on the lane at world y=0.");
 
-            // Consistency with the standing FBX-derived offset: the vendor mesh's
-            // lowest vertex is +0.536 cm above the model root, so a standing pose
-            // measured through the same formula reproduces the standing grounding.
+            // No correction needed when the corpse is already on the lane.
             Assert.AreEqual(
-                -1.00536f,
-                EnemyAnimationBridge.ComputeDeathGroundingTargetY(0.00536f, -1f),
+                -1.005f,
+                EnemyAnimationBridge.ComputeDeathGroundedTargetLocalY(-1.005f, 0f, 0f),
                 0.0001f,
-                "The standing-pose measurement must reproduce the deterministic " +
-                "standing offset (-1.00536), proving the formula is consistent.");
+                "A corpse already resting on the lane must keep the current visual Y.");
+        }
+
+        [Test]
+        public void DeathGroundingCorrectionPlacesTheCorpseOnTheLaneWithinTolerance()
+        {
+            // Invariant: after applying the computed target, the measured lowest world
+            // point must reach the ground. Since moving the visual by a local-Y delta
+            // moves the corpse by the same world delta (identity parent chain):
+            //   lowestAfter = lowestBefore + (target - currentVisualY)
+            // and that must equal groundWorldY within a tiny tolerance.
+            float[,] cases =
+            {
+                { -1.005f, 0.62f, 0f },   // corpse floating 0.62 above the lane
+                { -1.005f, 0.35f, 0f },   // corpse floating 0.35 above the lane
+                { -1.005f, -0.12f, 0f },  // corpse sunk 0.12 below the lane
+                { -0.8f, 0.4f, -0.2f },   // different root height/ground convention
+            };
+
+            for (int i = 0; i < cases.GetLength(0); i++)
+            {
+                float currentVisualY = cases[i, 0];
+                float lowestWorldY = cases[i, 1];
+                float groundWorldY = cases[i, 2];
+
+                float target = EnemyAnimationBridge.ComputeDeathGroundedTargetLocalY(
+                    currentVisualY, lowestWorldY, groundWorldY);
+
+                float lowestAfter = lowestWorldY + (target - currentVisualY);
+
+                Assert.AreEqual(
+                    groundWorldY, lowestAfter, 1e-4f,
+                    $"Case {i}: the corrected corpse's lowest point must reach the ground. " +
+                    $"lowestBefore={lowestWorldY}, target={target}, lowestAfter={lowestAfter}.");
+            }
+        }
+
+        [Test]
+        public void DeathGroundingRefinementWaitsForClipCompletion()
+        {
+            // QA fix #7: the final refinement re-measures the true resting pose only
+            // at clip completion - the fall still moves slightly between the first
+            // sample and the end, which is what left the corpse floating.
+            Assert.IsFalse(
+                EnemyAnimationBridge.ShouldRefineDeathGrounding(0.95f, 0.99f),
+                "Before the clip has completed, no refinement measurement.");
+            Assert.IsTrue(
+                EnemyAnimationBridge.ShouldRefineDeathGrounding(0.99f, 0.99f),
+                "At the completion threshold the refinement must run.");
+            Assert.IsTrue(
+                EnemyAnimationBridge.ShouldRefineDeathGrounding(1f, 0.99f),
+                "At full completion the refinement must run.");
         }
 
         [Test]
         public void StandingProductionVisualOffsetRemainsUnchanged()
         {
-            // QA fix #6 must not change the standing grounding for Idle/Walk/Attack -
+            // QA fix #6/#7 must not change the standing grounding for Idle/Walk/Attack -
             // only a death-only additional correction may exist.
             Assert.AreEqual(
                 -1.005f,
                 EnemyVisualSetup.ProductionVisualGroundingOffsetY,
                 0.001f,
                 "The deterministic standing grounding offset must stay -1.005.");
+        }
+
+        // ============================================ QA fix #7 (collider lifecycle)
+
+        [Test]
+        public void ColliderStateCaptureAndApplyRoundTrips()
+        {
+            // The capture must record every collider's authored enabled state and the
+            // apply must restore it exactly (death disables; reuse restores).
+            GameObject holder = new GameObject("EnemyRoot");
+            Collider first = holder.AddComponent<CapsuleCollider>();
+            Collider second = holder.AddComponent<CapsuleCollider>();
+            first.enabled = true;
+            second.enabled = false;
+
+            try
+            {
+                Collider[] colliders = holder.GetComponents<Collider>();
+                bool[] states = EnemyAnimationBridge.CaptureColliderEnabledStates(colliders);
+
+                Assert.AreEqual(2, states.Length, "Every collider must be captured.");
+                Assert.IsTrue(states[0], "The enabled collider must be captured as enabled.");
+                Assert.IsFalse(states[1], "The disabled collider must be captured as disabled.");
+
+                // Death: disable everything.
+                EnemyAnimationBridge.ApplyColliderEnabledStates(colliders, new[] { false, false });
+                Assert.IsFalse(first.enabled, "Death must disable the enabled collider.");
+                Assert.IsFalse(second.enabled, "Death must keep the disabled collider disabled.");
+
+                // Reuse: restore the authored snapshot.
+                EnemyAnimationBridge.ApplyColliderEnabledStates(colliders, states);
+                Assert.IsTrue(first.enabled, "Reuse must restore the authored enabled state.");
+                Assert.IsFalse(second.enabled, "Reuse must restore the authored disabled state.");
+            }
+            finally
+            {
+                Object.DestroyImmediate(holder);
+            }
+        }
+
+        [Test]
+        public void ColliderStateApplyGuardsMismatchedSizes()
+        {
+            // A length mismatch must be a safe no-op, never an out-of-range write.
+            GameObject holder = new GameObject("EnemyRoot");
+            Collider first = holder.AddComponent<CapsuleCollider>();
+            first.enabled = true;
+
+            try
+            {
+                Collider[] colliders = holder.GetComponents<Collider>();
+                EnemyAnimationBridge.ApplyColliderEnabledStates(colliders, new[] { false, false });
+
+                Assert.IsTrue(first.enabled,
+                    "A mismatched state array must not modify any collider.");
+            }
+            finally
+            {
+                Object.DestroyImmediate(holder);
+            }
         }
 
         [Test]
