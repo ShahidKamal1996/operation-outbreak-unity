@@ -44,6 +44,19 @@ namespace OperationOutbreak.Enemies
         [Min(0.05f)]
         [SerializeField] private float deathPresentationDuration = 0.38f;
 
+        [Header("Death Presentation Completion (Milestone 1Q QA fix #9)")]
+        [Tooltip("With a production bridge present, the corpse stays visible this many " +
+                 "EXTRA seconds after the bridge reports the presentation complete (death " +
+                 "clip finished AND grounding settled), so the grounded pose is readable.")]
+        [Min(0f)]
+        [SerializeField] private float postDeathPresentationHoldSeconds = 0.15f;
+
+        [Tooltip("Safety cap: even if the bridge never reports completion (misconfigured " +
+                 "Animator, missing clip), the enemy deactivates after the presentation " +
+                 "duration plus this timeout - corpses are never kept indefinitely.")]
+        [Min(0.5f)]
+        [SerializeField] private float deathPresentationSafetyTimeoutSeconds = 4f;
+
         [Header("Hit Feedback (Milestone 1Q QA fix #2)")]
         [Tooltip("Minimum seconds between two hit flashes. Sustained auto-fire hits the " +
                  "enemy far faster than a flash can complete, so without this cooldown the " +
@@ -124,6 +137,10 @@ namespace OperationOutbreak.Enemies
         // reference cached once for the presentation decisions.
         private Coroutine _hitFlashRoutine;
         private Transform _productionVisual;
+        // QA fix #9 - the production presentation bridge (when present) reports when
+        // the death clip AND the corpse grounding settle have both finished; the
+        // deactivation waits for it. Null for prototype-only enemies.
+        private EnemyAnimationBridge _presentationBridge;
         // QA fix #2 - the earliest Time.time at which the next hit flash may start.
         private float _nextHitFlashAllowedTime;
         // Allocated once per zombie; OverlapSphereNonAlloc keeps the chase loop allocation-free.
@@ -137,6 +154,7 @@ namespace OperationOutbreak.Enemies
             Transform visual = transform.Find("Visual");
             _visualScale = visual != null ? visual.localScale : Vector3.one;
             _productionVisual = transform.Find("ProductionVisual");
+            _presentationBridge = GetComponent<EnemyAnimationBridge>();
             ResolvePlayerHealth();
         }
 
@@ -415,6 +433,34 @@ namespace OperationOutbreak.Enemies
             }
         }
 
+        /// <summary>
+        /// QA fix #9 - pure wait decision: the death presentation wait ends when
+        ///   - there is NO production bridge (prototype fallback): after the clip
+        ///     timer alone (byte-identical pre-1Q behavior), or
+        ///   - WITH a bridge: the clip timer has passed AND the bridge reports the
+        ///     presentation complete (death animation finished AND corpse grounding
+        ///     settled within tolerance) - or the safety timeout expires, so a corpse
+        ///     can never hang around indefinitely.
+        /// Static and side-effect free for EditMode tests.
+        /// </summary>
+        public static bool ShouldEndDeathPresentationWait(
+            bool hasPresentationBridge,
+            bool bridgePresentationComplete,
+            float elapsed,
+            float minimumDuration,
+            float safetyTimeout)
+        {
+            float safeMinimum = Mathf.Max(0.05f, minimumDuration);
+
+            if (!hasPresentationBridge)
+            {
+                return elapsed >= safeMinimum;
+            }
+
+            float deadline = safeMinimum + Mathf.Max(0.5f, safetyTimeout);
+            return (elapsed >= safeMinimum && bridgePresentationComplete) || elapsed >= deadline;
+        }
+
         private System.Collections.IEnumerator DeathFeedback()
         {
             Transform visual = transform.Find("Visual");
@@ -424,17 +470,36 @@ namespace OperationOutbreak.Enemies
             // (default 0.38 = the pre-1Q prototype behavior). Death ACCOUNTING is
             // unchanged: the Died event still fires immediately at zero health, so kill
             // counting, section clear and mission completion timing are untouched.
-            while (elapsed < deathPresentationDuration)
+            //
+            // QA fix #9 - with a production bridge present, the enemy additionally
+            // stays visible until the bridge reports the presentation complete (death
+            // clip finished AND the corpse grounding settle reached its target within
+            // tolerance), capped by a safety timeout. The pre-1Q clip-timer-only
+            // behavior cut the late settle short.
+            while (!ShouldEndDeathPresentationWait(
+                       _presentationBridge != null,
+                       _presentationBridge != null && _presentationBridge.IsDeathPresentationComplete,
+                       elapsed,
+                       deathPresentationDuration,
+                       deathPresentationSafetyTimeoutSeconds))
             {
                 elapsed += Time.deltaTime;
                 if (visual != null)
                 {
-                    float progress = elapsed / deathPresentationDuration;
+                    float progress = Mathf.Clamp01(elapsed / deathPresentationDuration);
                     visual.localScale = Vector3.Lerp(_visualScale, _visualScale * 0.12f, progress);
                     visual.localRotation = Quaternion.Euler(progress * 55f, 0f, 0f);
                 }
                 yield return null;
             }
+
+            // QA fix #9 - short production-only hold so the grounded corpse pose is
+            // clearly readable before deactivation. Prototype enemies skip it.
+            if (_presentationBridge != null)
+            {
+                yield return new WaitForSeconds(Mathf.Max(0f, postDeathPresentationHoldSeconds));
+            }
+
             if (deactivateOnDefeat) gameObject.SetActive(false); else Destroy(gameObject);
         }
 
@@ -454,6 +519,8 @@ namespace OperationOutbreak.Enemies
             attackInterval = Mathf.Max(0.01f, attackInterval);
             maxHealth = Mathf.Max(1, maxHealth);
             deathPresentationDuration = Mathf.Max(0.05f, deathPresentationDuration);
+            postDeathPresentationHoldSeconds = Mathf.Max(0f, postDeathPresentationHoldSeconds);
+            deathPresentationSafetyTimeoutSeconds = Mathf.Max(0.5f, deathPresentationSafetyTimeoutSeconds);
             hitFlashCooldownSeconds = Mathf.Max(0f, hitFlashCooldownSeconds);
         }
 #endif

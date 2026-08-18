@@ -127,6 +127,12 @@ namespace OperationOutbreak.Enemies
         [Range(0.9f, 1f)]
         [SerializeField] private float deathGroundingRefineNormalizedTime = 0.99f;
 
+        [Tooltip("QA fix #9 - the grounding settle counts as complete when the visual's Y " +
+                 "is within this distance of the target. The enemy must stay visible until " +
+                 "the corpse has actually reached the road.")]
+        [Min(0f)]
+        [SerializeField] private float deathGroundingCompletionTolerance = 0.015f;
+
         [Tooltip("Measure the corpse's lowest point from the actual animated death pose " +
                  "and ground the production visual to it; fall back to deathGroundingOffsetY " +
                  "only when the measurement is unavailable.")]
@@ -137,6 +143,7 @@ namespace OperationOutbreak.Enemies
         private float _deathGroundingTargetY;
         private bool _deathGroundingMeasured;
         private bool _deathGroundingRefined;
+        private bool _deathClipFinished;
         private Mesh _deathPoseBakeMesh;
 
         // QA fix #7 - gameplay collider lifecycle: the prototype prefab's CapsuleCollider
@@ -243,6 +250,52 @@ namespace OperationOutbreak.Enemies
             return normalizedTime >= Mathf.Max(0.01f, refineThreshold);
         }
 
+        /// <summary>
+        /// QA fix #9 - pure tolerance check: the grounding settle is complete when the
+        /// visual's Y is within the configured tolerance of the target (abs distance).
+        /// </summary>
+        public static bool IsDeathGroundingComplete(float currentVisualY, float targetY, float tolerance)
+        {
+            return Mathf.Abs(targetY - currentVisualY) <= Mathf.Max(0f, tolerance);
+        }
+
+        /// <summary>
+        /// QA fix #9 - pure completion gate: the death presentation is complete only
+        /// when BOTH the death animation has finished AND the corpse grounding has
+        /// settled within tolerance. Deactivation must wait for both - a clip-length
+        /// timer alone cuts the late settle short (the QA fix #9 symptom).
+        /// </summary>
+        public static bool ShouldCompleteDeathPresentation(bool animationFinished, bool groundingComplete)
+        {
+            return animationFinished && groundingComplete;
+        }
+
+        /// <summary>
+        /// QA fix #9 - live completion state read by ZombieController's death
+        /// feedback: the death clip has finished AND the production visual's Y is
+        /// within tolerance of the (downward-only) grounding target. With no
+        /// production visual the presentation is trivially complete once the clip
+        /// finished.
+        /// </summary>
+        public bool IsDeathPresentationComplete
+        {
+            get
+            {
+                if (!_deathLatched || !_deathClipFinished)
+                {
+                    return false;
+                }
+
+                if (_productionVisual == null)
+                {
+                    return true;
+                }
+
+                return IsDeathGroundingComplete(
+                    _productionVisual.localPosition.y, _deathGroundingTargetY, deathGroundingCompletionTolerance);
+            }
+        }
+
         private void Awake()
         {
             if (zombie == null)
@@ -298,6 +351,7 @@ namespace OperationOutbreak.Enemies
             _deathPresentationStarted = false;
             _deathGroundingMeasured = false;
             _deathGroundingRefined = false;
+            _deathClipFinished = false;
             _deathGroundingTargetY = _standingProductionVisualY;
             RestoreStandingProductionVisualY();
             RestoreGameplayColliders();
@@ -547,6 +601,13 @@ namespace OperationOutbreak.Enemies
                 return;
             }
 
+            // QA fix #9 - persist the clip-finished flag once the death clip has
+            // played out (it is terminal and non-looping, so this never resets).
+            if (!_deathClipFinished && deathStateInfo.normalizedTime >= 0.999f)
+            {
+                _deathClipFinished = true;
+            }
+
             bool wantMeasure =
                 !_deathGroundingMeasured &&
                 ShouldMeasureDeathGrounding(deathStateInfo.normalizedTime, deathGroundingSampleNormalizedTime);
@@ -582,6 +643,13 @@ namespace OperationOutbreak.Enemies
             float totalDistance = Mathf.Max(0.0001f, Mathf.Abs(_deathGroundingTargetY - currentY));
             float step = totalDistance / Mathf.Max(0.05f, deathGroundingBlendDuration) * Time.deltaTime;
             float newY = Mathf.MoveTowards(currentY, _deathGroundingTargetY, step);
+
+            // QA fix #9 - snap to the target once within tolerance, so the completion
+            // check settles promptly instead of approaching asymptotically.
+            if (IsDeathGroundingComplete(newY, _deathGroundingTargetY, deathGroundingCompletionTolerance))
+            {
+                newY = _deathGroundingTargetY;
+            }
 
             Vector3 position = _productionVisual.localPosition;
             position.y = newY;
@@ -724,6 +792,7 @@ namespace OperationOutbreak.Enemies
             deathGroundingBlendDuration = Mathf.Max(0.05f, deathGroundingBlendDuration);
             deathGroundingSampleNormalizedTime = Mathf.Clamp(deathGroundingSampleNormalizedTime, 0.5f, 0.99f);
             deathGroundingRefineNormalizedTime = Mathf.Clamp(deathGroundingRefineNormalizedTime, 0.9f, 1f);
+            deathGroundingCompletionTolerance = Mathf.Max(0f, deathGroundingCompletionTolerance);
         }
 #endif
     }

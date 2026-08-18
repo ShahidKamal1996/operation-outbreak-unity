@@ -659,6 +659,64 @@ namespace OperationOutbreak.Tests
                 "The settle must reach the ground (standing -1.005 - 0.35 = -1.355).");
         }
 
+        // ============================================ QA fix #9 (presentation completion)
+
+        [Test]
+        public void GroundingCompletionUsesTolerance()
+        {
+            Assert.IsTrue(
+                EnemyAnimationBridge.IsDeathGroundingComplete(-1.345f, -1.355f, 0.02f),
+                "Within tolerance the grounding must count as complete.");
+            Assert.IsFalse(
+                EnemyAnimationBridge.IsDeathGroundingComplete(-1.0f, -1.355f, 0.02f),
+                "Outside tolerance the grounding must still be settling.");
+            Assert.IsTrue(
+                EnemyAnimationBridge.IsDeathGroundingComplete(-1.355f, -1.355f, 0.02f),
+                "Exactly on the target the grounding is complete.");
+        }
+
+        [Test]
+        public void DeathPresentationCompletesOnlyWhenAnimationAndGroundingAreBothDone()
+        {
+            Assert.IsTrue(
+                EnemyAnimationBridge.ShouldCompleteDeathPresentation(true, true),
+                "Animation finished AND grounding settled -> presentation complete.");
+            Assert.IsFalse(
+                EnemyAnimationBridge.ShouldCompleteDeathPresentation(true, false),
+                "The presentation must NOT complete while the corpse is still settling " +
+                "(the QA fix #9 disappearing-before-settle symptom).");
+            Assert.IsFalse(
+                EnemyAnimationBridge.ShouldCompleteDeathPresentation(false, true),
+                "The presentation must NOT complete while the death clip is still playing.");
+        }
+
+        [Test]
+        public void DeactivationWaitsForThePresentationBridge()
+        {
+            // The deactivation wait decision: with a bridge present, the enemy stays
+            // alive until the bridge completes (or the safety timeout), never on the
+            // clip timer alone.
+            Assert.IsFalse(
+                ZombieController.ShouldEndDeathPresentationWait(true, false, 3.2f, 3.0f, 4f),
+                "A bridge that has not reported completion must keep the corpse alive " +
+                "past the clip timer - the settle must finish first.");
+
+            Assert.IsTrue(
+                ZombieController.ShouldEndDeathPresentationWait(true, true, 3.2f, 3.0f, 4f),
+                "Once the bridge reports completion (after the clip timer), the wait ends.");
+
+            Assert.IsTrue(
+                ZombieController.ShouldEndDeathPresentationWait(true, false, 8f, 3.0f, 4f),
+                "The safety timeout must end the wait even if the bridge never completes.");
+
+            Assert.IsFalse(
+                ZombieController.ShouldEndDeathPresentationWait(false, false, 0.1f, 0.38f, 4f),
+                "Prototype fallback (no bridge) keeps the pre-1Q clip-timer behavior.");
+            Assert.IsTrue(
+                ZombieController.ShouldEndDeathPresentationWait(false, false, 0.4f, 0.38f, 4f),
+                "Prototype fallback ends exactly on the clip timer.");
+        }
+
         [Test]
         public void ProductionZombieMaterialsUseTheUrpLitShader()
         {

@@ -298,6 +298,21 @@ Production enemy VISUAL foundation only — zero enemy gameplay changes:
     corpse already below the ground) is discarded — a small sink is preferred to an
     upward pop. The settle still reaches the ground for genuine downward
     corrections, and no grounding movement occurs until a downward target exists.
+15. **QA fix #9 (2026-08-18) — deactivation waits for the grounding settle:** QA saw
+    the corpse begin its late downward settle and then vanish — the deactivation
+    used only `deathPresentationDuration` (clip + margin), which expires before the
+    late sample/refinement + blend completes. Fix: deactivation now waits for BOTH
+    the death clip window AND the grounding settle. The bridge exposes
+    `IsDeathPresentationComplete` (clip finished at normalized ≥ 0.999 AND
+    `IsDeathGroundingComplete` = |visualY − targetY| ≤
+    `deathGroundingCompletionTolerance` 0.015), with a snap-to-target once within
+    tolerance so completion is reached promptly. `ZombieController.DeathFeedback`
+    waits on that condition (pure `ShouldEndDeathPresentationWait`), then holds
+    `postDeathPresentationHoldSeconds` (0.15) so the grounded pose is readable,
+    then deactivates; a safety timeout (`deathPresentationSafetyTimeoutSeconds` 4)
+    guarantees no corpse lives forever. Prototype fallback (no bridge) keeps the
+    exact pre-1Q timer behavior, and the prototype shrink progress is clamped so
+    the extended wait cannot over-rotate it.
 9. **QA fix #2 (2026-08-17) — floating, vibration and death still unresolved:**
    - **Grounding:** QA fix #1B's renderer-bounds measurement read the vendor prefab's
      EDITOR/REFERENCE pose (the vendor ships a crouched cartoon pose), not the animated
@@ -364,6 +379,10 @@ Production enemy VISUAL foundation only — zero enemy gameplay changes:
      death-grounding log per pass with computedTargetY vs clampedTargetY).
 12c. **Dead collider disabled:** the CapsuleCollider turns off at death and the
      next spawned enemy has it enabled again (QA fix #7).
+12d. **Corpse disappears only AFTER the settle finishes:** the enemy stays visible
+     until the bridge reports presentation complete (clip finished + grounding
+     settled within tolerance), plus a short hold — no vanishing mid-settle
+     (QA fix #9).
 13. Mission kill/wave accounting remains correct (3 sections, 12 enemies,
     9 BASIC / 3 RUNNER, Mission Complete exactly once).
 14. Multiple zombies animate independently.
@@ -371,7 +390,10 @@ Production enemy VISUAL foundation only — zero enemy gameplay changes:
 16. LOD/prefab rendering produces no obvious errors (both LODs textured).
 17. Player Toon Soldier remains unaffected (shooting, aim, muzzle, animations).
 18. Console remains clean.
-19. Full EditMode suite passes — expect **176/176** (172 previous + 4 new
+19. Full EditMode suite passes — expect **179/179** (176 previous + 3 new
+    QA-fix-#9 tests: grounding tolerance check, animation+grounding completion
+    gate, and the deactivation wait decision (bridge, prototype fallback, safety
+    timeout); the controller tests require step 0 to have been run once).
     QA-fix-#8 tests: downward-only target clamp, refinement monotonicity, no
     movement until a downward target exists, and downward settle still reaches the
     ground; the controller tests require step 0 to have been run once).

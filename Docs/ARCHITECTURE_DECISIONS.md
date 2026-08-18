@@ -432,6 +432,13 @@
   measurement/refinement pass, re-asserted against the current visual Y each frame.
   Upward corrections (corpse already below ground) are discarded — a small sink is
   preferred to an upward pop. Genuine downward corrections still reach the lane.
+- **Presentation-complete deactivation (QA fix #9):** deactivation is gated on a
+  live completion condition, not a clip timer alone. The bridge reports
+  `IsDeathPresentationComplete` = clip finished (normalized ≥ 0.999) AND grounding
+  settled within `deathGroundingCompletionTolerance` (0.015), with snap-to-target
+  once inside tolerance. ZombieController waits on it (plus a 0.15 s production
+  hold), bounded by a 4 s safety timeout; the prototype fallback keeps the exact
+  pre-1Q timer-only behavior.
 - **One-shot rule (QA fix #5):** the death presentation must be idempotent.
   `Animator.Play` with normalizedTime 0 runs exactly once per death, gated by
   `ShouldStartDeathPresentation(deathLatched, presentationStarted)`; repeated
