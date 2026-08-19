@@ -679,6 +679,30 @@ variant differences from data only:
     fixture now adds the gameplay CapsuleCollider FIRST, matching the real
     `Zombie_Prototype` root, and the RequireComponent rule is deliberately
     NOT weakened. Expected total unchanged: 216/216.
+13. **1S QA fix #2 (2026-08-19) — Unity 6 kinematic-velocity warning fixed:**
+    during normal ragdoll death the console repeatedly reported
+    "Setting linear velocity of a kinematic body is not supported." /
+    "Setting angular velocity of a kinematic body is not supported.", stacked
+    to `EnemyRagdoll.ActivateRagdoll()`. Root cause — BOTH velocity-zeroing
+    paths wrote velocity while the bodies were kinematic, which Unity 6
+    forbids (the write logs the warning AND is discarded): activation zeroed
+    BEFORE the kinematic flip, and the reuse reset zeroed AFTER
+    re-kinematic-ing. Fix — the legal Unity 6 ordering, smallest
+    production-safe change: every velocity assignment now lives in ONE
+    guarded site, `EnemyRagdoll.ZeroVelocitiesWhereLegal` (per-body
+    `IsVelocityWriteAllowed(!isKinematic)` gate — a kinematic body is never
+    written to), called AFTER the bodies are freed in `ActivateRagdoll`
+    (same frame, before any FixedUpdate — the first simulated step starts at
+    zero velocity, preserving the no-launch/no-pop stabilization, which is
+    now genuinely EFFECTIVE instead of discarded) and BEFORE
+    re-kinematic-ing in `RestoreForReuse` (bodies that never ragdolled are
+    already kinematic and are skipped). Warnings are NOT suppressed; parent-
+    before-child activation/reset, collider lifecycle, `OO_Ragdoll` policy,
+    death timing, accounting and reuse are all untouched. +2 tests
+    (218/218): the velocity-write legality gate truth table, and a real-
+    Rigidbody replay of both lifecycle orderings that ends with
+    `LogAssert.NoUnexpectedReceived()` — if the helper ever regresses to
+    writing on a kinematic body, Unity logs the warning and the test fails.
 
 ## Manual Unity QA checklist for 1S
 
@@ -706,15 +730,15 @@ variant differences from data only:
 6. Mission counts/sections/Mission Complete remain unchanged after the debug
    spawns (or restart and re-verify the mission).
 7. Console clean (the only expected logs are the 1S debug/validation logs).
-8. Full EditMode suite passes — expect **216/216** (205 previous + 11 new
-   1S tests: verified Basic values, production Basic presentation, shared
-   controller application, run clip/profile resolution, unique stable ids,
-   invalid-archetype rejection, spawner seam resolution, default-to-Basic
-   behaviour, no duplicated controller classes, shared ragdoll across
-   archetypes, runner controller tool path pin). 1S QA fix #1 repaired the
-   two failing test fixtures (LogAssert.Expect for the intentional fallback
-   diagnostic; CapsuleCollider added to the shared-controller fixture) — the
-   count is unchanged.
+   In particular, NO "Setting linear velocity of a kinematic body is not
+   supported." / "Setting angular velocity of a kinematic body is not
+   supported." warnings may appear during ragdoll deaths (1S QA fix #2).
+8. Full EditMode suite passes — expect **218/218** (216 previous; 1S QA fix
+   #2 ADDED 2: the velocity-write legality gate truth table and the
+   real-Rigidbody lifecycle-ordering replay with LogAssert.NoUnexpectedReceived).
+   1S QA fix #1 repaired the two failing test fixtures (LogAssert.Expect for
+   the intentional fallback diagnostic; CapsuleCollider added to the
+   shared-controller fixture) without changing the count.
 9. `Tools > Operation Outbreak > Validate Enemy Archetypes` passes — every
    archetype has a unique stable id, valid gameplay ranges, a valid
    production prefab, valid locomotion setup and (where required) the shared

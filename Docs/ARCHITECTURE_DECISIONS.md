@@ -626,6 +626,20 @@
   PROBLEMATIC connected overlap/mass pairs after generation; the read-only
   `Tools > Operation Outbreak > Debug Basic Infected Ragdoll` menu prints the
   same report.
+- **AD-1Q-11 amendment — Unity 6 kinematic-velocity write ordering (1S QA fix
+  #2):** Unity 6 discards (and warns about) any `linearVelocity` /
+  `angularVelocity` assignment while `isKinematic == true`. All ragdoll
+  velocity writes therefore live in ONE guarded site —
+  `EnemyRagdoll.ZeroVelocitiesWhereLegal` (per-body
+  `IsVelocityWriteAllowed(!isKinematic)` gate). Lifecycle orderings:
+  ACTIVATION frees the bodies first (parent-before-child), then zeroes in the
+  same frame before any FixedUpdate — the first simulated step starts at zero
+  velocity (the fix #1 stabilization is now genuinely effective instead of
+  discarded); REUSE RESET zeroes first (bodies are still non-kinematic after
+  the ragdoll; never-ragdolled bodies are skipped), then re-kinematic-es.
+  Warnings are never suppressed; tests replay both orderings against real
+  Rigidbodies and pin the absence of the warning with
+  `LogAssert.NoUnexpectedReceived`.
 
 ## Milestone 1S decisions
 

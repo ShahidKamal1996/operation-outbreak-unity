@@ -130,6 +130,61 @@ namespace OperationOutbreak.Enemies
         }
 
         /// <summary>
+        /// QA fix #2 - pure legality gate for Rigidbody velocity writes. Unity 6
+        /// logs "Setting linear velocity of a kinematic body is not supported."
+        /// whenever linearVelocity/angularVelocity is assigned while
+        /// isKinematic == true (the write is discarded), so a velocity write is
+        /// LEGAL only for a non-kinematic body. Every velocity assignment in this
+        /// component goes through this gate. Static for EditMode tests.
+        /// </summary>
+        public static bool IsVelocityWriteAllowed(bool isKinematic)
+        {
+            return !isKinematic;
+        }
+
+        /// <summary>
+        /// QA fix #2 - the SINGLE velocity-write site in this component. Zeroes
+        /// linear AND angular velocity for every NON-KINEMATIC body in the array
+        /// (the per-body guard means a kinematic body is never written to, so the
+        /// Unity 6 kinematic-velocity warning can never fire from this helper).
+        /// Returns how many bodies were actually zeroed.
+        ///
+        /// Both lifecycles call this helper with a legal ordering:
+        ///   ACTIVATION: bodies are freed (non-kinematic) FIRST, then zeroed in
+        ///   the same frame - before any FixedUpdate - so the first simulated
+        ///   step starts at zero velocity (no launch/pop, no residual kick).
+        ///   REUSE RESET: zeroed FIRST (bodies are still non-kinematic after the
+        ///   ragdoll; bodies that never ragdolled are already kinematic and are
+        ///   skipped), then the bodies are re-kinematic-ed.
+        /// Static for EditMode tests (testable against real Rigidbodies).
+        /// </summary>
+        public static int ZeroVelocitiesWhereLegal(Rigidbody[] bodies)
+        {
+            if (bodies == null)
+            {
+                return 0;
+            }
+
+            int zeroed = 0;
+
+            for (int i = 0; i < bodies.Length; i++)
+            {
+                Rigidbody body = bodies[i];
+
+                if (body == null || !IsVelocityWriteAllowed(body.isKinematic))
+                {
+                    continue;
+                }
+
+                body.linearVelocity = Vector3.zero;
+                body.angularVelocity = Vector3.zero;
+                zeroed++;
+            }
+
+            return zeroed;
+        }
+
+        /// <summary>
         /// QA fix #1 - pure self-collision policy: the layer-based "ragdoll
         /// ignores itself" rule applies only with a valid layer index (0..31).
         /// A missing layer (NameToLayer == -1) must never be passed to
@@ -164,17 +219,21 @@ namespace OperationOutbreak.Enemies
 
         /// <summary>
         /// Called by EnemyAnimationBridge exactly once per death, when the animation
-        /// lead-in window elapses. STABILIZED handoff sequence (QA fix #1):
-        ///   1. zero every body's linear/angular velocity - kinematic bodies moved
-        ///      by the Animator carry residual velocity into the first simulated
-        ///      frame, which was the "kick";
-        ///   2. disable the Animator (animation stops controlling the skeleton);
-        ///   3. enable the ragdoll colliders;
-        ///   4. verify the prepared gate, then free the bodies in PARENT-BEFORE-
-        ///      CHILD order (the authored array starts at the Hips - the physics
-        ///      root) so the chain starts consistent.
-        /// The first physics frame therefore has no transform discontinuity, no
-        /// residual velocity and no interpenetrating self-contacts.
+        /// lead-in window elapses. STABILIZED handoff sequence (QA fix #1, amended
+        /// by QA fix #2 for Unity 6 kinematic-velocity rules):
+        ///   1. disable the Animator (animation stops controlling the skeleton) -
+        ///      the last animated pose is exactly the physics start pose;
+        ///   2. enable the ragdoll colliders (environment-only interactions);
+        ///   3. verify the prepared gate;
+        ///   4. free the bodies in PARENT-BEFORE-CHILD order (the authored array
+        ///      starts at the Hips - the physics root);
+        ///   5. zero velocities AFTER the kinematic flip via
+        ///      ZeroVelocitiesWhereLegal - Unity 6 discards velocity writes on
+        ///      kinematic bodies (and logs a warning), so the zeroing must run
+        ///      once the bodies are non-kinematic, still inside the same frame
+        ///      before any FixedUpdate. The first simulated step therefore starts
+        ///      at zero velocity: no launch/pop, no residual kick, no
+        ///      interpenetrating self-contacts.
         /// </summary>
         public void ActivateRagdoll(Animator animator)
         {
@@ -185,32 +244,22 @@ namespace OperationOutbreak.Enemies
 
             CaptureAuthoredPose();
 
-            // 1. Zero unintended velocities BEFORE the bodies are freed.
-            for (int i = 0; i < ragdollBodies.Length; i++)
-            {
-                Rigidbody body = ragdollBodies[i];
-                if (body == null)
-                {
-                    continue;
-                }
-
-                body.linearVelocity = Vector3.zero;
-                body.angularVelocity = Vector3.zero;
-            }
-
-            // 2. Handoff order matters: disable the Animator BEFORE freeing the
+            // 1. Handoff order matters: disable the Animator BEFORE freeing the
             // bodies so the last animated pose is exactly the physics start pose.
             if (animator != null)
             {
                 animator.enabled = false;
             }
 
-            // 3. Ragdoll colliders on (they interact only with the environment -
+            // 2. Ragdoll colliders on (they interact only with the environment -
             // self-collision was disabled in Awake).
             EnsureRagdollColliderLayers();
             ApplyColliderStates(true);
 
-            // 4. Prepared gate, then free the bodies hips-first.
+            // 3. Prepared gate: velocities are zeroed immediately AFTER the
+            // kinematic flip below (same frame, pre-simulation) - the legal
+            // Unity 6 ordering - so the prepared state holds before any physics
+            // step runs.
             if (!IsActivationPrepared(true, animator == null || !animator.enabled, true))
             {
                 Debug.LogWarning(
@@ -219,7 +268,14 @@ namespace OperationOutbreak.Enemies
                 return;
             }
 
+            // 4. Free the bodies hips-first (parent-before-child array order).
             ApplyKinematicStates(false);
+
+            // 5. QA fix #2 - zero velocities AFTER the flip: legal (bodies are
+            // non-kinematic now) and effective (the residual Animator-driven
+            // kinematic velocity is removed before the first simulated step).
+            ZeroVelocitiesWhereLegal(ragdollBodies);
+
             IsRagdollActive = true;
         }
 
@@ -237,23 +293,18 @@ namespace OperationOutbreak.Enemies
 
             CaptureAuthoredPose();
 
-            // 1. Bodies kinematic first: pose writes below are then purely
+            // QA fix #2 - Unity 6 kinematic-velocity ordering for the reuse reset:
+            // 1. Zero velocities FIRST, while the bodies are still NON-KINEMATIC
+            //    (the post-ragdoll state). A body that never ragdolled is already
+            //    kinematic and is skipped by the per-body guard, so no velocity
+            //    write ever touches a kinematic body - the Unity 6
+            //    "Setting linear velocity of a kinematic body" warning can never
+            //    fire from this path.
+            ZeroVelocitiesWhereLegal(ragdollBodies);
+
+            // 2. Bodies kinematic: pose writes below are then purely
             //    transform-level and cannot disturb the physics scene.
             ApplyKinematicStates(true);
-
-            // 2. Zero velocities BEFORE restoring poses (kinematic bodies keep their
-            //    stored velocities otherwise, which would matter on the next handoff).
-            for (int i = 0; i < ragdollBodies.Length; i++)
-            {
-                Rigidbody body = ragdollBodies[i];
-                if (body == null)
-                {
-                    continue;
-                }
-
-                body.linearVelocity = Vector3.zero;
-                body.angularVelocity = Vector3.zero;
-            }
 
             // 3. Restore authored local poses in PARENT-BEFORE-CHILD order (the
             //    setup tool guarantees the array order).

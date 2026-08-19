@@ -6,6 +6,7 @@ using OperationOutbreak.Enemies;
 using UnityEditor;
 using UnityEditor.Animations;
 using UnityEngine;
+using UnityEngine.TestTools;
 
 namespace OperationOutbreak.Tests
 {
@@ -1649,6 +1650,89 @@ namespace OperationOutbreak.Tests
             Assert.IsFalse(
                 EnemyRagdoll.IsActivationPrepared(true, true, false),
                 "The ragdoll colliders are off - the activation must NOT proceed.");
+        }
+
+        [Test]
+        public void RagdollVelocityWritesAreLegalOnlyForNonKinematicBodies()
+        {
+            // QA fix #2: Unity 6 logs "Setting linear velocity of a kinematic
+            // body is not supported." when a velocity is assigned while
+            // isKinematic == true (and the write is discarded). Every velocity
+            // assignment in EnemyRagdoll therefore goes through this gate, and
+            // the gate must only ever allow non-kinematic bodies.
+            Assert.IsTrue(
+                EnemyRagdoll.IsVelocityWriteAllowed(false),
+                "A non-kinematic (simulated) body may receive velocity writes.");
+            Assert.IsFalse(
+                EnemyRagdoll.IsVelocityWriteAllowed(true),
+                "A kinematic body must NEVER receive velocity writes - this is the " +
+                "exact operation that logs the Unity 6 kinematic-velocity warning.");
+        }
+
+        [Test]
+        public void RagdollVelocityZeroingSkipsKinematicAndZerosDynamicBodies()
+        {
+            // QA fix #2 - behavioural replay of BOTH legal lifecycles against
+            // real Rigidbodies:
+            //   ACTIVATION order: flip non-kinematic, THEN zero -> zeroing is
+            //     legal and effective, no warning.
+            //   REUSE RESET order: zero WHILE non-kinematic (post-ragdoll), THEN
+            //     re-kinematic -> zeroing is legal, no warning; a body that never
+            //     ragdolled (already kinematic) is SKIPPED - never written to.
+            // The kinematic body is deliberately NOT velocity-written anywhere in
+            // this test: if the helper ever regresses to writing on kinematic
+            // bodies, Unity logs the "Setting linear velocity of a kinematic
+            // body is not supported." warning and LogAssert.NoUnexpectedReceived
+            // fails the test - the same mechanism that caught the production bug.
+            GameObject kinematicHolder = new GameObject("KinematicBody");
+            Rigidbody kinematicBody = kinematicHolder.AddComponent<Rigidbody>();
+            kinematicBody.isKinematic = true;
+
+            GameObject dynamicHolder = new GameObject("DynamicBody");
+            Rigidbody dynamicBody = dynamicHolder.AddComponent<Rigidbody>();
+            dynamicBody.isKinematic = false;
+            dynamicBody.linearVelocity = new Vector3(3f, -2f, 1f);
+            dynamicBody.angularVelocity = new Vector3(5f, 1f, -4f);
+
+            try
+            {
+                Rigidbody[] bodies = { kinematicBody, dynamicBody };
+
+                // ACTIVATION ordering replay: bodies are non-kinematic at the
+                // moment of zeroing (the flip already happened in the lifecycle).
+                int zeroed = EnemyRagdoll.ZeroVelocitiesWhereLegal(bodies);
+
+                Assert.AreEqual(1, zeroed,
+                    "Exactly the non-kinematic body must be zeroed; the kinematic " +
+                    "body must be SKIPPED (never written to).");
+                Assert.AreEqual(
+                    Vector3.zero, dynamicBody.linearVelocity,
+                    "The dynamic body's linear velocity must be zeroed.");
+                Assert.AreEqual(
+                    Vector3.zero, dynamicBody.angularVelocity,
+                    "The dynamic body's angular velocity must be zeroed.");
+
+                // REUSE RESET ordering replay: after re-kinematic-ing, a second
+                // zeroing pass must skip EVERYTHING - no write, no warning.
+                dynamicBody.isKinematic = true;
+                zeroed = EnemyRagdoll.ZeroVelocitiesWhereLegal(bodies);
+
+                Assert.AreEqual(0, zeroed,
+                    "With every body kinematic, the zeroing pass must write NOTHING.");
+
+                // A null array is a safe no-op.
+                Assert.AreEqual(0, EnemyRagdoll.ZeroVelocitiesWhereLegal(null),
+                    "A null body array must be a safe no-op.");
+
+                // The regression pin: no unexpected log may have been received -
+                // a kinematic velocity write would log the Unity 6 warning here.
+                LogAssert.NoUnexpectedReceived();
+            }
+            finally
+            {
+                Object.DestroyImmediate(kinematicHolder);
+                Object.DestroyImmediate(dynamicHolder);
+            }
         }
 
         [Test]
