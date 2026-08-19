@@ -3,6 +3,7 @@ using NUnit.Framework;
 using OperationOutbreak.EditorTools;
 using OperationOutbreak.Enemies;
 using UnityEditor;
+using UnityEditor.Animations;
 using UnityEngine;
 using UnityEngine.TestTools;
 
@@ -515,6 +516,143 @@ namespace OperationOutbreak.Tests
                 EnemyAnimationSetup.RunnerArchetypeAssetPath,
                 "Assets/_OperationOutbreak/Resources/EnemyArchetypes/EnemyArchetype_Runner.asset",
                 "The Runner archetype asset path must be pinned for the tool's cadence patch.");
+        }
+
+        [Test]
+        public void CommittedRunnerControllerExistsAndIsValidWithoutRebuild()
+        {
+            // Milestone 1T QA fix #1 - the Runner controller must be COMMITTED so a
+            // fresh checkout passes Validate Enemy Archetypes without a manual
+            // rebuild. This test deliberately NEVER calls RebuildController /
+            // RebuildRunnerController: it inspects the committed asset on disk, so a
+            // missing (or silently regenerated) controller fails here instead of
+            // being rebuilt in memory and masking the defect.
+
+            // 1. The archetype's runtime load path must resolve to the committed
+            //    controller path.
+            EnemyArchetypeDefinition runner = LoadDefinition("runner");
+            Assert.IsNotNull(runner, "The Runner archetype asset must exist.");
+            Assert.AreEqual(
+                "EnemyArchetypes/OO_Runner",
+                runner.LocomotionResourcesPath,
+                "The Runner's runtime controller load path must be pinned.");
+
+            // 2. The committed asset must exist as an AssetDatabase asset.
+            AnimatorController controller = AssetDatabase.LoadAssetAtPath<AnimatorController>(
+                EnemyAnimationSetup.RunnerControllerPath);
+            Assert.IsNotNull(controller,
+                "OO_Runner.controller must be committed at " +
+                EnemyAnimationSetup.RunnerControllerPath +
+                " - run Tools > Operation Outbreak > Rebuild Runner Animator Controller " +
+                "and commit the generated asset. This test does NOT regenerate it.");
+
+            // 3. It must load as a valid AnimatorController with the shared 1S
+            //    parameter contract and a named Base Layer.
+            CheckRunnerParameter(controller, "Speed", AnimatorControllerParameterType.Float);
+            CheckRunnerParameter(controller, "Attack", AnimatorControllerParameterType.Trigger);
+            CheckRunnerParameter(controller, "Dead", AnimatorControllerParameterType.Bool);
+            CheckRunnerParameter(controller,
+                EnemyAnimationBridge.LocomotionSpeedMultiplierParameter,
+                AnimatorControllerParameterType.Float);
+
+            Assert.GreaterOrEqual(controller.layers.Length, 1,
+                "The Runner controller needs its Base Layer.");
+            AnimatorStateMachine root = controller.layers[0].stateMachine;
+            Assert.AreEqual(
+                EnemyAnimationBridge.BaseLayerName, root.name,
+                "The base machine must be named '" + EnemyAnimationBridge.BaseLayerName +
+                "' or the bridge's full-path death hash cannot resolve.");
+            Assert.IsNotNull(root.defaultState, "The Runner controller needs a default state.");
+            Assert.AreEqual(EnemyAnimationSetup.IdleState, root.defaultState.name,
+                "The Runner must start in Idle.");
+
+            // 4. The required Runner locomotion state/clip structure (identical to
+            //    the Basic controller except the locomotion state plays the RUN clip).
+            AnimationClip idle = EnemyAnimationSetup.ResolveClip(EnemyAnimationSetup.IdleFbxPath);
+            AnimationClip run = EnemyAnimationSetup.ResolveClip(EnemyAnimationSetup.RunFbxPath);
+            AnimationClip attack = EnemyAnimationSetup.ResolveClip(EnemyAnimationSetup.AttackFbxPath);
+            AnimationClip death = EnemyAnimationSetup.ResolveClip(EnemyAnimationSetup.DeathFbxPath);
+
+            Assert.IsNotNull(idle, "The idle clip must resolve.");
+            Assert.IsNotNull(run, "The run clip must resolve.");
+            Assert.IsNotNull(attack, "The attack clip must resolve.");
+            Assert.IsNotNull(death, "The death clip must resolve.");
+
+            AnimatorState idleState = FindRunnerState(root, EnemyAnimationSetup.IdleState);
+            AnimatorState walkState = FindRunnerState(root, EnemyAnimationSetup.WalkState);
+            AnimatorState attackState = FindRunnerState(root, EnemyAnimationSetup.AttackState);
+            AnimatorState deathState = FindRunnerState(root, EnemyAnimationSetup.DeathState);
+
+            Assert.IsNotNull(idleState, "Idle state missing.");
+            Assert.IsNotNull(walkState, "Walk state missing.");
+            Assert.IsNotNull(attackState, "Attack state missing.");
+            Assert.IsNotNull(deathState, "Death state missing.");
+
+            Assert.AreEqual(idle, idleState.motion as AnimationClip,
+                "Idle must play the zombie idle clip.");
+            Assert.AreEqual(run, walkState.motion as AnimationClip,
+                "The Runner's locomotion state must play the zombie RUN clip (the 1S " +
+                "Run profile), not the walk clip.");
+            Assert.AreEqual(attack, attackState.motion as AnimationClip,
+                "Attack must play the zombie attack clip.");
+            Assert.AreEqual(death, deathState.motion as AnimationClip,
+                "Death must play the zombie death clip.");
+
+            // Cadence wiring on the locomotion state only (Bug 4 contract).
+            Assert.IsTrue(walkState.speedParameterActive,
+                "The locomotion state must be driven by the locomotion speed multiplier.");
+            Assert.AreEqual(
+                EnemyAnimationBridge.LocomotionSpeedMultiplierParameter,
+                walkState.speedParameter,
+                "The locomotion state must use the shared LocomotionSpeedMultiplier parameter.");
+
+            // Death is terminal and one-shot at 1x (1Q FINAL contract).
+            Assert.IsEmpty(deathState.transitions,
+                "Death must have no outgoing transitions.");
+            Assert.IsFalse(deathState.speedParameterActive,
+                "Death must not be driven by the locomotion multiplier.");
+            Assert.AreEqual(1f, deathState.speed, 0.0001f,
+                "Death must play at exactly 1x speed.");
+
+            // AnyState->Death must not be self-re-entrant.
+            foreach (AnimatorStateTransition transition in root.anyStateTransitions)
+            {
+                if (transition.destinationState == deathState)
+                {
+                    Assert.IsFalse(transition.canTransitionToSelf,
+                        "The AnyState->Death transition must not restart the death clip.");
+                }
+            }
+        }
+
+        private static void CheckRunnerParameter(
+            AnimatorController controller, string parameterName, AnimatorControllerParameterType type)
+        {
+            for (int i = 0; i < controller.parameters.Length; i++)
+            {
+                AnimatorControllerParameter parameter = controller.parameters[i];
+                if (parameter.name == parameterName)
+                {
+                    Assert.AreEqual(type, parameter.type,
+                        "Parameter '" + parameterName + "' has the wrong type.");
+                    return;
+                }
+            }
+
+            Assert.Fail("Runner controller parameter '" + parameterName + "' is missing.");
+        }
+
+        private static AnimatorState FindRunnerState(AnimatorStateMachine root, string stateName)
+        {
+            foreach (ChildAnimatorState child in root.states)
+            {
+                if (child.state.name == stateName)
+                {
+                    return child.state;
+                }
+            }
+
+            return null;
         }
     }
 }

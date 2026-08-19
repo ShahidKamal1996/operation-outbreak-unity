@@ -822,7 +822,29 @@ mission contains; runtime gameplay systems execute it:
    scene, shared spawner resolves every requested stable id) and the no-per-mission-
    controller rule. `MissionStructureTests.cs` was migrated to the new
    `MissionDefinition.MissionSection` model (same 10 tests, same pinned numbers).
-   Expected total: **237/237** (219 verified + 18 new).
+   Expected total: **238/238** (219 verified + 18 mission-definition + 1 runner-
+   controller regression).
+
+8. **1T QA fix #1 (2026-08-20) — the Runner locomotion controller is now
+   committed:** real-Unity QA found `Validate Enemy Archetypes` reported
+   "EnemyArchetype_Runner: locomotion controller missing at
+   Assets/_OperationOutbreak/Resources/EnemyArchetypes/OO_Runner.controller"
+   on a fresh checkout, because the 1S milestone generated the Runner controller
+   in the working tree but never committed it (the generator has no persistence
+   defect - `RebuildRunnerController` saves the asset; it was simply never added
+   to source control). Fix: `OO_Runner.controller` + `.meta` are now committed.
+   The controller is the SAME asset the `Rebuild Runner Animator Controller`
+   workflow produces - identical to the verified Basic controller (same state
+   machine shape, parameters Speed/Attack/Dead/LocomotionSpeedMultiplier, the
+   named Base Layer, Idle default, terminal one-shot Death, cadence wiring) with
+   only the locomotion state's clip changed to the reserved zombie RUN clip
+   (guid `f2701a35…`, internal clip fileID `-203655887218126122`, matching the
+   Mixamo import). No validator was weakened, no fallback was added, and the
+   Runner still requires its locomotion controller. New regression test
+   `CommittedRunnerControllerExistsAndIsValidWithoutRebuild` loads the committed
+   asset WITHOUT invoking any rebuild and pins the whole structure - a missing
+   committed controller fails the test rather than being silently regenerated.
+   Expected total: 238/238 (was 237; +1 test).
 
 ## Manual Unity QA checklist for 1S
 
@@ -894,9 +916,12 @@ mission contains; runtime gameplay systems execute it:
 9. Gates/upgrades remain correctly sequenced; Mission Complete occurs exactly
    once after the configured final section.
 10. Console clean during normal gameplay.
-11. `Tools > Operation Outbreak > Validate Enemy Archetypes` → PASS.
+11. `Tools > Operation Outbreak > Validate Enemy Archetypes` → PASS (the
+    committed OO_Runner.controller satisfies the Runner locomotion-controller
+    requirement - 1T QA fix #1).
 12. `Tools > Operation Outbreak > Validate Mission Definitions` → PASS.
-13. Full EditMode suite: 219 previous + 18 new 1T tests → **237/237**, 0 failed.
+13. Full EditMode suite: 219 previous + 18 new 1T tests + 1 runner-controller
+    regression → **238/238**, 0 failed.
 
 ## What Milestone 1P.5 delivered
 

@@ -680,7 +680,11 @@
   (zero regression surface). The Runner controller lives under
   `Resources/EnemyArchetypes/` so the runtime can load it by path without
   scene wiring or per-variant code; until the tool generates it, validation
-  and the runtime both fail LOUDLY (never silently).
+  and the runtime both fail LOUDLY (never silently). The generated Runner
+  controller (`OO_Runner.controller`, identical state machine to Basic with the
+  reserved run clip in the locomotion state) is COMMITTED to source control
+  (1T QA fix #1), so a fresh checkout passes `Validate Enemy Archetypes`
+  without running the rebuild tool.
 
 ### AD-1S-3: One shared gameplay prefab for all production variants
 
