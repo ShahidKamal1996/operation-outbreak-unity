@@ -4,6 +4,7 @@ using OperationOutbreak.EditorTools;
 using OperationOutbreak.Enemies;
 using UnityEditor;
 using UnityEngine;
+using UnityEngine.TestTools;
 
 namespace OperationOutbreak.Tests
 {
@@ -143,7 +144,15 @@ namespace OperationOutbreak.Tests
             // The single shared framework applies the Runner's data: same
             // ZombieController class, values read from the definition, and a
             // null definition leaves the verified defaults untouched.
+            //
+            // 1S QA fix #1 - the fixture must represent the MINIMUM valid
+            // shared enemy root: ZombieController carries
+            // RequireComponent(typeof(Collider)), so the gameplay CapsuleCollider
+            // (the collider the real Zombie_Prototype prefab uses) is added
+            // FIRST. The RequireComponent rule is deliberately NOT weakened -
+            // the fixture now satisfies it, exactly like a real spawn does.
             GameObject holder = new GameObject("ArchetypeApplicationCheck");
+            holder.AddComponent<CapsuleCollider>();
             ZombieController zombie = holder.AddComponent<ZombieController>();
 
             try
@@ -373,8 +382,18 @@ namespace OperationOutbreak.Tests
             Assert.AreEqual("basic_infected", fromEmpty.ArchetypeId,
                 "An empty request must resolve to Basic.");
 
-            EnemyArchetypeDefinition fromUnknown =
-                EnemyArchetypeRegistry.ResolveRequestedArchetype("typo_or_unknown");
+            EnemyArchetypeDefinition fromUnknown;
+
+            // 1S QA fix #1 - the unknown-id fallback is CORRECT behaviour, and
+            // the registry deliberately logs an error diagnostic so a typo in
+            // authoring data is visible. The test must prove BOTH: the
+            // diagnostic IS emitted, and the fallback still resolves to Basic.
+            LogAssert.Expect(
+                LogType.Error,
+                "Unknown archetype id 'typo_or_unknown'");
+
+            fromUnknown = EnemyArchetypeRegistry.ResolveRequestedArchetype("typo_or_unknown");
+
             Assert.IsNotNull(fromUnknown,
                 "An unknown id must degrade to the default enemy, never nothing.");
             Assert.AreEqual("basic_infected", fromUnknown.ArchetypeId,

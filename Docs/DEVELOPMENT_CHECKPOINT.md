@@ -667,6 +667,18 @@ variant differences from data only:
 11. **Debug spawns** — `Tools > Operation Outbreak > Spawn Basic Infected
     (Debug)` / `Spawn Runner (Debug)` prove the shared framework in Play Mode
     (mission-tracked through the spawner seam when a spawner is in the scene).
+12. **1S QA fix #1 (2026-08-19) — test-fixture fixes only (no production code):**
+    two of the new `EnemyArchetypeTests` failed in the real Unity Test Runner:
+    (a) the unknown-id fallback test correctly proved the Basic fallback, but
+    the registry's INTENTIONAL error diagnostic was an un-expected log — the
+    test now registers `LogAssert.Expect(LogType.Error, ...)` before the
+    unknown-id resolution, so it proves BOTH that the diagnostic is emitted
+    AND that the fallback resolves to Basic; (b) the shared-controller test
+    fixture created a bare GameObject and `AddComponent<ZombieController>()`
+    failed on the component's `RequireComponent(typeof(Collider))` — the
+    fixture now adds the gameplay CapsuleCollider FIRST, matching the real
+    `Zombie_Prototype` root, and the RequireComponent rule is deliberately
+    NOT weakened. Expected total unchanged: 216/216.
 
 ## Manual Unity QA checklist for 1S
 
@@ -699,7 +711,17 @@ variant differences from data only:
    controller application, run clip/profile resolution, unique stable ids,
    invalid-archetype rejection, spawner seam resolution, default-to-Basic
    behaviour, no duplicated controller classes, shared ragdoll across
-   archetypes, runner controller tool path pin).
+   archetypes, runner controller tool path pin). 1S QA fix #1 repaired the
+   two failing test fixtures (LogAssert.Expect for the intentional fallback
+   diagnostic; CapsuleCollider added to the shared-controller fixture) — the
+   count is unchanged.
+9. `Tools > Operation Outbreak > Validate Enemy Archetypes` passes — every
+   archetype has a unique stable id, valid gameplay ranges, a valid
+   production prefab, valid locomotion setup and (where required) the shared
+   ragdoll configured. (Before the Runner controller asset is generated the
+   validator reports exactly ONE expected error - the missing runner
+   controller - proving the fail-loudly behaviour; after step 0 it must
+   report PASS.)
 
 ## What Milestone 1P.5 delivered
 
