@@ -714,6 +714,25 @@ variant differences from data only:
     `FindFirstObjectByType` call in the source (all other components already
     use `FindAnyObjectByType`); no other occurrences to change. Zero
     production behaviour changes; expected total unchanged 218/218.
+15. **1S QA fix #4 (2026-08-19) — LogAssert.Expect exact-match repair (test
+    only):** real Unity failed
+    `GameplayDefaultsToBasicAndPreservesExistingSpawnBehavior` with an
+    "unhandled log message" despite QA fix #1's `LogAssert.Expect` being
+    present. Root cause: Unity Test Framework's
+    `LogAssert.Expect(LogType, string)` overload compares the FULL message
+    passed to `Debug.LogError` — the fix #1 expectation was a PARTIAL string
+    (`"Unknown archetype id 'typo_or_unknown'"`) and therefore never matched
+    the production message (`"[1S] Unknown archetype id 'typo_or_unknown' -
+    falling back to the default ('basic_infected'). Check the spawn
+    request."`). The console's "[Error]" prefix is the rendered level marker,
+    NOT part of the matched message. Fix: the expectation now carries the
+    production message VERBATIM (byte-exact, verified) and the test ends with
+    `LogAssert.NoUnexpectedReceived()` — proving the expectation actually
+    matched (unfulfilled Expect would fail) and that nothing else logged
+    unexpectedly. The production diagnostic is UNCHANGED; the test still
+    proves both the diagnostic AND the Basic fallback. Audit: this was the
+    only `LogAssert.Expect` in the project (all others are
+    `NoUnexpectedReceived`). Expected total unchanged: 218/218.
 
 ## Manual Unity QA checklist for 1S
 
@@ -751,7 +770,10 @@ variant differences from data only:
    real-Rigidbody lifecycle-ordering replay with LogAssert.NoUnexpectedReceived).
    1S QA fix #1 repaired the two failing test fixtures (LogAssert.Expect for
    the intentional fallback diagnostic; CapsuleCollider added to the
-   shared-controller fixture) without changing the count.
+   shared-controller fixture) without changing the count; 1S QA fix #4
+   corrected that expectation to the byte-exact production message (the
+   partial string never matched Unity's exact-match overload) — count still
+   unchanged.
 9. `Tools > Operation Outbreak > Validate Enemy Archetypes` passes — every
    archetype has a unique stable id, valid gameplay ranges, a valid
    production prefab, valid locomotion setup and (where required) the shared

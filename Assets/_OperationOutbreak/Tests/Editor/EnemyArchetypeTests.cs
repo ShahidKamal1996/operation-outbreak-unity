@@ -384,13 +384,22 @@ namespace OperationOutbreak.Tests
 
             EnemyArchetypeDefinition fromUnknown;
 
-            // 1S QA fix #1 - the unknown-id fallback is CORRECT behaviour, and
-            // the registry deliberately logs an error diagnostic so a typo in
+            // 1S QA fix #4 - the unknown-id fallback is CORRECT behaviour, and
+            // the registry deliberately logs an Error diagnostic so a typo in
             // authoring data is visible. The test must prove BOTH: the
             // diagnostic IS emitted, and the fallback still resolves to Basic.
+            //
+            // LogAssert.Expect(LogType, string) compares the FULL message passed
+            // to Debug.LogError - the QA fix #1 partial string
+            // ("Unknown archetype id ...") therefore never matched in real
+            // Unity. The expectation below is the production message VERBATIM
+            // (EnemyArchetypeRegistry.ResolveRequestedArchetype). The "[Error]"
+            // prefix is the console's rendered level marker, NOT part of the
+            // matched message - the level is covered by LogType.Error.
             LogAssert.Expect(
                 LogType.Error,
-                "Unknown archetype id 'typo_or_unknown'");
+                "[1S] Unknown archetype id 'typo_or_unknown' - falling back to the default " +
+                "('basic_infected'). Check the spawn request.");
 
             fromUnknown = EnemyArchetypeRegistry.ResolveRequestedArchetype("typo_or_unknown");
 
@@ -398,6 +407,12 @@ namespace OperationOutbreak.Tests
                 "An unknown id must degrade to the default enemy, never nothing.");
             Assert.AreEqual("basic_infected", fromUnknown.ArchetypeId,
                 "An unknown id must fall back to Basic (the 1N fallback rule).");
+
+            // 1S QA fix #4 - additionally prove the expectation actually MATCHED
+            // (if the diagnostic had not fired, the Expect would remain
+            // unfulfilled and this would fail) and that nothing else logged
+            // unexpectedly during the test.
+            LogAssert.NoUnexpectedReceived();
         }
 
         [Test]
