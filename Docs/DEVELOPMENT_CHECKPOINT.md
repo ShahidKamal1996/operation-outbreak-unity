@@ -703,6 +703,17 @@ variant differences from data only:
     Rigidbody replay of both lifecycle orderings that ends with
     `LogAssert.NoUnexpectedReceived()` — if the helper ever regresses to
     writing on a kinematic body, Unity logs the warning and the test fails.
+14. **1S QA fix #3 (2026-08-19) — Unity 6 obsolete API warning (clean console):**
+    the editor debug-spawn utility logged CS0618 —
+    `Object.FindFirstObjectByType<EnemySpawner>()` is obsolete in Unity 6
+    (it relies on instance-ID ordering). The probe only needs ANY spawner in
+    the active scene to route a debug spawn through the shared seam (the
+    scene has exactly one), so it now uses
+    `Object.FindAnyObjectByType<EnemySpawner>()` — semantically equivalent,
+    ordering-independent. Project-wide audit: this was the ONLY
+    `FindFirstObjectByType` call in the source (all other components already
+    use `FindAnyObjectByType`); no other occurrences to change. Zero
+    production behaviour changes; expected total unchanged 218/218.
 
 ## Manual Unity QA checklist for 1S
 
@@ -732,7 +743,9 @@ variant differences from data only:
 7. Console clean (the only expected logs are the 1S debug/validation logs).
    In particular, NO "Setting linear velocity of a kinematic body is not
    supported." / "Setting angular velocity of a kinematic body is not
-   supported." warnings may appear during ragdoll deaths (1S QA fix #2).
+   supported." warnings may appear during ragdoll deaths (1S QA fix #2), and
+   NO CS0618 'FindFirstObjectByType is obsolete' warnings may appear (1S QA
+   fix #3).
 8. Full EditMode suite passes — expect **218/218** (216 previous; 1S QA fix
    #2 ADDED 2: the velocity-write legality gate truth table and the
    real-Rigidbody lifecycle-ordering replay with LogAssert.NoUnexpectedReceived).

@@ -217,8 +217,11 @@ namespace OperationOutbreak.EditorTools
             }
 
             // Preferred path: through the shared spawner seam, so the enemy is
-            // mission-tracked exactly like a real spawn.
-            EnemySpawner spawner = Object.FindFirstObjectByType<EnemySpawner>();
+            // mission-tracked exactly like a real spawn. QA fix #3: the scene has
+            // exactly one spawner and this probe only needs ANY match (no
+            // instance-ID ordering semantics), so FindAnyObjectByType is used -
+            // FindFirstObjectByType is obsolete in Unity 6 (CS0618).
+            EnemySpawner spawner = Object.FindAnyObjectByType<EnemySpawner>();
 
             if (spawner != null)
             {
