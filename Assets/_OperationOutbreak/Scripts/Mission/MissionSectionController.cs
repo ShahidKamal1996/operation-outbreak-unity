@@ -18,6 +18,20 @@ namespace OperationOutbreak.Mission
     /// UI - it drives the existing EnemySpawner and raises events that presentation
     /// components listen to.
     ///
+    /// Milestone 1T - the section/composition data now comes from a MissionDefinition
+    /// asset (serialized reference), so this component consumes mission DATA instead of
+    /// reconstructing the mission from hard-coded tables. The runtime flow is identical:
+    /// load the definition, activate section 1, request its configured enemies, wait for
+    /// the clear, advance through the definition's ordered sections, and fire the single
+    /// Mission Complete path after the final section. There is still exactly ONE
+    /// mission-flow system and ONE victory path.
+    ///
+    /// Fallback policy (documented): a missing MissionDefinition reference is a setup
+    /// error - it logs a loud, actionable diagnostic AND falls back to the verified
+    /// prototype mission (3 sections / 9 Basic + 3 Runner) so gameplay can never become
+    /// unpredictable or partially unplayable. The committed Mission_01 asset is the
+    /// production source of truth.
+    ///
     /// Design constraints honoured here:
     ///   - No static or global state. A scene reload is the reset, so every field is an
     ///     instance field and OnEnable restores the mission to Section 1.
@@ -27,71 +41,15 @@ namespace OperationOutbreak.Mission
     ///     has no Rigidbody, so OnTriggerEnter would never fire.
     ///   - Each section latches. Walking back across a completed threshold can never
     ///     restart it, because progression only ever moves forward through the array.
-    ///   - Expandable: add another entry to "sections" and the whole flow follows.
     /// </summary>
     [DisallowMultipleComponent]
     public sealed class MissionSectionController : MonoBehaviour
     {
-        /// <summary>Authoring data for one mission section. Pure data, no behaviour.</summary>
-        [Serializable]
-        public sealed class SectionDefinition
-        {
-            [Tooltip("Short HUD label, e.g. \"SECTION 1\".")]
-            public string label = "SECTION 1";
-
-            [Tooltip("HUD subtitle, e.g. \"OUTBREAK\".")]
-            public string subtitle = "OUTBREAK";
-
-            [Tooltip("The player must reach this Z before the section activates. " +
-                     "Section 1 normally uses the mission start Z so it opens immediately.")]
-            public float activationZ;
-
-            [Tooltip("How far forward the player may travel while this section is the " +
-                     "current one. Also caps where upgrade pickups may appear.")]
-            public float forwardLimitZ = 15f;
-
-            [Tooltip("Fallback total used only when \"composition\" is empty. Reuses the " +
-                     "existing EnemySpawner waves.")]
-            [Min(1)] public int enemyCount = 3;
-
-            [Tooltip("Milestone 1N - which enemy archetypes make up this section, e.g. " +
-                     "3 x BASIC + 1 x RUNNER. Leave empty to spawn \"enemyCount\" basic " +
-                     "zombies. The mission controller never inspects the archetypes; it " +
-                     "only forwards this data to the spawner.")]
-            public List<EnemySpawnEntry> composition = new List<EnemySpawnEntry>();
-
-            /// <summary>
-            /// Total enemies this section will spawn, regardless of archetype mix. This is
-            /// the number the section must kill to clear, so a Runner counts exactly the
-            /// same as a Basic zombie.
-            /// </summary>
-            public int TotalEnemyCount
-            {
-                get
-                {
-                    if (composition == null || composition.Count == 0)
-                    {
-                        return Mathf.Max(1, enemyCount);
-                    }
-
-                    int total = 0;
-
-                    for (int i = 0; i < composition.Count; i++)
-                    {
-                        if (composition[i] != null)
-                        {
-                            total += Mathf.Max(0, composition[i].count);
-                        }
-                    }
-
-                    return total > 0 ? total : Mathf.Max(1, enemyCount);
-                }
-            }
-
-            [Tooltip("Where this section's zombies appear, relative to the section's " +
-                     "forward limit. Positive values are ahead of the player's stop line.")]
-            public float spawnAheadOfLimit = 4f;
-        }
+        [Header("Mission Data (Milestone 1T)")]
+        [Tooltip("The data-driven mission this controller executes. Assign the committed " +
+                 "Mission_01 asset. A missing reference logs an error and falls back to the " +
+                 "verified prototype mission so gameplay stays well-defined.")]
+        [SerializeField] private MissionDefinition missionDefinition;
 
         [Header("References")]
         [SerializeField] private EnemySpawner enemySpawner;
@@ -101,10 +59,6 @@ namespace OperationOutbreak.Mission
 
         [Tooltip("Optional. Shows the temporary \"SECTION n\" banner when a section begins.")]
         [SerializeField] private MissionSectionHud sectionHud;
-
-        [Header("Sections (in forward order)")]
-        [SerializeField]
-        private List<SectionDefinition> sections = new List<SectionDefinition>();
 
         [Header("Activation")]
         [Tooltip("Seconds to wait after a section is cleared before the next one may be " +
@@ -120,15 +74,15 @@ namespace OperationOutbreak.Mission
         [SerializeField] private bool verboseLogging = true;
 
         /// <summary>Raised when a section becomes active. Argument is the zero-based index.</summary>
-        public event Action<int, SectionDefinition> SectionStarted;
+        public event Action<int, MissionDefinition.MissionSection> SectionStarted;
 
         /// <summary>Raised when a section's combat is cleared. Argument is the zero-based index.</summary>
-        public event Action<int, SectionDefinition> SectionCleared;
+        public event Action<int, MissionDefinition.MissionSection> SectionCleared;
 
         /// <summary>
         /// Raised once when the LAST section has been cleared. This is the single mission
         /// victory signal - Mission Complete listens to the spawner's own encounter event,
-        /// which is now only raised at the end of the final section.
+        /// which is only raised at the end of the final section.
         /// </summary>
         public event Action MissionCompleted;
 
@@ -137,6 +91,8 @@ namespace OperationOutbreak.Mission
         private bool _missionComplete;
         private bool _playerDead;
         private float _settleTimer;
+        private bool _fallbackWarned;
+        private MissionDefinition _fallbackDefinition;
 
         /// <summary>Zero-based index of the section in progress, or the last one cleared.</summary>
         public int CurrentSectionIndex => _currentIndex;
@@ -150,7 +106,8 @@ namespace OperationOutbreak.Mission
         /// <summary>True once every section has been cleared.</summary>
         public bool IsMissionComplete => _missionComplete;
 
-        public int SectionCount => sections != null ? sections.Count : 0;
+        /// <summary>Number of sections in the mission being executed.</summary>
+        public int SectionCount => ResolvedSections.Count;
 
         /// <summary>
         /// How far forward the player may currently travel. Used by PlayerLaneBounds so the
@@ -167,6 +124,41 @@ namespace OperationOutbreak.Mission
         /// </summary>
         public float CurrentSectionMinZ { get; private set; }
 
+        /// <summary>
+        /// The mission sections this controller executes. Primary source is the assigned
+        /// MissionDefinition asset; when none is assigned the verified prototype mission is
+        /// built in memory (with a loud diagnostic) so gameplay stays well-defined.
+        /// </summary>
+        private IReadOnlyList<MissionDefinition.MissionSection> ResolvedSections
+        {
+            get
+            {
+                if (missionDefinition != null && missionDefinition.SectionCount > 0)
+                {
+                    return missionDefinition.Sections;
+                }
+
+                if (!_fallbackWarned)
+                {
+                    _fallbackWarned = true;
+                    Debug.LogError(
+                        "[1T] No MissionDefinition is assigned to '" + name + "'. Assign the " +
+                        "committed Mission_01 asset (Assets/_OperationOutbreak/Resources/" +
+                        "MissionDefinitions/Mission_01.asset) or create one via Assets > Create > " +
+                        "Operation Outbreak > Mission Definition. Using the verified prototype " +
+                        "mission (3 sections / 9 Basic + 3 Runner) as a development fallback until " +
+                        "then.", this);
+                }
+
+                if (_fallbackDefinition == null)
+                {
+                    _fallbackDefinition = MissionDefinition.CreateVerifiedPrototypeMission();
+                }
+
+                return _fallbackDefinition.Sections;
+            }
+        }
+
         private void Awake()
         {
             if (enemySpawner == null) enemySpawner = FindAnyObjectByType<EnemySpawner>();
@@ -182,11 +174,6 @@ namespace OperationOutbreak.Mission
                     playerTransform = controller.transform;
                 }
             }
-
-            if (sections == null || sections.Count == 0)
-            {
-                BuildDefaultSections();
-            }
         }
 
         private void OnEnable()
@@ -198,7 +185,9 @@ namespace OperationOutbreak.Mission
             _playerDead = false;
             _settleTimer = 0f;
 
-            CurrentForwardLimitZ = sections != null && sections.Count > 0
+            IReadOnlyList<MissionDefinition.MissionSection> sections = ResolvedSections;
+
+            CurrentForwardLimitZ = sections.Count > 0
                 ? sections[0].forwardLimitZ
                 : 15f;
 
@@ -244,8 +233,9 @@ namespace OperationOutbreak.Mission
             }
 
             int next = _currentIndex + 1;
+            IReadOnlyList<MissionDefinition.MissionSection> sections = ResolvedSections;
 
-            if (sections == null || next >= sections.Count || playerTransform == null)
+            if (next >= sections.Count || playerTransform == null)
             {
                 return;
             }
@@ -271,13 +261,15 @@ namespace OperationOutbreak.Mission
         private void TryActivate(int index)
         {
             if (_missionComplete || _playerDead || _sectionActive) return;
-            if (sections == null || index < 0 || index >= sections.Count) return;
+
+            IReadOnlyList<MissionDefinition.MissionSection> sections = ResolvedSections;
+            if (index < 0 || index >= sections.Count) return;
             if (index <= _currentIndex) return;
 
             _currentIndex = index;
             _sectionActive = true;
 
-            SectionDefinition section = sections[index];
+            MissionDefinition.MissionSection section = sections[index];
 
             // The band the player fights in during this section: from the previous
             // section's stop line up to this one's. Section 1 keeps the lane's own rear.
@@ -296,14 +288,15 @@ namespace OperationOutbreak.Mission
 
             if (enemySpawner != null)
             {
-                // Milestone 1N - the composition is passed straight through. Mission
-                // progression stays ignorant of enemy types: it only cares that the
-                // section reports itself cleared.
+                // Milestone 1T - the composition is supplied by the MissionDefinition and
+                // passed straight through (by 1S stable archetype id). Mission progression
+                // stays ignorant of enemy types: it only cares that the section reports
+                // itself cleared.
                 enemySpawner.BeginSection(
                     index,
-                    section.enemyCount,
+                    section.TotalEnemyCount,
                     section.forwardLimitZ + section.spawnAheadOfLimit,
-                    section.composition);
+                    BuildSpawnComposition(section));
             }
 
             if (verboseLogging)
@@ -328,7 +321,8 @@ namespace OperationOutbreak.Mission
             _sectionActive = false;
             _settleTimer = postSectionSettle;
 
-            SectionDefinition section = sections[index];
+            IReadOnlyList<MissionDefinition.MissionSection> sections = ResolvedSections;
+            MissionDefinition.MissionSection section = sections[index];
 
             if (verboseLogging)
             {
@@ -365,13 +359,10 @@ namespace OperationOutbreak.Mission
             // so the player can never wander into an unstarted combat area.
             int next = index + 1;
 
-            if (next < sections.Count)
-            {
-                CurrentForwardLimitZ = Mathf.Max(
-                    CurrentForwardLimitZ,
-                    sections[next].activationZ + travelAllowance);
-                ApplyForwardLimit();
-            }
+            CurrentForwardLimitZ = Mathf.Max(
+                CurrentForwardLimitZ,
+                sections[next].activationZ + travelAllowance);
+            ApplyForwardLimit();
 
             if (sectionHud != null)
             {
@@ -396,49 +387,30 @@ namespace OperationOutbreak.Mission
         }
 
         /// <summary>
-        /// Default 3/4/5 layout used when the scene supplies no data. Milestone 1N keeps
-        /// those totals and only varies the make-up: 3 basic, then 3 basic + 1 runner,
-        /// then 3 basic + 2 runners. Values match the
-        /// existing corridor: the approved Section 1 stop line is z=15, and each later
-        /// section advances the player 18 units further along the 100-unit lane.
+        /// Milestone 1T - flattens a MissionDefinition section's composition (1S stable
+        /// ids) into the spawner's spawn entries. No archetype branching here: the ids
+        /// are passed through untouched and the shared spawner resolves them.
         /// </summary>
-        private void BuildDefaultSections()
+        private static List<EnemySpawnEntry> BuildSpawnComposition(
+            MissionDefinition.MissionSection section)
         {
-            sections = new List<SectionDefinition>
+            List<EnemySpawnEntry> entries = new List<EnemySpawnEntry>();
+
+            if (section.composition == null)
             {
-                new SectionDefinition
+                return entries;
+            }
+
+            for (int i = 0; i < section.composition.Count; i++)
+            {
+                MissionDefinition.EnemyCompositionEntry entry = section.composition[i];
+                if (entry != null)
                 {
-                    label = "SECTION 1", subtitle = "OUTBREAK",
-                    activationZ = -100f, forwardLimitZ = 15f,
-                    enemyCount = 3, spawnAheadOfLimit = 1f,
-                    composition = new List<EnemySpawnEntry>
-                    {
-                        new EnemySpawnEntry(EnemyArchetypeId.Basic, 3)
-                    }
-                },
-                new SectionDefinition
-                {
-                    label = "SECTION 2", subtitle = "ADVANCE",
-                    activationZ = 20f, forwardLimitZ = 33f,
-                    enemyCount = 4, spawnAheadOfLimit = 4f,
-                    composition = new List<EnemySpawnEntry>
-                    {
-                        new EnemySpawnEntry(EnemyArchetypeId.Basic, 3),
-                        new EnemySpawnEntry(EnemyArchetypeId.Runner, 1)
-                    }
-                },
-                new SectionDefinition
-                {
-                    label = "SECTION 3", subtitle = "FINAL PUSH",
-                    activationZ = 38f, forwardLimitZ = 51f,
-                    enemyCount = 5, spawnAheadOfLimit = 4f,
-                    composition = new List<EnemySpawnEntry>
-                    {
-                        new EnemySpawnEntry(EnemyArchetypeId.Basic, 3),
-                        new EnemySpawnEntry(EnemyArchetypeId.Runner, 2)
-                    }
+                    entries.Add(new EnemySpawnEntry(entry.archetypeId, entry.count));
                 }
-            };
+            }
+
+            return entries;
         }
     }
 }

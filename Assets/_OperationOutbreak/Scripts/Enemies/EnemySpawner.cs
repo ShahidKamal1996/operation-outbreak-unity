@@ -353,7 +353,8 @@ namespace OperationOutbreak.Enemies
 
                     if (archetype != null
                         && archetype.prefab != null
-                        && string.Equals(archetype.id, archetypeId, StringComparison.OrdinalIgnoreCase))
+                        && (string.Equals(archetype.id, archetypeId, StringComparison.OrdinalIgnoreCase)
+                            || string.Equals(archetype.stableId, archetypeId, StringComparison.Ordinal)))
                     {
                         return archetype;
                     }

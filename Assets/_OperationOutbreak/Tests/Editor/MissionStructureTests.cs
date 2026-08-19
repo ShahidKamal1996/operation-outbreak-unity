@@ -1,7 +1,6 @@
 using System.Collections.Generic;
 using NUnit.Framework;
 using OperationOutbreak.Diagnostics;
-using OperationOutbreak.Enemies;
 using OperationOutbreak.Mission;
 using UnityEngine;
 
@@ -11,63 +10,68 @@ namespace OperationOutbreak.Tests
     /// Milestone 1O - EditMode tests for the authored mission shape: three sections with
     /// 3 / 4 / 5 enemies and the 0 / 1 / 2 Runner split.
     ///
-    /// These build SectionDefinition objects in memory rather than loading the scene,
-    /// because MissionSectionController's list is private and serialized. That keeps the
-    /// tests fast and side-effect free; the companion check in the runtime diagnostics
-    /// verifies the ACTUAL scene values during a play session, and the section-table test
-    /// below encodes the same numbers so a drift shows up in one of the two places.
+    /// Milestone 1T - these now build MissionDefinition.MissionSection objects in memory
+    /// (the data model the runtime mission flow consumes) rather than the controller's old
+    /// private serialized list. The numbers are unchanged from the verified baseline: the
+    /// migration to the data-driven MissionDefinition did not move a single enemy.
     /// </summary>
     public sealed class MissionStructureTests
     {
         /// <summary>Rebuilds the approved section table exactly as authored in the scene.</summary>
-        private static List<MissionSectionController.SectionDefinition> BuildApprovedSections()
+        private static List<MissionDefinition.MissionSection> BuildApprovedSections()
         {
-            var s1 = new MissionSectionController.SectionDefinition
+            var s1 = new MissionDefinition.MissionSection
             {
+                sectionId = "section_01",
                 label = "SECTION 1",
+                subtitle = "OUTBREAK",
                 activationZ = -100f,
                 forwardLimitZ = 15f,
-                enemyCount = 3,
-                composition = new List<EnemySpawnEntry>
+                spawnAheadOfLimit = 1f,
+                composition = new List<MissionDefinition.EnemyCompositionEntry>
                 {
-                    new EnemySpawnEntry(EnemyArchetypeId.Basic, 3)
+                    new MissionDefinition.EnemyCompositionEntry(MissionDefinition.BasicArchetypeId, 3)
                 }
             };
 
-            var s2 = new MissionSectionController.SectionDefinition
+            var s2 = new MissionDefinition.MissionSection
             {
+                sectionId = "section_02",
                 label = "SECTION 2",
+                subtitle = "ADVANCE",
                 activationZ = 20f,
                 forwardLimitZ = 33f,
-                enemyCount = 4,
-                composition = new List<EnemySpawnEntry>
+                spawnAheadOfLimit = 4f,
+                composition = new List<MissionDefinition.EnemyCompositionEntry>
                 {
-                    new EnemySpawnEntry(EnemyArchetypeId.Basic, 3),
-                    new EnemySpawnEntry(EnemyArchetypeId.Runner, 1)
+                    new MissionDefinition.EnemyCompositionEntry(MissionDefinition.BasicArchetypeId, 3),
+                    new MissionDefinition.EnemyCompositionEntry(MissionDefinition.RunnerArchetypeId, 1)
                 }
             };
 
-            var s3 = new MissionSectionController.SectionDefinition
+            var s3 = new MissionDefinition.MissionSection
             {
+                sectionId = "section_03",
                 label = "SECTION 3",
+                subtitle = "FINAL PUSH",
                 activationZ = 38f,
                 forwardLimitZ = 51f,
-                enemyCount = 5,
-                composition = new List<EnemySpawnEntry>
+                spawnAheadOfLimit = 4f,
+                composition = new List<MissionDefinition.EnemyCompositionEntry>
                 {
-                    new EnemySpawnEntry(EnemyArchetypeId.Basic, 3),
-                    new EnemySpawnEntry(EnemyArchetypeId.Runner, 2)
+                    new MissionDefinition.EnemyCompositionEntry(MissionDefinition.BasicArchetypeId, 3),
+                    new MissionDefinition.EnemyCompositionEntry(MissionDefinition.RunnerArchetypeId, 2)
                 }
             };
 
-            return new List<MissionSectionController.SectionDefinition> { s1, s2, s3 };
+            return new List<MissionDefinition.MissionSection> { s1, s2, s3 };
         }
 
         private static int CountOf(
-            MissionSectionController.SectionDefinition section, string archetypeId)
+            MissionDefinition.MissionSection section, string archetypeId)
         {
             int total = 0;
-            foreach (EnemySpawnEntry entry in section.composition)
+            foreach (MissionDefinition.EnemyCompositionEntry entry in section.composition)
             {
                 if (entry != null && entry.archetypeId == archetypeId)
                 {
@@ -83,10 +87,10 @@ namespace OperationOutbreak.Tests
         [Test]
         public void SectionOneIsThreeBasicsAndNoRunners()
         {
-            MissionSectionController.SectionDefinition s1 = BuildApprovedSections()[0];
+            MissionDefinition.MissionSection s1 = BuildApprovedSections()[0];
 
-            Assert.AreEqual(3, CountOf(s1, EnemyArchetypeId.Basic));
-            Assert.AreEqual(0, CountOf(s1, EnemyArchetypeId.Runner),
+            Assert.AreEqual(3, CountOf(s1, MissionDefinition.BasicArchetypeId));
+            Assert.AreEqual(0, CountOf(s1, MissionDefinition.RunnerArchetypeId),
                 "Section 1 introduces the Basic zombie only.");
             Assert.AreEqual(3, s1.TotalEnemyCount);
         }
@@ -94,27 +98,27 @@ namespace OperationOutbreak.Tests
         [Test]
         public void SectionTwoIsThreeBasicsAndOneRunner()
         {
-            MissionSectionController.SectionDefinition s2 = BuildApprovedSections()[1];
+            MissionDefinition.MissionSection s2 = BuildApprovedSections()[1];
 
-            Assert.AreEqual(3, CountOf(s2, EnemyArchetypeId.Basic));
-            Assert.AreEqual(1, CountOf(s2, EnemyArchetypeId.Runner));
+            Assert.AreEqual(3, CountOf(s2, MissionDefinition.BasicArchetypeId));
+            Assert.AreEqual(1, CountOf(s2, MissionDefinition.RunnerArchetypeId));
             Assert.AreEqual(4, s2.TotalEnemyCount);
         }
 
         [Test]
         public void SectionThreeIsThreeBasicsAndTwoRunners()
         {
-            MissionSectionController.SectionDefinition s3 = BuildApprovedSections()[2];
+            MissionDefinition.MissionSection s3 = BuildApprovedSections()[2];
 
-            Assert.AreEqual(3, CountOf(s3, EnemyArchetypeId.Basic));
-            Assert.AreEqual(2, CountOf(s3, EnemyArchetypeId.Runner));
+            Assert.AreEqual(3, CountOf(s3, MissionDefinition.BasicArchetypeId));
+            Assert.AreEqual(2, CountOf(s3, MissionDefinition.RunnerArchetypeId));
             Assert.AreEqual(5, s3.TotalEnemyCount);
         }
 
         [Test]
         public void MissionTotalsAreThreeFourFive()
         {
-            List<MissionSectionController.SectionDefinition> sections = BuildApprovedSections();
+            List<MissionDefinition.MissionSection> sections = BuildApprovedSections();
 
             Assert.AreEqual(3, sections.Count, "The mission is three sections long.");
             Assert.AreEqual(3, sections[0].TotalEnemyCount);
@@ -126,18 +130,17 @@ namespace OperationOutbreak.Tests
         }
 
         [Test]
-        public void TotalEnemyCountFollowsCompositionRatherThanTheLegacyCount()
+        public void TotalEnemyCountIsDerivedFromComposition()
         {
-            // composition is authoritative; enemyCount is only the legacy fallback. If the
-            // two disagree the spawner must follow composition, or Section 2 would spawn
-            // the wrong number of enemies and could never report AREA CLEAR correctly.
-            var section = new MissionSectionController.SectionDefinition
+            // composition is the single source of truth for a section's enemy total. The
+            // section total is DERIVED from it, never stored separately, so the two can
+            // never drift out of sync.
+            var section = new MissionDefinition.MissionSection
             {
-                enemyCount = 99,
-                composition = new List<EnemySpawnEntry>
+                composition = new List<MissionDefinition.EnemyCompositionEntry>
                 {
-                    new EnemySpawnEntry(EnemyArchetypeId.Basic, 3),
-                    new EnemySpawnEntry(EnemyArchetypeId.Runner, 1)
+                    new MissionDefinition.EnemyCompositionEntry(MissionDefinition.BasicArchetypeId, 3),
+                    new MissionDefinition.EnemyCompositionEntry(MissionDefinition.RunnerArchetypeId, 1)
                 }
             };
 
@@ -145,15 +148,17 @@ namespace OperationOutbreak.Tests
         }
 
         [Test]
-        public void TotalEnemyCountFallsBackToEnemyCountWhenNoCompositionIsAuthored()
+        public void SectionWithNoCompositionSpreadsZeroEnemies()
         {
-            var section = new MissionSectionController.SectionDefinition
+            // Milestone 1T - composition is REQUIRED (validation rejects an empty one).
+            // An empty composition therefore derives a zero total rather than silently
+            // inventing a fallback count, which is what keeps malformed data loud.
+            var section = new MissionDefinition.MissionSection
             {
-                enemyCount = 3,
-                composition = new List<EnemySpawnEntry>()
+                composition = new List<MissionDefinition.EnemyCompositionEntry>()
             };
 
-            Assert.AreEqual(3, section.TotalEnemyCount);
+            Assert.AreEqual(0, section.TotalEnemyCount);
         }
 
         // ------------------------------------------------------------ progression
@@ -161,11 +166,11 @@ namespace OperationOutbreak.Tests
         [Test]
         public void SectionsAreStrictlyForwardProgressing()
         {
-            List<MissionSectionController.SectionDefinition> sections = BuildApprovedSections();
+            List<MissionDefinition.MissionSection> sections = BuildApprovedSections();
 
             var activations = new List<float>();
             var limits = new List<float>();
-            foreach (MissionSectionController.SectionDefinition section in sections)
+            foreach (MissionDefinition.MissionSection section in sections)
             {
                 activations.Add(section.activationZ);
                 limits.Add(section.forwardLimitZ);
@@ -178,7 +183,7 @@ namespace OperationOutbreak.Tests
         [Test]
         public void EachSectionActivationSitsBeyondThePreviousForwardLimit()
         {
-            List<MissionSectionController.SectionDefinition> sections = BuildApprovedSections();
+            List<MissionDefinition.MissionSection> sections = BuildApprovedSections();
 
             for (int i = 1; i < sections.Count; i++)
             {
@@ -193,7 +198,7 @@ namespace OperationOutbreak.Tests
         {
             // Mission Complete is defined as "the last section index has been cleared".
             // Clearing section 0 or 1 must never satisfy it.
-            List<MissionSectionController.SectionDefinition> sections = BuildApprovedSections();
+            List<MissionDefinition.MissionSection> sections = BuildApprovedSections();
             int lastIndex = sections.Count - 1;
 
             Assert.AreNotEqual(lastIndex, 0, "Clearing Section 1 must not complete the mission.");
@@ -206,7 +211,7 @@ namespace OperationOutbreak.Tests
         {
             // Enemies spawn at forwardLimitZ + spawnAheadOfLimit, so they always appear in
             // front of where the player is allowed to stand.
-            foreach (MissionSectionController.SectionDefinition section in BuildApprovedSections())
+            foreach (MissionDefinition.MissionSection section in BuildApprovedSections())
             {
                 Assert.Greater(section.spawnAheadOfLimit, 0f,
                     $"{section.label} would spawn enemies on top of the player.");

@@ -30,8 +30,8 @@
 | **1P.5 — Toon Soldier visual integration** | **VERIFIED** (owner QA 2026-08-17: EditMode 137/137, animations/aim/grounding/muzzle all accepted) |
 | **1Q — production enemy foundation (Basic Infected)** | **VERIFIED** (2026-08-19 — owner manual Unity QA PASSED; EditMode 205/205; verified assets committed by the owner at `0ca4d76` "Milestone 1Q: save verified production zombie ragdoll assets") |
 | 1R — enemy animation & death foundation | **VERIFIED through the extended 1Q delivery** (roadmap reconciliation: 1R's scope was fully delivered and QA-verified during the 1Q implementation/QA cycle — hybrid animation → ragdoll death, stabilized ragdoll, collider lifecycle, reuse/reset. NOT rebuilt separately.) |
-| **1S — enemy variant architecture** | **IMPLEMENTED — AWAITING MANUAL UNITY QA** (2026-08-19) |
-| 1T | NOT STARTED — begin only when the project owner authorizes it after 1S QA. |
+| **1S — enemy variant architecture** | **VERIFIED** (2026-08-19 — real Unity EditMode 219/219 passed; Validate Enemy Archetypes PASS; Basic/Runner/Toon Soldier/ragdoll/reuse verified; console clean) |
+| **1T — mission definition foundation** | **IMPLEMENTED — AWAITING MANUAL UNITY QA** (2026-08-20) |
 
 ## What Milestone 1P delivered
 
@@ -762,6 +762,68 @@ variant differences from data only:
     rifle/muzzle, aiming, locomotion all preserved). Expected total: 219/219
     (was 218; +1 test).
 
+## What Milestone 1T delivered
+
+Data-driven mission definition foundation — mission DATA describes what a
+mission contains; runtime gameplay systems execute it:
+
+1. **MissionDefinition (ScriptableObject)** — `Scripts/Mission/MissionDefinition.cs`.
+   PURE DATA, no Update loop, no combat logic, no progression state:
+   - Identity: stable `missionId`, `missionNumber`, `chapterNumber`, `displayName`.
+   - Structure: an ordered `sections` list; each `MissionSection` carries a stable
+     `sectionId`, HUD label/subtitle, the corridor it occupies (`activationZ`,
+     `forwardLimitZ`, `spawnAheadOfLimit`) and its `composition`.
+   - Composition: `EnemyCompositionEntry { archetypeId, count }` where
+     `archetypeId` is the 1S STABLE id (`basic_infected` / `runner`) — no variant-
+     specific ids, no per-mission classes.
+   - Derived queries only (no duplicated stored totals): `SectionCount`,
+     `TotalEnemyCount`, `GetSection(index)`, `GetArchetypeCount(id)` — totals are
+     calculated from sections → compositions → counts so they can never drift.
+2. **Current prototype mission migrated** — `Resources/MissionDefinitions/Mission_01.asset`
+   reproduces the VERIFIED mission byte-equivalently: 3 sections, 12 enemies,
+   9 Basic + 3 Runner, with the real section distribution (Section 1 = 3 Basic;
+   Section 2 = 3 Basic + 1 Runner; Section 3 = 3 Basic + 2 Runner), the verified
+   corridor values (activationZ/forwardLimitZ/spawnAheadOfLimit) and the verified
+   HUD labels. No gameplay change.
+3. **Runtime ownership boundaries** (unchanged responsibilities):
+   - `MissionDefinition` — static mission configuration only.
+   - `MissionSectionController` — runtime progression only: tracks the current
+     section, decides when it clears, advances through the definition's sections,
+     and fires the single Mission Complete path after the final section. It now
+     reads the `missionDefinition` serialized reference instead of its own
+     serialized section table.
+   - `EnemySpawner` — receives the section composition, resolves each 1S stable id
+     through its serialized per-archetype library (now keyed by the 1S `stableId`
+     as well as the legacy id) and spawns exactly as before (same prefabs, offsets,
+     standoffs, pacing, bookkeeping).
+   - `EnemyArchetypeRegistry` — remains the id→definition resolution authority
+     (exercised by mission validation and the 1S direct-spawn seam).
+   - `ZombieController` — remains the shared enemy gameplay authority.
+   - No `Mission1Controller`/`Mission2Controller`/`RunnerMissionController` exists
+     (reflection-pinned by a test).
+4. **Fallback policy (documented)** — a missing `MissionDefinition` reference logs a
+   loud, actionable `[1T]` error AND falls back to the verified prototype mission
+   built in memory (`MissionDefinition.CreateVerifiedPrototypeMission`), so a
+   missing asset can never produce unpredictable or partial gameplay. The committed
+   `Mission_01` asset is the production source of truth.
+5. **Validation** — `Tools > Operation Outbreak > Validate Mission Definitions`
+   (`MissionDefinitionEditorTools`) reports, per mission/section: empty mission id,
+   invalid mission/chapter numbers, zero sections, null sections, duplicate section
+   ids, empty composition, null/empty archetype entries, empty/unknown archetype
+   ids, non-positive counts and structurally impossible progression. Broken data is
+   never silently repaired at runtime.
+6. **Authoring workflow** — a future designer creates a normal mission via:
+   Create > Operation Outbreak > Mission Definition → identity → sections →
+   archetype/count entries → assign in the scene → Validate Mission Definitions.
+   No C# required.
+7. **Tests** — `MissionDefinitionTests.cs` (18 new) pins the committed Mission_01
+   migration (3 sections / 12 enemies / 9+3), the derived-query contract,
+   every validation rejection, the runtime wiring (definition referenced by the
+   scene, shared spawner resolves every requested stable id) and the no-per-mission-
+   controller rule. `MissionStructureTests.cs` was migrated to the new
+   `MissionDefinition.MissionSection` model (same 10 tests, same pinned numbers).
+   Expected total: **237/237** (219 verified + 18 new).
+
 ## Manual Unity QA checklist for 1S
 
 0. **REQUIRED FIRST STEP — run `Tools > Operation Outbreak > Rebuild Runner
@@ -805,6 +867,7 @@ variant differences from data only:
    persistence guard (`CommittedControllerCarriesValidPersistedShootLayerWithoutRebuild`,
    which loads the committed controller without rebuilding and proves the
    Shoot Layer state machine survives a save/force-reimport/reload round-trip).
+   (Milestone 1T later adds 18 mission-definition tests — see the 1T checklist.)
 9. `Tools > Operation Outbreak > Validate Enemy Archetypes` passes — every
    archetype has a unique stable id, valid gameplay ranges, a valid
    production prefab, valid locomotion setup and (where required) the shared
@@ -812,6 +875,28 @@ variant differences from data only:
    validator reports exactly ONE expected error - the missing runner
    controller - proving the fail-loudly behaviour; after step 0 it must
    report PASS.)
+
+## Manual Unity QA checklist for 1T
+
+1. Project compiles with no new errors/warnings.
+2. Current gameplay scene starts normally (the scene's MissionSectionController
+   now references `Resources/MissionDefinitions/Mission_01.asset`).
+3. Mission still contains exactly 3 sections and exactly 12 enemies.
+4. Composition remains 9 Basic + 3 Runner (Section 1 = 3 Basic; Section 2 =
+   3 Basic + 1 Runner; Section 3 = 3 Basic + 2 Runner).
+5. Section progression, enemy distribution, spawn behaviour and combat pacing
+   behave exactly as before.
+6. Basic and Runner enemies behave exactly as before (Runner still the
+   prototype Runner_Prototype: speed 3.5, health 2; Basic 2.5 / 3).
+7. Enemy hybrid ragdoll remains stable; reuse/reset unchanged.
+8. Toon Soldier movement/shooting, walking-while-shooting and upper-body
+   firing remain correct.
+9. Gates/upgrades remain correctly sequenced; Mission Complete occurs exactly
+   once after the configured final section.
+10. Console clean during normal gameplay.
+11. `Tools > Operation Outbreak > Validate Enemy Archetypes` → PASS.
+12. `Tools > Operation Outbreak > Validate Mission Definitions` → PASS.
+13. Full EditMode suite: 219 previous + 18 new 1T tests → **237/237**, 0 failed.
 
 ## What Milestone 1P.5 delivered
 

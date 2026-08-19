@@ -719,6 +719,77 @@
   failure path degrades to the verified Basic behaviour rather than stalling
   or spawning incorrectly.
 
+## Milestone 1T decisions
+
+### AD-1T-1: Mission data describes WHAT; gameplay systems execute it
+
+- **Decision:** mission configuration lives in a pure-data `MissionDefinition`
+  ScriptableObject (identity + ordered sections + per-section enemy composition
+  by 1S stable id). `MissionSectionController` owns progression only and now
+  reads a serialized `missionDefinition` reference instead of its own section
+  table; `EnemySpawner` receives the composition and resolves/spawns it through
+  its serialized per-archetype library; `EnemyArchetypeRegistry` stays the
+  id→definition resolution authority; `ZombieController` stays the shared enemy
+  gameplay authority.
+- **Why:** the brief's core rule forbids `Mission1Controller`/`Mission2Controller`
+  duplication. A normal future mission must be creatable by configuring an asset,
+  not by writing a new runtime class.
+- **What was NOT collapsed:** no single `MissionManager`. The four systems keep
+  their established ownership boundaries.
+
+### AD-1T-2: Composition uses the 1S stable ids; the spawner resolves them to the verified spawn configuration
+
+- **Decision:** `EnemyCompositionEntry.archetypeId` carries the 1S STABLE id
+  (`basic_infected` / `runner`). The spawner's per-archetype library (which has
+  always mapped an id to a prefab + spawn offset + standoff) gained an additive
+  `stableId` field, so one library entry resolves BOTH the legacy id (`BASIC` /
+  `RUNNER`, still pinned by the 1N scene-configuration tests) and the 1S stable id.
+  The mission therefore requests by stable id and the spawner executes the exact
+  verified spawn (Basic = Zombie_Prototype 2.5/3 at the band; Runner =
+  Runner_Prototype 3.5/2 with its verified offset/standoff) — byte-equivalent to
+  the pre-1T mission.
+- **Why the Runner was NOT re-routed through the shared-prefab seam:** the verified
+  mission runner is `Runner_Prototype` (speed 3.5, health 2, prototype visual),
+  while the 1S `EnemyArchetype_Runner` definition (speed 4.5, production Run
+  profile whose `OO_Runner.controller` is not yet committed) would change its
+  speed, visuals and console cleanliness. Routing it through `SpawnEnemyWithDefinition`
+  would regress the verified baseline, which the brief forbids. Mission data is
+  1S-stable-id based; the spawn execution stays on the existing verified pipeline.
+- **No variant branching:** the mapping is data (library entries), never `if (runner)`.
+
+### AD-1T-3: Derived information only (no duplicated totals)
+
+- **Decision:** `TotalEnemyCount`, `GetArchetypeCount(id)` and the section totals
+  are computed from sections → compositions → counts. No independent stored total
+  exists to drift out of sync.
+
+### AD-1T-4: Fallback policy — fail loudly AND stay playable
+
+- **Decision:** a missing/empty `MissionDefinition` reference logs a loud actionable
+  `[1T]` error and falls back to the verified prototype mission built in memory
+  (`MissionDefinition.CreateVerifiedPrototypeMission`). This combines the brief's
+  option A (loud diagnostic) with option B (documented safe fallback) so a setup
+  error can never produce unpredictable or partially unplayable gameplay.
+- **Why not silent:** malformed mission data must be loud, never silent. Runtime
+  never repairs mission assets; the editor validator reports the exact correction.
+
+### AD-1T-5: Mission validation is read-only and side-effect-free
+
+- **Decision:** `MissionDefinition.CollectProblems(definition, knownArchetypeIds)`
+  is a pure static (testable without an asset database); the editor tool
+  `Tools > Operation Outbreak > Validate Mission Definitions` supplies the known
+  1S ids and reports mission + section + exact problem + correction. It detects
+  empty ids, invalid numbers, zero sections, null/duplicate section ids, empty
+  composition, null/empty/unknown archetype ids, non-positive counts and
+  structurally impossible progression. It never silently repairs data.
+
+### AD-1T-6: The scene receives the mission by serialized reference
+
+- **Decision:** the gameplay scene's `MissionSectionController.missionDefinition`
+  references the committed `Mission_01` asset by GUID. No scene-name checks, no
+  `if (missionNumber == 1)` reconstruction. The runtime executes whatever
+  MissionDefinition it is given.
+
 ## UNKNOWN / open questions
 
 - Pre-1P architecture rationale for gates (1J series) could not be recovered (original

@@ -36,6 +36,12 @@ namespace OperationOutbreak.Enemies
         [Tooltip("Identifier referenced by a section's composition, e.g. \"BASIC\" or \"RUNNER\".")]
         public string id = EnemyArchetypeId.Basic;
 
+        [Tooltip("Milestone 1T - the 1S STABLE archetype id this entry represents " +
+                 "(e.g. 'basic_infected' or 'runner'). Mission definitions request " +
+                 "enemies by this id; the spawner resolves it here so the same library " +
+                 "entry serves both the legacy ids and the 1S stable ids.")]
+        public string stableId = string.Empty;
+
         [Tooltip("Prefab spawned for this archetype. Must carry a ZombieController.")]
         public ZombieController prefab;
 

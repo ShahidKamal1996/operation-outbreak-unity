@@ -260,7 +260,7 @@ namespace OperationOutbreak.Diagnostics
 
         // ------------------------------------------------------------------ mission
 
-        private void HandleSectionStarted(int index, MissionSectionController.SectionDefinition definition)
+        private void HandleSectionStarted(int index, MissionDefinition.MissionSection definition)
         {
             SectionRecord record = new SectionRecord
             {
@@ -273,7 +273,7 @@ namespace OperationOutbreak.Diagnostics
             _data.Sections.Add(record);
         }
 
-        private void HandleSectionCleared(int index, MissionSectionController.SectionDefinition definition)
+        private void HandleSectionCleared(int index, MissionDefinition.MissionSection definition)
         {
             if (!_clearedSections.Add(index) && _data.DuplicateSectionClearIndex < 0)
             {

@@ -3158,10 +3158,12 @@ MonoBehaviour:
   playerHealth: {fileID: 200006}
   archetypes:
   - id: BASIC
+    stableId: basic_infected
     prefab: {fileID: 100003, guid: 6e94c31e0da44829a9c5f12a381e79b7, type: 3}
     spawnDistanceOffset: 0
     minimumSpawnStandoffOverride: 12
   - id: RUNNER
+    stableId: runner
     prefab: {fileID: 100003, guid: cda0c69c894048e88833c4e04c65e157, type: 3}
     spawnDistanceOffset: 5
     minimumSpawnStandoffOverride: 6
@@ -3477,38 +3479,7 @@ MonoBehaviour:
   playerHealth: {fileID: 200006}
   playerTransform: {fileID: 200002}
   sectionHud: {fileID: 240005}
-  sections:
-  - label: SECTION 1
-    subtitle: OUTBREAK
-    activationZ: -100
-    forwardLimitZ: 15
-    enemyCount: 3
-    composition:
-    - archetypeId: BASIC
-      count: 3
-    spawnAheadOfLimit: 1
-  - label: SECTION 2
-    subtitle: ADVANCE
-    activationZ: 20
-    forwardLimitZ: 33
-    enemyCount: 4
-    composition:
-    - archetypeId: BASIC
-      count: 3
-    - archetypeId: RUNNER
-      count: 1
-    spawnAheadOfLimit: 4
-  - label: SECTION 3
-    subtitle: FINAL PUSH
-    activationZ: 38
-    forwardLimitZ: 51
-    enemyCount: 5
-    composition:
-    - archetypeId: BASIC
-      count: 3
-    - archetypeId: RUNNER
-      count: 2
-    spawnAheadOfLimit: 4
+  missionDefinition: {fileID: 11400000, guid: a7b0f99ee2cd97863fc3dd7b4402d447, type: 2}
   postSectionSettle: 0.35
   travelAllowance: 1.5
   verboseLogging: 1
