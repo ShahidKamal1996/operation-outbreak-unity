@@ -299,6 +299,126 @@ namespace OperationOutbreak.Tests
                 "asset cannot restore it after a reload.");
         }
 
+        [Test]
+        public void CommittedControllerCarriesValidPersistedShootLayerWithoutRebuild()
+        {
+            // QA fix #5 - regression guard for the COMMITTED asset. The 1P.5 failure
+            // ("Statemachine for layer 'Shoot Layer' is missing") came from a
+            // committed controller whose Shoot Layer serialized m_StateMachine:
+            // {fileID: 0}. The 12B rebuild test above masks that class of bug because
+            // it REGENERATES the controller in memory before asserting - a broken
+            // committed asset would be silently rebuilt and the suite would pass.
+            // This test deliberately never rebuilds: it loads the committed asset as
+            // a fresh clone would, proves every structural requirement against it,
+            // then forces a save/reimport/reload round-trip and proves the Shoot
+            // Layer state machine survives on disk. A future commit that reintroduces
+            // the {fileID: 0} defect fails here instead of shipping to QA.
+            const string path = ToonSoldierAnimationSetup.ControllerPath;
+
+            AnimatorController controller = AssetDatabase.LoadAssetAtPath<AnimatorController>(path);
+            Assert.IsNotNull(controller, "The committed ToonSoldier_Player controller must exist.");
+
+            // 1. Both layers and the Base Layer state machine must resolve.
+            Assert.GreaterOrEqual(controller.layers.Length, 2,
+                "The committed controller must carry its two layers (Base + Shoot).");
+            AnimatorControllerLayer baseLayer = controller.layers[0];
+            Assert.AreEqual("Base Layer", baseLayer.name,
+                "Layer 0 must be the Base Layer.");
+            Assert.IsNotNull(baseLayer.stateMachine,
+                "The committed Base Layer state machine must resolve.");
+
+            // 2. The Shoot Layer state machine must resolve on the committed asset.
+            AnimatorControllerLayer shootLayer = controller.layers[1];
+            Assert.AreEqual(ToonSoldierAnimationSetup.ShootLayerName, shootLayer.name,
+                "Layer 1 must be the Shoot Layer.");
+            Assert.IsNotNull(shootLayer.stateMachine,
+                "The committed Shoot Layer state machine must resolve - a missing " +
+                "m_StateMachine reference here is the exact 1P.5 regression.");
+
+            // 3. The Shoot Layer state machine must be a PERSISTED controller
+            //    sub-asset (listed in the asset's sub-objects), not an in-memory
+            //    object that only exists for the lifetime of the editor session.
+            bool persistedSubAsset = false;
+            foreach (Object asset in AssetDatabase.LoadAllAssetsAtPath(path))
+            {
+                if (asset is AnimatorStateMachine machine &&
+                    machine.name == ToonSoldierAnimationSetup.ShootLayerName)
+                {
+                    persistedSubAsset = true;
+                    break;
+                }
+            }
+
+            Assert.IsTrue(persistedSubAsset,
+                "The committed controller must list the Shoot Layer state machine as a " +
+                "persisted sub-asset (a missing listing means a fresh clone reloads a " +
+                "null state machine).");
+
+            // 4. Upper-body AvatarMask on the Shoot Layer.
+            Assert.IsNotNull(shootLayer.avatarMask,
+                "The committed Shoot Layer must carry its upper-body AvatarMask.");
+            AvatarMask mask = shootLayer.avatarMask;
+            Assert.IsTrue(mask.GetHumanoidBodyPartActive(AvatarMaskBodyPart.Body),
+                "The committed mask must include the torso.");
+            Assert.IsTrue(mask.GetHumanoidBodyPartActive(AvatarMaskBodyPart.RightArm),
+                "The committed mask must include the right arm.");
+            Assert.IsTrue(mask.GetHumanoidBodyPartActive(AvatarMaskBodyPart.LeftArm),
+                "The committed mask must include the left arm.");
+            Assert.IsFalse(mask.GetHumanoidBodyPartActive(AvatarMaskBodyPart.RightLeg),
+                "The committed mask must exclude the right leg.");
+            Assert.IsFalse(mask.GetHumanoidBodyPartActive(AvatarMaskBodyPart.LeftLeg),
+                "The committed mask must exclude the left leg.");
+
+            // 5. Shoot state + motion + Empty default state.
+            AnimatorStateMachine shootMachine = shootLayer.stateMachine;
+            AnimatorState gunplay = FindState(
+                shootMachine, ToonSoldierAnimationSetup.GunplayState);
+            Assert.IsNotNull(gunplay,
+                "The committed Shoot Layer needs its Gunplay state.");
+
+            AnimationClip shootClip = ToonSoldierAnimationSetup.ResolveClip(
+                ToonSoldierAnimationSetup.ShootFbxPath);
+            Assert.IsNotNull(shootClip, "The shoot clip must resolve.");
+            Assert.AreEqual(shootClip, gunplay.motion as AnimationClip,
+                "The committed Gunplay state must play the assault_combat_shoot clip.");
+
+            Assert.IsNotNull(shootMachine.defaultState,
+                "The committed Shoot Layer needs a default state.");
+            Assert.AreEqual(ToonSoldierAnimationSetup.EmptyStateName,
+                shootMachine.defaultState.name,
+                "The committed Shoot Layer default state must be Empty.");
+
+            // 6. Locomotion state + BlendTree remain valid on the Base Layer.
+            AnimatorState locomotion = FindState(
+                baseLayer.stateMachine, ToonSoldierAnimationSetup.LocomotionState);
+            Assert.IsNotNull(locomotion,
+                "The committed Base Layer needs its Locomotion state.");
+            BlendTree tree = locomotion.motion as BlendTree;
+            Assert.IsNotNull(tree,
+                "The committed Locomotion motion must be a BlendTree.");
+            Assert.AreEqual(2, tree.children.Length,
+                "The committed locomotion blend tree needs its idle + run children.");
+
+            // 7. Save/reimport/reload round-trip WITHOUT a rebuild: the asset is
+            //    re-read from disk (what Unity does on scene/project restoration)
+            //    and the Shoot Layer state machine must still resolve.
+            AssetDatabase.SaveAssets();
+            AssetDatabase.ImportAsset(path, ImportAssetOptions.ForceUpdate);
+
+            AnimatorController reloaded = AssetDatabase.LoadAssetAtPath<AnimatorController>(path);
+            Assert.IsNotNull(reloaded,
+                "The committed controller must reacquire after a forced reimport.");
+            Assert.GreaterOrEqual(reloaded.layers.Length, 2,
+                "Both layers must survive the reimport.");
+            Assert.IsNotNull(reloaded.layers[1].stateMachine,
+                "The Shoot Layer state machine must survive save/reimport/reload without " +
+                "a rebuild - if this fails the committed asset cannot restore it.");
+            Assert.IsNotNull(reloaded.layers[1].avatarMask,
+                "The Shoot Layer's upper-body mask must survive the reimport.");
+            Assert.IsNotNull(reloaded.layers[0].stateMachine,
+                "The Base Layer state machine must survive the reimport.");
+        }
+
         /// <summary>
         /// QA fix #12A - resolves a mask transform path to its index (the index is the
         /// only addressing form Unity's AvatarMask transform APIs accept).

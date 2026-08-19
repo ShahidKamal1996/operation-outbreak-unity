@@ -140,6 +140,14 @@ namespace OperationOutbreak.EditorTools
                 blendParameter = "Speed",
                 useAutomaticThresholds = false,
             };
+
+            // QA fix #5 - keep the blend tree a hidden sub-asset of the controller,
+            // exactly like the Shoot Layer state machine below. A sub-asset with
+            // HideFlags.None serializes as m_ObjectHideFlags: 0, which makes the
+            // committed YAML diverge from Unity's canonical controller layout
+            // (every nested object is HideInHierarchy) and shows the tree as a
+            // stray entry when the controller asset is expanded.
+            blendTree.hideFlags = HideFlags.HideInHierarchy;
             AssetDatabase.AddObjectToAsset(blendTree, controller);
             blendTree.AddChild(idle, 0.15f);
             blendTree.AddChild(run, 0.85f);

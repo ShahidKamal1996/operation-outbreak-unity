@@ -733,6 +733,34 @@ variant differences from data only:
     proves both the diagnostic AND the Basic fallback. Audit: this was the
     only `LogAssert.Expect` in the project (all others are
     `NoUnexpectedReceived`). Expected total unchanged: 218/218.
+16. **1S QA fix #5 (2026-08-19) — ToonSoldier_Player Shoot Layer persistence
+    harden + committed-asset regression guard:** real Unity reported
+    "Controller 'ToonSoldier_Player': Statemachine for layer 'Shoot Layer'
+    is missing" and "The Animator Controller (ToonSoldier_Player) you have
+    used is not valid" after pulling the 1S branch. Investigation of the
+    committed asset at `40231e66` found the Shoot Layer state machine IS
+    present and persisted (`m_StateMachine: {fileID: 4170313741651549443}`
+    resolving to a real `AnimatorStateMachine` sub-asset carrying the Empty
+    default + Gunplay states, the upper-body mask and transitions) — the 1P.5
+    fix 12B asset (`af83054`) is intact and no 1S commit touched the
+    controller or any dependency (mask, clips, scene wiring, bridge). The
+    genuine gap was REGRESSION PROTECTION: the only persistence test rebuilt
+    the controller in memory before asserting, so a broken committed asset
+    could never fail the suite (the exact `m_StateMachine: {fileID: 0}`
+    defect would be silently rebuilt away). Repair: (a) the rebuild tool now
+    also marks the locomotion BlendTree sub-asset HideInHierarchy (it only
+    did so for the Shoot Layer machine), and (b) the committed controller's
+    BlendTree `m_ObjectHideFlags: 0` was surgically corrected to `1` to match
+    Unity's canonical sub-asset serialization (every other nested object is
+    already hidden). New regression test
+    `CommittedControllerCarriesValidPersistedShootLayerWithoutRebuild` loads
+    the COMMITTED asset (no rebuild), proves both layer state machines, the
+    persisted Shoot Layer sub-asset, the upper-body mask, the Gunplay
+    state/motion, the locomotion BlendTree, and that the Shoot Layer state
+    machine survives a SaveAssets/ForceUpdate-reimport/reload round-trip.
+    Production behaviour UNCHANGED (walking + shooting, upper-body firing,
+    rifle/muzzle, aiming, locomotion all preserved). Expected total: 219/219
+    (was 218; +1 test).
 
 ## Manual Unity QA checklist for 1S
 
@@ -765,7 +793,7 @@ variant differences from data only:
    supported." warnings may appear during ragdoll deaths (1S QA fix #2), and
    NO CS0618 'FindFirstObjectByType is obsolete' warnings may appear (1S QA
    fix #3).
-8. Full EditMode suite passes — expect **218/218** (216 previous; 1S QA fix
+8. Full EditMode suite passes — expect **219/219** (216 previous; 1S QA fix
    #2 ADDED 2: the velocity-write legality gate truth table and the
    real-Rigidbody lifecycle-ordering replay with LogAssert.NoUnexpectedReceived).
    1S QA fix #1 repaired the two failing test fixtures (LogAssert.Expect for
@@ -773,7 +801,10 @@ variant differences from data only:
    shared-controller fixture) without changing the count; 1S QA fix #4
    corrected that expectation to the byte-exact production message (the
    partial string never matched Unity's exact-match overload) — count still
-   unchanged.
+   unchanged. 1S QA fix #5 ADDED 1 (219/219): the committed-asset Shoot Layer
+   persistence guard (`CommittedControllerCarriesValidPersistedShootLayerWithoutRebuild`,
+   which loads the committed controller without rebuilding and proves the
+   Shoot Layer state machine survives a save/force-reimport/reload round-trip).
 9. `Tools > Operation Outbreak > Validate Enemy Archetypes` passes — every
    archetype has a unique stable id, valid gameplay ranges, a valid
    production prefab, valid locomotion setup and (where required) the shared
