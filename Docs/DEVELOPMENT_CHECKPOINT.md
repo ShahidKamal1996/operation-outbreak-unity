@@ -32,7 +32,8 @@
 | 1R — enemy animation & death foundation | **VERIFIED through the extended 1Q delivery** (roadmap reconciliation: 1R's scope was fully delivered and QA-verified during the 1Q implementation/QA cycle — hybrid animation → ragdoll death, stabilized ragdoll, collider lifecycle, reuse/reset. NOT rebuilt separately.) |
 | **1S — enemy variant architecture** | **VERIFIED** (2026-08-19 — real Unity EditMode 219/219 passed; Validate Enemy Archetypes PASS; Basic/Runner/Toon Soldier/ragdoll/reuse verified; console clean) |
 | **1T — mission definition foundation** | **VERIFIED** (2026-08-20 — real Unity EditMode 238/238 passed; Validate Mission Definitions PASS; Validate Enemy Archetypes PASS; Mission 01 data-driven 3 sections / 12 enemies / 9 Basic + 3 Runner; Runner controller committed and validated) |
-| **1U — objective framework foundation** | **IMPLEMENTED — AWAITING MANUAL UNITY QA** (2026-08-20) |
+| **1U — objective framework foundation** | **VERIFIED** (2026-08-20 — real Unity EditMode 261/261 passed; objective runtime + ClearAllSections verified; final section committed before completion; Mission Complete exactly once; console clean) |
+| **1V — rewards & results foundation** | **IMPLEMENTED — AWAITING MANUAL UNITY QA** (2026-08-20) |
 
 ## What Milestone 1P delivered
 
@@ -1065,6 +1066,93 @@ runtime objective systems observe gameplay events and evaluate progress:
 12. Console clean during normal gameplay.
 13. Full EditMode suite: 238 previous + 21 new 1U tests + 1 event-contract
     regression + 1 completion-ordering regression → **261/261**, 0 failed.
+
+## What Milestone 1V delivered
+
+Rewards & Results foundation — mission data defines rewards; the reward service
+calculates/grants them; result data reports what happened; result UI presents it;
+navigation requests Retry/Return:
+
+1. **Reward data** — `MissionRewardDefinition` (`[Serializable]`, pure data):
+   non-negative `coins` + `supplies` (zero is VALID). `MissionDefinition` gains a
+   `reward` field (`Reward` getter). Tech Parts are deliberately NOT added yet.
+2. **Currency wallet** — `RuntimeWallet` (plain runtime class, NOT serialized, NOT
+   permanent): `Coins` / `Supplies` balances (long), `Grant(coins, supplies)`
+   rejecting negatives and saturating at `long.MaxValue` (overflow can never wrap),
+   `BalancesChanged` event. Owned by the RewardService. Shops/spending/save/cloud/IAP
+   are explicitly out of scope.
+3. **Reward service** — `MissionRewardService` (`DisallowMultipleComponent`): the
+   ONE reward authority. Driven by the authoritative outcome events
+   (`EnemySpawner.EncounterCompleted` = success, `PlayerHealth.Died` = failure);
+   calculates the configured reward, grants it into the wallet, produces the
+   immutable `MissionResultData` and raises `ResultCreated` / `RewardGranted`
+   (the 2C SaveService seam). It never decides victory, never owns objective
+   progress, never spawns, never shows UI, never saves permanently.
+4. **Duplicate-grant contract** — run-scoped latch: a single run grants AT MOST
+   ONCE. `OnEnable` (scene reload = new run) resets the latch, so a retry gets a
+   NEW grant identity. Documented boundary: this is NOT persistent first-completion
+   protection (2C owns save-backed protection).
+5. **Result data** — `MissionResultData` (immutable, plain runtime object): mission
+   id/number, success/failure, coins/supplies earned, whether the reward was
+   actually granted, sections completed/total. NOT serialized into MissionDefinition;
+   not an analytics framework; does not duplicate GameplayDiagnostics.
+6. **Success flow** — `EncounterCompleted → RewardService grants once → result data
+   → Mission Complete UI displays Coins/Supplies`. The existing authority chain
+   (sections → objectives → all required complete → CompleteEncounter →
+   EncounterCompleted → MissionCompleteController) is UNCHANGED; 1V extends after it.
+7. **Failure flow** — `PlayerHealth.Died → RewardService creates a Failed result
+   (no grant, zero reward) → Game Over UI (unchanged behaviour)`. A failed mission
+   can never be rewarded.
+8. **Retry flow** — `MissionResultNavigation.RequestRetry()` routes through the
+   existing authoritative reset (SceneManager.LoadScene(activeBuildIndex)), which
+   resets objectives, section progression, spawner/enemies, temporary upgrades,
+   the reward latch and result state. A failed/unfinished run grants nothing; a
+   retried successful run is a new run with a fresh grant identity.
+9. **Return / Next seam** — `MissionResultNavigation.RequestReturn()` /
+   `RequestNext()` raise clean, testable intent events for future Base/Map
+   consumers. No Base/Map scene exists yet, so both log a clear development
+   fallback and emit the intent only - no fake scene, no fragile hard-coded names.
+10. **Result UI foundation** — `MissionCompleteController` now shows the earned
+    Coins/Supplies (populated from the result event) and RETRY + RETURN buttons;
+    `GameOverController` now shows RETRY + RETURN. Portrait readability and large
+    touch targets preserved; no production art, no HUD redesign.
+11. **Validation** — `MissionDefinition.CollectProblems` now rejects a null reward
+    definition and negative Coins/Supplies (zero is valid; Mission 01 with zero is
+    accepted). Same authority behind `Validate Mission Definitions`.
+12. **Authoring workflow** — a designer configures Coins/Supplies on the
+    MissionDefinition asset, validates, and runs - no C# for normal reward edits.
+13. **Mission 01** — keeps `coins: 0`, `supplies: 0`: the PRD introduces the
+    resource-reward concept later in Chapter 1, so no balancing numbers are
+    invented; the RewardService is fully exercised by synthetic test missions with
+    non-zero values.
+14. **Tests** — `MissionRewardTests.cs` (+23) covers reward-data validity, the
+    reward service (correct result + grants, one-grant-per-run, new-run identity,
+    failure grants nothing), the wallet (zero start, negative rejection, overflow),
+    result data (success vs failure, not serialized), flow ownership (reward only
+    after authoritative completion, service cannot declare victory, single path,
+    final section observable before reward processing), retry reset, Return/Next
+    intent, and the unchanged Mission 01 shape. Expected total: **284/284**
+    (261 verified + 23 new).
+
+## Manual Unity QA checklist for 1V
+
+1. Project compiles with 0 errors / no relevant warnings.
+2. `Tools > Operation Outbreak > Validate Enemy Archetypes` → PASS.
+3. `Tools > Operation Outbreak > Validate Mission Definitions` → PASS (Mission 01
+   with its zero reward + objective validates cleanly).
+4. Full EditMode suite: 261 previous + 23 new 1V tests → **284/284**, 0 failed.
+5. Start Mission 01: gameplay unchanged; objective runtime loads; sections 1→2→3
+   clear; objective reaches 3/3; diagnostics report shows 3/3 sections (MIS-FINAL
+   PASS).
+6. Mission Complete occurs exactly once; result data is created exactly once.
+7. Reward grant matches Mission_01 configured values (Coins=0 Supplies=0).
+8. Reopening/refreshing the result does NOT grant again.
+9. Retry starts a fresh clean run (new run is eligible for its own reward once).
+10. Retry after failure grants no completion reward.
+11. Return/Next emit navigation intent + the documented development fallback
+    (no fake Base/Map).
+12. Toon Soldier, Runner, ragdoll, gates/upgrades unchanged.
+13. Console clean except the intentional `[1V]` development logs.
 
 ## What Milestone 1P.5 delivered
 

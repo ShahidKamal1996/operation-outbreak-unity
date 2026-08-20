@@ -67,6 +67,12 @@ namespace OperationOutbreak.Mission
         [SerializeField]
         private List<MissionObjectiveDefinition> objectives = new List<MissionObjectiveDefinition>();
 
+        [Header("Rewards (Milestone 1V)")]
+        [Tooltip("Static reward configuration granted on completion. Zero is valid - the " +
+                 "currently authored Mission 01 legitimately grants nothing yet.")]
+        [SerializeField]
+        private MissionRewardDefinition reward = new MissionRewardDefinition();
+
         // ------------------------------------------------------------------ read-only views
 
         public string MissionId => missionId;
@@ -109,6 +115,9 @@ namespace OperationOutbreak.Mission
 
         /// <summary>True when the mission declares at least one required objective.</summary>
         public bool HasRequiredObjective => RequiredObjectiveCount > 0;
+
+        /// <summary>Static reward configuration (Coins / Supplies). Never null once constructed.</summary>
+        public MissionRewardDefinition Reward => reward;
 
         /// <summary>The objective with <paramref name="objectiveId"/>, or null when absent.</summary>
         public MissionObjectiveDefinition GetObjective(string objectiveId)
@@ -381,6 +390,25 @@ namespace OperationOutbreak.Mission
                 {
                     problems.Add(label + ": mission has no REQUIRED objective - mission " +
                                  "completion would never gate.");
+                }
+            }
+
+            // ------------------------------------------------------------------ rewards (1V)
+
+            if (definition.reward == null)
+            {
+                problems.Add(label + ": reward definition is null.");
+            }
+            else
+            {
+                if (definition.reward.coins < 0)
+                {
+                    problems.Add(label + ": negative Coins reward (" + definition.reward.coins + ").");
+                }
+
+                if (definition.reward.supplies < 0)
+                {
+                    problems.Add(label + ": negative Supplies reward (" + definition.reward.supplies + ").");
                 }
             }
 

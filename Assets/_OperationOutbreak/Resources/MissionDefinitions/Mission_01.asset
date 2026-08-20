@@ -53,3 +53,6 @@ MonoBehaviour:
     title: Clear All Sections
     objectiveType: 0
     required: 1
+  reward:
+    coins: 0
+    supplies: 0

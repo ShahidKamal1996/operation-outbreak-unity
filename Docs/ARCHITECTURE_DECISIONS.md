@@ -858,6 +858,61 @@
   objective DEFINITIONS; progress lives in scene-lifetime state, so a reload
   resets objectives exactly like the rest of the mission flow.
 
+## Milestone 1V decisions
+
+### AD-1V-1: Reward data is static mission configuration; the service grants it
+
+- **Decision:** `MissionRewardDefinition { coins, supplies }` is a `[Serializable]`
+  data class on `MissionDefinition`; `MissionRewardService` (one
+  `DisallowMultipleComponent` component) reads it, grants into `RuntimeWallet`
+  and produces `MissionResultData`. No currency calculations live in
+  `MissionCompleteController` / `MissionObjectiveController` /
+  `MissionSectionController` / `EnemySpawner`, and no
+  `Mission01RewardController`-style classes exist.
+- **Why:** the brief's core rule - mission data defines rewards; a service
+  calculates/grants them; result data reports; UI presents; navigation requests.
+
+### AD-1V-2: The wallet is session runtime only (2C owns persistence)
+
+- **Decision:** `RuntimeWallet` holds non-negative, overflow-safe (`long`,
+  saturating) Coins/Supplies balances for the session and is reset by a scene
+  reload exactly like every other run-scoped system. NO PlayerPrefs/JSON/save
+  schema, no first-completion flags, no unlock persistence.
+- **2C seam:** `MissionRewardService.RewardGranted` carries the result and the
+  wallet carries the balances; a future SaveService subscribes to persist that
+  output. Nothing in 1V writes permanent data.
+
+### AD-1V-3: One reward authority, driven by outcome events, idempotent per run
+
+- **Decision:** the service subscribes to the authoritative outcome events only
+  (`EnemySpawner.EncounterCompleted` = success, `PlayerHealth.Died` = failure) -
+  never polls UI state, never derives grant from section progress. A run-scoped
+  latch (reset in `OnEnable` = new run) guarantees at most one grant per run.
+  This is NOT persistent first-completion protection (documented; 2C owns it).
+
+### AD-1V-4: Result data is immutable and never serialized into the mission
+
+- **Decision:** `MissionResultData` is a plain, immutable runtime object.
+  `MissionDefinition` stays static configuration - no result/grant/wallet state
+  is ever serialized into the asset. The result is deliberately small (identity,
+  outcome, reward, sections) - not an analytics framework and not a duplicate of
+  GameplayDiagnostics.
+
+### AD-1V-5: Retry routes through the existing authoritative reset
+
+- **Decision:** `MissionResultNavigation.RequestRetry()` reloads the active scene
+  (the same `SceneManager.LoadScene(activeBuildIndex)` the verified restart
+  buttons already used), which resets objectives, section progression, spawner,
+  temporary upgrades, the reward latch and result state. No second restart
+  system was created.
+
+### AD-1V-6: Return/Next is an intent seam, not a fake destination
+
+- **Decision:** `ReturnRequested` / `NextRequested` are instance events on
+  `MissionResultNavigation` that future Base/Map systems consume. No Base/Map
+  scene exists yet, so Return/Next emit the intent and log a documented
+  development fallback - no invented scene, no fragile hard-coded scene names.
+
 ## UNKNOWN / open questions
 
 - Pre-1P architecture rationale for gates (1J series) could not be recovered (original

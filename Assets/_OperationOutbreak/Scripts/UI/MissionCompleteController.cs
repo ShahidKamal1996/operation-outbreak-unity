@@ -1,5 +1,6 @@
 using OperationOutbreak.Enemies;
 using OperationOutbreak.Player;
+using OperationOutbreak.Rewards;
 using OperationOutbreak.Weapons;
 using TMPro;
 using UnityEngine;
@@ -19,8 +20,9 @@ namespace OperationOutbreak.UI
     ///
     /// The overlay is built in code with the same prototype quality and style as
     /// GameOverController: a ScreenSpaceOverlay canvas scaled to 1080x1920, a dimmed
-    /// full-screen panel, a centred title and one green RESTART button. Restart uses the
-    /// same reliable SceneManager.LoadScene call that GameOverController already uses.
+    /// full-screen panel, a centred title, the earned Coins/Supplies (Milestone 1V) and
+    /// RETRY + RETURN buttons. Retry uses the same reliable SceneManager.LoadScene call
+    /// that GameOverController already uses.
     ///
     /// Exclusivity: EnemySpawner cancels the encounter when the Player dies, so the
     /// completion event can never fire after death. This component additionally refuses
@@ -47,7 +49,15 @@ namespace OperationOutbreak.UI
         [Tooltip("Player weapon, stopped on victory. Resolved at Awake when empty.")]
         [SerializeField] private WeaponController weapon;
 
+        [Tooltip("Milestone 1V - the reward authority producing the run's MissionResultData.")]
+        [SerializeField] private MissionRewardService rewardService;
+
+        [Tooltip("Milestone 1V - the result-navigation seam for Retry / Return.")]
+        [SerializeField] private MissionResultNavigation resultNavigation;
+
         private GameObject _panel;
+        private TMP_Text _coinsText;
+        private TMP_Text _suppliesText;
         private bool _shown;
         private bool _playerDied;
 
@@ -67,6 +77,8 @@ namespace OperationOutbreak.UI
             if (playerHealth == null) playerHealth = FindAnyObjectByType<PlayerHealth>();
             if (playerController == null) playerController = FindAnyObjectByType<PlayerController>();
             if (weapon == null) weapon = FindAnyObjectByType<WeaponController>();
+            if (rewardService == null) rewardService = FindAnyObjectByType<MissionRewardService>();
+            if (resultNavigation == null) resultNavigation = FindAnyObjectByType<MissionResultNavigation>();
 
             Build();
         }
@@ -79,12 +91,38 @@ namespace OperationOutbreak.UI
                 playerHealth.Died += HandlePlayerDied;
                 _playerDied = playerHealth.IsDead;
             }
+
+            if (rewardService != null) rewardService.ResultCreated += HandleResultCreated;
         }
 
         private void OnDisable()
         {
             if (enemySpawner != null) enemySpawner.EncounterCompleted -= HandleEncounterCompleted;
             if (playerHealth != null) playerHealth.Died -= HandlePlayerDied;
+            if (rewardService != null) rewardService.ResultCreated -= HandleResultCreated;
+        }
+
+        /// <summary>
+        /// Milestone 1V - the reward authority produces the run result (event-driven,
+        /// raised inside the same EncounterCompleted dispatch this overlay listens to);
+        /// this handler only fills in the displayed reward numbers.
+        /// </summary>
+        private void HandleResultCreated(MissionResultData result)
+        {
+            if (result == null)
+            {
+                return;
+            }
+
+            if (_coinsText != null)
+            {
+                _coinsText.text = "COINS  +" + result.CoinsEarned;
+            }
+
+            if (_suppliesText != null)
+            {
+                _suppliesText.text = "SUPPLIES  +" + result.SuppliesEarned;
+            }
         }
 
         /// <summary>
@@ -152,23 +190,64 @@ namespace OperationOutbreak.UI
             r.offsetMin = r.offsetMax = Vector2.zero;
             _panel.GetComponent<Image>().color = new Color(0f, 0f, 0f, .72f);
 
-            Text("MISSION COMPLETE", _panel.transform, new Vector2(0, 130), 64);
+            Text("MISSION COMPLETE", _panel.transform, new Vector2(0, 150), 64);
 
-            var b = new GameObject("RestartButton", typeof(RectTransform), typeof(Image), typeof(Button));
-            b.transform.SetParent(_panel.transform, false);
-            var br = (RectTransform)b.transform;
-            br.anchorMin = br.anchorMax = new Vector2(.5f, .5f);
-            br.sizeDelta = new Vector2(340, 110);
-            br.anchoredPosition = new Vector2(0, -40);
-            b.GetComponent<Image>().color = new Color(.2f, .75f, .32f, 1f);
-            b.GetComponent<Button>().onClick.AddListener(Restart);
-            Text("RESTART", b.transform, Vector2.zero, 38);
+            // Milestone 1V - reward summary lines (filled when the result is created).
+            _coinsText = Text("CoinsLine", _panel.transform, new Vector2(0, 60), 40);
+            _suppliesText = Text("SuppliesLine", _panel.transform, new Vector2(0, 10), 40);
+
+            // Milestone 1V - Retry (functional) + Return (navigation intent seam).
+            Button retry = Button("RetryButton", _panel.transform, new Vector2(-180, -110), new Vector2(320, 110));
+            retry.onClick.AddListener(RequestRetry);
+            Text("RETRY", retry.transform, Vector2.zero, 38);
+
+            Button returnButton = Button("ReturnButton", _panel.transform, new Vector2(180, -110), new Vector2(320, 110));
+            returnButton.onClick.AddListener(RequestReturn);
+            Text("RETURN", returnButton.transform, Vector2.zero, 38);
 
             // Hidden during normal gameplay.
             _panel.SetActive(false);
         }
 
-        private static void Text(string value, Transform parent, Vector2 pos, float size)
+        private void RequestRetry()
+        {
+            // Milestone 1V - route through the navigation seam; it reloads the scene
+            // (the existing authoritative reset), giving the NEW run a fresh grant latch.
+            if (resultNavigation != null)
+            {
+                resultNavigation.RequestRetry();
+            }
+            else
+            {
+                Restart();
+            }
+        }
+
+        private void RequestReturn()
+        {
+            if (resultNavigation != null)
+            {
+                resultNavigation.RequestReturn();
+            }
+            else
+            {
+                Debug.Log("[1V] Return requested - no Base/Map scene exists yet (2C+).", this);
+            }
+        }
+
+        private static Button Button(string objectName, Transform parent, Vector2 pos, Vector2 size)
+        {
+            GameObject go = new GameObject(objectName, typeof(RectTransform), typeof(Image), typeof(Button));
+            go.transform.SetParent(parent, false);
+            var r = (RectTransform)go.transform;
+            r.anchorMin = r.anchorMax = new Vector2(.5f, .5f);
+            r.sizeDelta = size;
+            r.anchoredPosition = pos;
+            go.GetComponent<Image>().color = new Color(.2f, .75f, .32f, 1f);
+            return go.GetComponent<Button>();
+        }
+
+        private static TMP_Text Text(string value, Transform parent, Vector2 pos, float size)
         {
             var go = new GameObject(value, typeof(RectTransform), typeof(TextMeshProUGUI));
             go.transform.SetParent(parent, false);
@@ -185,6 +264,7 @@ namespace OperationOutbreak.UI
             t.fontStyle = FontStyles.Bold;
             t.alignment = TextAlignmentOptions.Center;
             t.color = Color.white;
+            return t;
         }
 
         /// <summary>Same reliable restart used by GameOverController.</summary>
