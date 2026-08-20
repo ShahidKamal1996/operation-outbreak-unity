@@ -1133,6 +1133,23 @@ navigation requests Retry/Return:
     final section observable before reward processing), retry reset, Return/Next
     intent, and the unchanged Mission 01 shape. Expected total: **284/284**
     (261 verified + 23 new).
+15. **1V QA fix #1 (2026-08-20) — success result now reports the real completed-
+    section count:** real-Unity EditMode failed
+    `SuccessfulMissionCreatesCorrectResultData` ("Expected: 3, But was: 0") while
+    the reward values were correct. Root cause was the TEST FIXTURE, not the
+    production flow: the test invoked `HandleEncounterCompleted` directly without
+    first driving the `SectionCleared` events the real flow always produces. In
+    production `MissionRewardService` counts the authoritative
+    `MissionSectionController.SectionCleared` events (3 of them) BEFORE the
+    objective runtime triggers `EncounterCompleted`, so a successful Mission 01
+    reports 3/3. The test's direct invocation skipped those events, leaving the
+    event-count at 0. Fix (test-only): `SuccessfulMissionCreatesCorrectResultData`
+    now drives the three section clears before the completion (mirroring the real
+    flow) and still asserts 3/3; `FailedMissionGrantsZeroCompletionRewards` now
+    drives two clears then death and asserts the failure result reports 2/3 with no
+    grant; a new test `CompletedSectionCountDerivesFromSectionClearedEvents` proves
+    the count is genuinely event-derived (two clears → 2/3, never a hard-coded
+    total). No production code changed. Expected total: **285/285** (was 284; +1 test).
 
 ## Manual Unity QA checklist for 1V
 
@@ -1140,7 +1157,8 @@ navigation requests Retry/Return:
 2. `Tools > Operation Outbreak > Validate Enemy Archetypes` → PASS.
 3. `Tools > Operation Outbreak > Validate Mission Definitions` → PASS (Mission 01
    with its zero reward + objective validates cleanly).
-4. Full EditMode suite: 261 previous + 23 new 1V tests → **284/284**, 0 failed.
+4. Full EditMode suite: 261 previous + 23 new 1V tests + 1 result-count regression
+   → **285/285**, 0 failed.
 5. Start Mission 01: gameplay unchanged; objective runtime loads; sections 1→2→3
    clear; objective reaches 3/3; diagnostics report shows 3/3 sections (MIS-FINAL
    PASS).

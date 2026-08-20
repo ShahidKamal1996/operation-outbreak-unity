@@ -218,6 +218,14 @@ namespace OperationOutbreak.Tests
             try
             {
                 MissionRewardService service = NewService(mission);
+
+                // 1V QA fix #1 - mirror the REAL flow: the section-progress authority
+                // publishes SectionCleared for each of the three sections BEFORE the
+                // objective runtime triggers the EncounterCompleted outcome event, so
+                // the service's completed-section count reaches 3 before success.
+                Invoke(service, "HandleSectionCleared", new object[] { 0, null });
+                Invoke(service, "HandleSectionCleared", new object[] { 1, null });
+                Invoke(service, "HandleSectionCleared", new object[] { 2, null });
                 Invoke(service, "HandleEncounterCompleted");
 
                 Assert.IsNotNull(service.CurrentResult, "A successful run must produce a result.");
@@ -228,8 +236,42 @@ namespace OperationOutbreak.Tests
                 Assert.AreEqual(50, service.CurrentResult.SuppliesEarned);
                 Assert.IsTrue(service.CurrentResult.RewardsGranted,
                     "A successful run must report its reward as granted.");
-                Assert.AreEqual(3, service.CurrentResult.SectionsCompleted);
+                Assert.AreEqual(3, service.CurrentResult.SectionsCompleted,
+                    "A successful Mission 01 result must report the real completed section count (3/3).");
                 Assert.AreEqual(3, service.CurrentResult.TotalSections);
+
+                UnityEngine.Object.DestroyImmediate(service.gameObject);
+            }
+            finally
+            {
+                UnityEngine.Object.DestroyImmediate(mission);
+            }
+        }
+
+        [Test]
+        public void CompletedSectionCountDerivesFromSectionClearedEvents()
+        {
+            // 1V QA fix #1 regression - SectionsCompleted must come from the
+            // section-progress authority's SectionCleared events (the real flow),
+            // never from a hard-coded total. Driving two clears then success must
+            // report 2/3, proving the count is genuinely event-derived.
+            MissionDefinition mission = BuildMission(coins: 100);
+
+            try
+            {
+                MissionRewardService service = NewService(mission);
+
+                Invoke(service, "HandleSectionCleared", new object[] { 0, null });
+                Invoke(service, "HandleSectionCleared", new object[] { 1, null });
+                Invoke(service, "HandleEncounterCompleted");
+
+                Assert.IsNotNull(service.CurrentResult);
+                Assert.IsTrue(service.CurrentResult.Success);
+                Assert.AreEqual(2, service.CurrentResult.SectionsCompleted,
+                    "SectionsCompleted must reflect the sections that actually cleared, " +
+                    "not the configured total.");
+                Assert.AreEqual(3, service.CurrentResult.TotalSections,
+                    "TotalSections must still report the mission's configured section count.");
 
                 UnityEngine.Object.DestroyImmediate(service.gameObject);
             }
@@ -323,6 +365,11 @@ namespace OperationOutbreak.Tests
             try
             {
                 MissionRewardService service = NewService(mission);
+
+                // Death during section 3: sections 1 and 2 cleared first, then the
+                // failure outcome event - the result must report the real cleared count.
+                Invoke(service, "HandleSectionCleared", new object[] { 0, null });
+                Invoke(service, "HandleSectionCleared", new object[] { 1, null });
                 Invoke(service, "HandlePlayerDied");
 
                 Assert.IsNotNull(service.CurrentResult, "A failed run must still produce a result.");
@@ -333,6 +380,9 @@ namespace OperationOutbreak.Tests
                 Assert.AreEqual(0, service.CurrentResult.SuppliesEarned);
                 Assert.AreEqual(0, service.Wallet.Coins, "No coins may be granted on failure.");
                 Assert.AreEqual(0, service.Wallet.Supplies, "No supplies may be granted on failure.");
+                Assert.AreEqual(2, service.CurrentResult.SectionsCompleted,
+                    "A failed result must still report the sections cleared before death.");
+                Assert.AreEqual(3, service.CurrentResult.TotalSections);
 
                 UnityEngine.Object.DestroyImmediate(service.gameObject);
             }
