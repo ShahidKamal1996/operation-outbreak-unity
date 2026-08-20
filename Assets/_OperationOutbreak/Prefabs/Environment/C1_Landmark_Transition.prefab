@@ -34,7 +34,6 @@ Transform:
   - {fileID: 100012}
   m_Father: {fileID: 0}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
-
 --- !u!1 &100003
 GameObject:
   m_ObjectHideFlags: 0
@@ -65,8 +64,7 @@ Transform:
   m_LocalPosition: {x: -6.9, y: 1.35, z: 0}
   m_LocalScale: {x: 0.4, y: 2.7, z: 0.4}
   m_ConstrainProportionsScale: 0
-  m_Children:
-
+  m_Children: []
   m_Father: {fileID: 100002}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!33 &100005
@@ -126,7 +124,6 @@ MeshRenderer:
   m_SortingOrder: 0
   m_MaskInteraction: 0
   m_AdditionalVertexStreams: {fileID: 0}
-
 --- !u!1 &100007
 GameObject:
   m_ObjectHideFlags: 0
@@ -157,8 +154,7 @@ Transform:
   m_LocalPosition: {x: 6.9, y: 1.35, z: 0}
   m_LocalScale: {x: 0.4, y: 2.7, z: 0.4}
   m_ConstrainProportionsScale: 0
-  m_Children:
-
+  m_Children: []
   m_Father: {fileID: 100002}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!33 &100009
@@ -218,7 +214,6 @@ MeshRenderer:
   m_SortingOrder: 0
   m_MaskInteraction: 0
   m_AdditionalVertexStreams: {fileID: 0}
-
 --- !u!1 &100011
 GameObject:
   m_ObjectHideFlags: 0
@@ -249,8 +244,7 @@ Transform:
   m_LocalPosition: {x: 0, y: 2.75, z: 0}
   m_LocalScale: {x: 14.6, y: 0.4, z: 0.4}
   m_ConstrainProportionsScale: 0
-  m_Children:
-
+  m_Children: []
   m_Father: {fileID: 100002}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!33 &100013
@@ -310,4 +304,3 @@ MeshRenderer:
   m_SortingOrder: 0
   m_MaskInteraction: 0
   m_AdditionalVertexStreams: {fileID: 0}
-

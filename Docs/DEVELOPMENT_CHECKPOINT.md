@@ -1265,6 +1265,29 @@ grey prototype strip, while every gameplay number stays byte-identical:
     gameplay corridor byte-preserved; no dressing inside the playable band; kit
     modules carry no physics; and the profile holds no runtime state. Expected
     total: **309/309** (291 verified + 18 new).
+13. **1W QA fix #1 (2026-08-20) — environment prefab serialization repaired for
+    Unity 6:** real Unity reported RED import errors ("Problem detected while
+    importing the Prefab file ... corrupt or missing Variant parent or nested
+    Prefabs", and repeatedly "PPtr cast failed when dereferencing! Casting from
+    GameObject to Prefab at fileID 100001") for all 8 hand-authored kit prefabs.
+    Root cause: the scene's `PrefabInstance.m_SourcePrefab` must reference the
+    prefab asset's INTERNAL Prefab object at fileID `100100000` (as the existing
+    Unity-authored ToonSoldier instance does), but the hand-authored blocks used
+    fileID `100001` - the root GameObject - so Unity cast a GameObject to a Prefab
+    and treated the source as a corrupt/variant prefab. Secondary: the prefab
+    files deviated from Unity's saved format (blank lines between YAML documents,
+    empty `m_Children:` instead of `m_Children: []`). Fix: all 27 kit
+    `m_SourcePrefab` references now use `100100000`, and the 8 prefab files were
+    regenerated to mirror the known-good `Projectile_Prototype.prefab`
+    byte-for-byte in field set/ordering (verified field-for-field: zero missing,
+    zero extra fields; no dangling references). No gameplay/kit-design change.
+    New regression tests (+2): `KitPrefabsLoadAsValidRegularPrefabsWithResolvedComponents`
+    loads each committed prefab via AssetDatabase and asserts `PrefabAssetType.
+    Regular` + resolved Transform/MeshRenderer/MeshFilter/material (proving real
+    Unity importability, not just YAML anchors), and
+    `ScenePrefabInstancesReferenceThePrefabObjectFileId` pins that every kit
+    instance's `m_SourcePrefab` uses fileID `100100000` (never `100001`).
+    Expected total: **311/311** (was 309; +2 tests).
 
 ## Manual Unity QA checklist for 1W
 
@@ -1272,7 +1295,8 @@ grey prototype strip, while every gameplay number stays byte-identical:
 2. `Tools > Operation Outbreak > Validate Enemy Archetypes` → PASS.
 3. `Tools > Operation Outbreak > Validate Mission Definitions` → PASS.
 4. `Tools > Operation Outbreak > Validate Mission Environment` → PASS.
-5. Full EditMode suite: 291 previous + 18 new 1W tests → **309/309**, 0 failed.
+5. Full EditMode suite: 291 previous + 18 new 1W tests + 2 importability regressions
+   → **311/311**, 0 failed.
 6. **Visual QA (MANDATORY)** — open Mission 01 and confirm the environment reads
    as an Outbreak Outskirts location (screenshots of mission start, Section 1,
    Section 2, Section 3/final area and the Mission Complete area): asphalt road,

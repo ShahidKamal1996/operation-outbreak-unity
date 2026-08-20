@@ -226,6 +226,87 @@ namespace OperationOutbreak.Tests
                 "MissionObjectiveController must remain the completion authority.");
         }
 
+        // ------------------------------------------------- Unity importability (1W QA fix #1)
+
+        [Test]
+        public void KitPrefabsLoadAsValidRegularPrefabsWithResolvedComponents()
+        {
+            // 1W QA fix #1 - static YAML anchor checks are NOT enough: Unity must
+            // actually import each kit module as a regular prefab. This loads every
+            // committed kit prefab through the AssetDatabase and proves it is a valid
+            // Regular prefab whose components and materials resolve (no corrupt prefab,
+            // no missing Variant parent, no broken references).
+            string[] prefabs = Directory.GetFiles(KitFolder, "*.prefab");
+            Assert.AreEqual(8, prefabs.Length, "All 8 committed kit prefabs must exist.");
+
+            for (int i = 0; i < prefabs.Length; i++)
+            {
+                string path = prefabs[i].Replace("\\", "/");
+                GameObject go = AssetDatabase.LoadAssetAtPath<GameObject>(path);
+
+                Assert.IsNotNull(go, path + " must load as a GameObject asset.");
+                Assert.AreEqual(
+                    PrefabAssetType.Regular,
+                    PrefabUtility.GetPrefabAssetType(go),
+                    path + " must import as a Regular prefab (not broken/variant/missing).");
+
+                Transform rootTransform = go.GetComponent<Transform>();
+                Assert.IsNotNull(rootTransform, path + " must have a root Transform.");
+
+                MeshRenderer[] renderers = go.GetComponentsInChildren<MeshRenderer>(true);
+                Assert.Greater(renderers.Length, 0, path + " must render at least one mesh.");
+
+                for (int j = 0; j < renderers.Length; j++)
+                {
+                    Assert.IsNotNull(renderers[j].sharedMaterial,
+                        path + " has a MeshRenderer with no material.");
+                    Assert.IsNotNull(renderers[j].GetComponent<MeshFilter>(),
+                        path + " has a MeshRenderer without a MeshFilter.");
+                }
+            }
+        }
+
+        [Test]
+        public void ScenePrefabInstancesReferenceThePrefabObjectFileId()
+        {
+            // 1W QA fix #1 regression - the scene's PrefabInstance.m_SourcePrefab must
+            // reference the prefab asset's internal Prefab object (fileID 100100000),
+            // NOT the root GameObject fileID (100001). The original hand-authored
+            // blocks used 100001, which Unity rejected with
+            // "PPtr cast failed ... Casting from GameObject to Prefab at fileID 100001"
+            // and "corrupt / missing Variant parent or nested Prefabs" on import.
+            string scene = ReadSceneText();
+
+            string[] kitGuids =
+            {
+                "a30581505fc58961ad5eb626f307a567", // C1_Barrier_Concrete
+                "72d64da3c86ae5500d31b1fe46826896", // C1_Barrier_Checkpoint
+                "c3adb0b9d1e468101a7c8205f30ae0de", // C1_Prop_Debris
+                "f458a656813567caf6570c07bfe20a80", // C1_Prop_Crate
+                "10d476f7440c1c82af2a6c43610aa159", // C1_Prop_Cone
+                "c3c5895d25567ec4878a1177e0e368b0", // C1_Landmark_StartGate
+                "7ce6c24146d69fd1187b5f82747ff9fc", // C1_Landmark_Transition
+                "fc64bef05209876643cf175da50b95a0"  // C1_Landmark_FinalRoadblock
+            };
+
+            for (int i = 0; i < kitGuids.Length; i++)
+            {
+                string guid = kitGuids[i];
+                int instances = System.Text.RegularExpressions.Regex.Matches(
+                    scene, "m_SourcePrefab: \\{fileID: 100100000, guid: " + guid).Count;
+
+                Assert.Greater(instances, 0,
+                    "Kit prefab " + guid + " must be instanced in the scene with the " +
+                    "correct prefab-object source reference.");
+                Assert.AreEqual(
+                    0,
+                    System.Text.RegularExpressions.Regex.Matches(
+                        scene, "m_SourcePrefab: \\{fileID: 100001, guid: " + guid).Count,
+                    "Kit prefab " + guid + " must NOT reference fileID 100001 (the root " +
+                    "GameObject) as its source prefab - that produced the PPtr cast failure.");
+            }
+        }
+
         // ------------------------------------------------- Mission 01 preservation
 
         [Test]
