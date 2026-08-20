@@ -1150,6 +1150,25 @@ navigation requests Retry/Return:
     grant; a new test `CompletedSectionCountDerivesFromSectionClearedEvents` proves
     the count is genuinely event-derived (two clears → 2/3, never a hard-coded
     total). No production code changed. Expected total: **285/285** (was 284; +1 test).
+16. **1V QA fix #2 (2026-08-20) — Retry no longer triggers Return:** real-Unity
+    manual QA found that clicking the LEFT "RETRY" button on the Mission Complete
+    screen invoked `RequestReturn` ("[1V] Return requested"). Root cause: the
+    runtime-built button LABELS are `TextMeshProUGUI` created with the shared
+    `Text` helper, which left `raycastTarget` at its default TRUE and sized the
+    label 1000x100. The "RETURN" label therefore extended far past its 320-wide
+    button and OVERLAPPED the RETRY button; because the RETURN button+label are
+    created after RETRY, the RETURN label rendered on top, so a click on the RETRY
+    button hit the RETURN label first and bubbled (`ExecuteHierarchy`) to the
+    RETURN button. The Game Over screen shared the same defect (700x100 labels).
+    Fix (both controllers): every UI text label created by the `Text` helpers now
+    sets `raycastTarget = false` - labels never intercept clicks, so each button's
+    own Image is the only clickable region and the two already non-overlapping
+    button rects stay independent. No gameplay/reward/objective change. New
+    `MissionResultUiTests.cs` (+6) builds the real controllers, invokes the real
+    `Button.onClick` and asserts Retry→RequestRetry (never Return/Next), Return→
+    RequestReturn (never Retry), the same for Game Over, exactly one intent per
+    click, and that labels are not raycast targets while the buttons stay
+    non-overlapping. Expected total: **291/291** (was 285; +6 tests).
 
 ## Manual Unity QA checklist for 1V
 
@@ -1158,7 +1177,7 @@ navigation requests Retry/Return:
 3. `Tools > Operation Outbreak > Validate Mission Definitions` → PASS (Mission 01
    with its zero reward + objective validates cleanly).
 4. Full EditMode suite: 261 previous + 23 new 1V tests + 1 result-count regression
-   → **285/285**, 0 failed.
+   + 6 result-UI button-mapping regressions → **291/291**, 0 failed.
 5. Start Mission 01: gameplay unchanged; objective runtime loads; sections 1→2→3
    clear; objective reaches 3/3; diagnostics report shows 3/3 sections (MIS-FINAL
    PASS).

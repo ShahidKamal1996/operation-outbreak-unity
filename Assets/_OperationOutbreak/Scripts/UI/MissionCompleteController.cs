@@ -264,6 +264,15 @@ namespace OperationOutbreak.UI
             t.fontStyle = FontStyles.Bold;
             t.alignment = TextAlignmentOptions.Center;
             t.color = Color.white;
+
+            // Milestone 1V QA fix #2 - labels must NEVER intercept clicks. A text label
+            // with raycastTarget=true is a clickable graphic: the oversized (1000x100)
+            // "RETURN" label overlaps the "RETRY" button and, being rendered later (on
+            // top), captured clicks meant for RETRY and bubbled them to the RETURN
+            // button - so pressing RETRY invoked Return. Disabling label raycasts makes
+            // each button's own Image the only clickable region, and the two button
+            // rects are already non-overlapping.
+            t.raycastTarget = false;
             return t;
         }
 
