@@ -1020,6 +1020,31 @@ runtime objective systems observe gameplay events and evaluate progress:
     delegate type AND the handler's parameter list via reflection, so a future
     signature drift fails the suite instead of failing the compiler. Expected
     total: **260/260** (was 259; +1 test).
+13. **1U QA fix #2 (2026-08-20) — synchronous completion/reentrancy ordering fixed:**
+    real Unity showed the full EditMode suite passing (260/260) and the runtime
+    logs correct ("Objective 'clear_all_sections' completed (3/3)" before "Mission
+    complete"), yet the final GameplayDiagnostics report FAILED with MIS-FINAL
+    ("Expected 3 of 3, Actual 2 of 3", S3 cleared=NO). Root cause: a synchronous
+    event-ordering/reentrancy defect — `MissionObjectiveController` is a subscriber
+    of `MissionSectionController.SectionCleared`, and its handler called
+    `EvaluateRequiredObjectives()` (→ `EnemySpawner.CompleteEncounter()` →
+    `MissionCompleteController` → `GameplayDiagnostics.HandleVictoryShown()` →
+    `EmitReport()`) reentrantly INSIDE the SectionCleared dispatch, before
+    `GameplayDiagnostics` (another subscriber of the SAME event, later in the
+    invocation list) had recorded the final section as cleared. Fix at the correct
+    ownership boundary (the objective/completion authority itself): the handler now
+    only records progress synchronously and sets a deferred flag; a `LateUpdate`
+    boundary performs the completion evaluation at the END of the frame, strictly
+    after the SectionCleared dispatch has returned and every observer has committed.
+    This is a deferred boundary, not an arbitrary delay, and it never polls for
+    progress. ClearAllSections still advances exactly 0/3 → 1/3 → 2/3 → 3/3;
+    completion still fires only after all required objectives complete, exactly
+    once, through the unchanged single Mission Complete path; MissionSectionController
+    remains a pure progress publisher. New regression test
+    `FinalSectionClearIsCommittedBeforeCompletionFires` drives the real controller
+    and proves the final section's 3/3 progress is committed synchronously while the
+    completion signal only fires at the deferred boundary (and never twice).
+    Expected total: **261/261** (was 260; +1 test).
 
 ## Manual Unity QA checklist for 1U
 
@@ -1039,7 +1064,7 @@ runtime objective systems observe gameplay events and evaluate progress:
 11. Gates/upgrades, Runner behaviour, Toon Soldier walk+shoot, ragdoll all unchanged.
 12. Console clean during normal gameplay.
 13. Full EditMode suite: 238 previous + 21 new 1U tests + 1 event-contract
-    regression → **260/260**, 0 failed.
+    regression + 1 completion-ordering regression → **261/261**, 0 failed.
 
 ## What Milestone 1P.5 delivered
 

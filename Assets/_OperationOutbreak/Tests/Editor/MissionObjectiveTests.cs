@@ -515,5 +515,97 @@ namespace OperationOutbreak.Tests
             Assert.AreEqual(typeof(MissionDefinition.MissionSection), parameters[1].ParameterType,
                 "The second argument must be the cleared MissionSection payload.");
         }
+
+        [Test]
+        public void FinalSectionClearIsCommittedBeforeCompletionFires()
+        {
+            // 1U QA fix #2 - the completion path must NOT fire reentrantly inside the
+            // SectionCleared dispatch. The real defect: MissionObjectiveController (a
+            // SectionCleared subscriber) synchronously triggered CompleteEncounter, so
+            // GameplayDiagnostics - another subscriber of the SAME event - emitted its
+            // report before it had recorded the final section as cleared (MIS-FINAL,
+            // "2 of 3"). This test drives the real controller: the final section's
+            // progress must be COMMITTED synchronously, but the mission-completion
+            // signal must only fire at the deferred (end-of-frame) boundary.
+
+            MissionDefinition mission = BuildMission(Objective("clear_all_sections"));
+
+            GameObject host = new GameObject("ObjectiveOrderingHost");
+            host.SetActive(false);
+            MissionObjectiveController controller = host.AddComponent<MissionObjectiveController>();
+            SetField(controller, "missionDefinition", mission);
+
+            try
+            {
+                // Deterministic setup (OnEnable is invoked directly; it is idempotent
+                // and clears/rebuilds the objective runtimes).
+                InvokePrivate(controller, "OnEnable");
+
+                int completionCount = 0;
+                controller.AllRequiredObjectivesCompleted += () => completionCount++;
+
+                Assert.IsNotNull(controller.Objectives, "The objective runtime must be loaded.");
+                Assert.AreEqual(1, controller.Objectives.Count, "Mission has one required objective.");
+                Assert.AreEqual(3, controller.Objectives[0].RequiredProgress,
+                    "The ClearAllSections objective derives required progress from 3 sections.");
+
+                // Sections 1 and 2: progress commits synchronously, completion never fires.
+                InvokeHandleSectionCleared(controller, 0);
+                InvokeHandleSectionCleared(controller, 1);
+
+                Assert.AreEqual(2, controller.Objectives[0].CurrentProgress,
+                    "Two cleared sections must produce 2/3 progress.");
+                Assert.AreEqual(0, completionCount,
+                    "Completion must not fire before the final section clears.");
+
+                // Final section: progress reaches 3/3 synchronously, but the completion
+                // signal must remain deferred so observers (diagnostics) commit first.
+                InvokeHandleSectionCleared(controller, 2);
+
+                Assert.AreEqual(3, controller.Objectives[0].CurrentProgress,
+                    "The final section clear must commit 3/3 progress synchronously.");
+                Assert.IsTrue(controller.Objectives[0].IsComplete,
+                    "The objective must be complete once 3/3 progress is committed.");
+                Assert.IsTrue(controller.AreAllRequiredObjectivesComplete,
+                    "All required objectives must read complete after the final section.");
+                Assert.AreEqual(0, completionCount,
+                    "Completion must NOT fire reentrantly inside the section-clear dispatch - " +
+                    "the final section must be observably cleared first.");
+
+                // The deferred boundary (end of frame) fires completion exactly once.
+                InvokePrivate(controller, "LateUpdate");
+
+                Assert.AreEqual(1, completionCount,
+                    "Completion must fire exactly once at the deferred boundary.");
+
+                // Repeated clears / late updates must never re-fire completion.
+                InvokeHandleSectionCleared(controller, 2);
+                InvokePrivate(controller, "LateUpdate");
+
+                Assert.AreEqual(1, completionCount,
+                    "Completion must never fire twice.");
+            }
+            finally
+            {
+                UnityEngine.Object.DestroyImmediate(host);
+                UnityEngine.Object.DestroyImmediate(mission);
+            }
+        }
+
+        private static void InvokeHandleSectionCleared(MissionObjectiveController controller, int index)
+        {
+            MethodInfo method = typeof(MissionObjectiveController).GetMethod(
+                "HandleSectionCleared", BindingFlags.Instance | BindingFlags.NonPublic);
+            Assert.IsNotNull(method, "HandleSectionCleared must exist.");
+            method.Invoke(controller, new object[] { index, null });
+        }
+
+        private static void InvokePrivate(MissionObjectiveController controller, string methodName)
+        {
+            MethodInfo method = typeof(MissionObjectiveController).GetMethod(
+                methodName, BindingFlags.Instance | BindingFlags.NonPublic);
+            Assert.IsNotNull(method, methodName + " must exist.");
+            method.Invoke(controller, null);
+        }
     }
 }

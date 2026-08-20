@@ -17,7 +17,9 @@ namespace OperationOutbreak.Mission
     /// presentation path (EnemySpawner.CompleteEncounter -> EncounterCompleted ->
     /// MissionCompleteController). MissionSectionController no longer declares
     /// victory itself - it only publishes progress, so the two systems can never
-    /// both declare completion.
+    /// both declare completion. The completion evaluation is DEFERRED to the end of
+    /// the frame (LateUpdate), never fired reentrantly inside the SectionCleared
+    /// dispatch, so every observer of that event commits its state first.
     ///
     /// Responsibilities kept narrow: it reads the MissionDefinition objectives,
     /// subscribes to gameplay events, tracks progress and decides completion. It
@@ -50,6 +52,14 @@ namespace OperationOutbreak.Mission
         private readonly List<MissionObjectiveRuntime> _objectives = new List<MissionObjectiveRuntime>();
         private bool _completionTriggered;
 
+        // Milestone 1U QA fix #2 - completion is evaluated at the END of the frame,
+        // never reentrantly inside the SectionCleared dispatch, so every observer of
+        // that event (e.g. GameplayDiagnostics marking the final section cleared) has
+        // committed its state before the completion path (CompleteEncounter -> report)
+        // runs. This is a deferred boundary, not a polling mechanism: the flag is only
+        // ever set by a section-clear and only read once per frame in LateUpdate.
+        private bool _evaluationPending;
+
         /// <summary>Read-only runtime progress of every configured objective.</summary>
         public IReadOnlyList<MissionObjectiveRuntime> Objectives => _objectives;
 
@@ -76,6 +86,7 @@ namespace OperationOutbreak.Mission
         {
             // Instance state only: a scene reload rebuilds every objective fresh.
             _completionTriggered = false;
+            _evaluationPending = false;
             _objectives.Clear();
             HasRequiredObjective = false;
 
@@ -184,6 +195,30 @@ namespace OperationOutbreak.Mission
                 }
             }
 
+            // Milestone 1U QA fix #2 - do NOT evaluate completion here. This handler runs
+            // synchronously inside MissionSectionController's SectionCleared dispatch, and
+            // GameplayDiagnostics (another subscriber of the SAME event) may not have
+            // recorded the final section as cleared yet - completing now would emit the
+            // diagnostics report with the final section still showing "cleared = NO".
+            // Defer the evaluation to LateUpdate so the whole dispatch has finished
+            // before the single completion path is raised.
+            _evaluationPending = true;
+        }
+
+        /// <summary>
+        /// Milestone 1U QA fix #2 - the deferred completion boundary. Runs after all
+        /// Update/coroutine work for the frame, i.e. strictly AFTER the SectionCleared
+        /// dispatch has returned and every observer has committed its state. Only acts
+        /// when a section-clear marked evaluation pending; it never polls for progress.
+        /// </summary>
+        private void LateUpdate()
+        {
+            if (!_evaluationPending)
+            {
+                return;
+            }
+
+            _evaluationPending = false;
             EvaluateRequiredObjectives();
         }
 

@@ -824,6 +824,14 @@
   victory.
 - **Boundaries:** the objective controller does NOT spawn, fight, duplicate the
   section controller, or own rewards/save/progression.
+- **QA fix #2 addendum (deferred completion boundary):** the completion evaluation
+  is NOT performed reentrantly inside the `SectionCleared` dispatch. The objective
+  controller records progress synchronously and defers `EvaluateRequiredObjectives`
+  to `LateUpdate` (end of frame), so every `SectionCleared` observer (notably
+  `GameplayDiagnostics`, which marks the final section cleared) commits its state
+  before the single completion path (`CompleteEncounter` → report) runs. This is a
+  deferred boundary, not an arbitrary delay, and the flag is never polled for
+  progress.
 
 ### AD-1U-4: Event-driven evaluation, no polling, no duplicate events
 
