@@ -1169,6 +1169,24 @@ navigation requests Retry/Return:
     RequestReturn (never Retry), the same for Game Over, exactly one intent per
     click, and that labels are not raycast targets while the buttons stay
     non-overlapping. Expected total: **291/291** (was 285; +6 tests).
+17. **1V QA fix #3 (2026-08-20) — MissionResultUiTests fixture now drives the real
+    UI construction:** real-Unity EditMode ran all six new `MissionResultUiTests`
+    with every button assertion failing ("RetryButton must be created under …:
+    Expected: not null, But was: null"). Root cause: a TEST-FIXTURE lifecycle
+    gap, not a production defect. In EditMode, plain MonoBehaviours do NOT
+    receive `Awake`/`OnEnable` automatically from `AddComponent`/`SetActive`
+    (only `[ExecuteAlways]` scripts do), but both result controllers build their
+    runtime UI inside `Awake()` → `Build()`. The fixture therefore created the
+    components but never ran `Build()`, so no buttons existed to find. Fix
+    (test-only): the two builder helpers now invoke the REAL private `Build()`
+    method (the exact construction production `Awake()` calls) via reflection
+    after wiring the `resultNavigation` dependency, so the tests exercise the
+    genuine buttons and listeners - no fake replacement buttons, no weakened
+    assertions. Production code (and the raycastTarget=false fix) is UNCHANGED.
+    The Retry click path stays EditMode-safe because `MissionResultNavigation.
+    ReloadCurrentScene()` returns early when the active scene has `buildIndex < 0`
+    (it never performs a real scene load inside the test). Expected total
+    unchanged: **291/291**.
 
 ## Manual Unity QA checklist for 1V
 

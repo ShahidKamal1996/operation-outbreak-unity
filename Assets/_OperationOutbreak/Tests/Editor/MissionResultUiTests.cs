@@ -59,7 +59,16 @@ namespace OperationOutbreak.Tests
                 SetField(controller, "resultNavigation", navigation);
             }
 
-            host.SetActive(true); // Awake -> Build(); OnEnable -> subscriptions.
+            host.SetActive(true);
+
+            // 1V QA fix #3 - in EditMode, plain MonoBehaviours do NOT receive
+            // Awake/OnEnable automatically from AddComponent/SetActive (only
+            // [ExecuteAlways] scripts do). The production UI is built by
+            // Awake() -> Build(), so that construction never ran and the buttons
+            // were null. Drive the REAL construction method (the same private
+            // Build() production Awake calls) so the tests exercise the genuine
+            // buttons and listeners - no fake replacement buttons.
+            InvokeBuild(controller);
             return controller;
         }
 
@@ -74,7 +83,21 @@ namespace OperationOutbreak.Tests
             }
 
             host.SetActive(true);
+
+            // 1V QA fix #3 - same EditMode lifecycle gap as MissionCompleteController:
+            // Awake() (which calls Build()) never runs automatically in EditMode, so
+            // the buttons were never created. Drive the real Build() explicitly.
+            InvokeBuild(controller);
             return controller;
+        }
+
+        /// <summary>Invokes the controller's real private Build() UI-construction method.</summary>
+        private static void InvokeBuild(Component controller)
+        {
+            MethodInfo build = controller.GetType().GetMethod(
+                "Build", BindingFlags.Instance | BindingFlags.NonPublic);
+            Assert.IsNotNull(build, "Build must exist on " + controller.GetType().Name + ".");
+            build.Invoke(controller, null);
         }
 
         private static Button FindButton(Component controller, string buttonName)
