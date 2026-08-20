@@ -482,5 +482,38 @@ namespace OperationOutbreak.Tests
                     "CompleteEncounter", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic),
                 "MissionSectionController must not declare victory - it only publishes progress.");
         }
+
+        [Test]
+        public void ObjectiveHandlerMatchesTheRealSectionClearedEventContract()
+        {
+            // 1U QA fix #1 - the objective controller's handler must match the ACTUAL
+            // SectionCleared delegate (Action<int, MissionDefinition.MissionSection>)
+            // exactly. A one-argument handler produces CS0123 at the subscribe site;
+            // pinning the delegate type and the handler parameters here makes that a
+            // test failure instead of a compile error.
+
+            // 1. The published event carries the section index AND the section payload.
+            EventInfo clearedEvent = typeof(MissionSectionController).GetEvent(
+                "SectionCleared", BindingFlags.Instance | BindingFlags.Public);
+            Assert.IsNotNull(clearedEvent, "MissionSectionController must publish SectionCleared.");
+            Assert.AreEqual(
+                typeof(Action<int, MissionDefinition.MissionSection>),
+                clearedEvent.EventHandlerType,
+                "SectionCleared must be Action<int, MissionDefinition.MissionSection>.");
+
+            // 2. The objective controller's handler accepts exactly those arguments.
+            MethodInfo handler = typeof(MissionObjectiveController).GetMethod(
+                "HandleSectionCleared", BindingFlags.Instance | BindingFlags.NonPublic);
+            Assert.IsNotNull(handler,
+                "MissionObjectiveController must implement HandleSectionCleared.");
+
+            ParameterInfo[] parameters = handler.GetParameters();
+            Assert.AreEqual(2, parameters.Length,
+                "HandleSectionCleared must accept the event's two arguments.");
+            Assert.AreEqual(typeof(int), parameters[0].ParameterType,
+                "The first argument must be the cleared section index.");
+            Assert.AreEqual(typeof(MissionDefinition.MissionSection), parameters[1].ParameterType,
+                "The second argument must be the cleared MissionSection payload.");
+        }
     }
 }

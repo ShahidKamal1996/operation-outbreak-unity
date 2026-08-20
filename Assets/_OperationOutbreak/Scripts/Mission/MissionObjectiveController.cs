@@ -151,8 +151,13 @@ namespace OperationOutbreak.Mission
             }
         }
 
-        private void HandleSectionCleared(int index)
+        private void HandleSectionCleared(int index, MissionDefinition.MissionSection section)
         {
+            // The 'section' argument is the MissionSectionController.SectionCleared
+            // payload (Action<int, MissionDefinition.MissionSection>); only the index
+            // is needed to record progress against the section-indexed ClearAllSections
+            // objective. The payload is accepted verbatim so the handler matches the
+            // event delegate exactly - no adapter, no signature change.
             if (_completionTriggered)
             {
                 return;

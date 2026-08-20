@@ -1005,6 +1005,21 @@ runtime objective systems observe gameplay events and evaluate progress:
     progress invariant, the preserved Mission 01 shape, the no-duplication rule
     and the single completion path. Expected total: **259/259** (238 verified +
     21 new).
+12. **1U QA fix #1 (2026-08-20) — SectionCleared handler signature repaired:**
+    real Unity reported two CS0123 errors in `MissionObjectiveController.cs`:
+    `HandleSectionCleared` did not match the
+    `Action<int, MissionDefinition.MissionSection>` delegate of
+    `MissionSectionController.SectionCleared` at the subscribe/unsubscribe sites.
+    Root cause: the handler was declared with ONE parameter (`int index`) while
+    the event carries TWO (`int index, MissionDefinition.MissionSection section`).
+    Fix (smallest correct change): the handler now accepts the event's exact two
+    arguments verbatim (the section payload is accepted and the index is used for
+    the section-indexed ClearAllSections progress) — no adapter, no event-signature
+    change, no polling. New regression test
+    `ObjectiveHandlerMatchesTheRealSectionClearedEventContract` pins the event's
+    delegate type AND the handler's parameter list via reflection, so a future
+    signature drift fails the suite instead of failing the compiler. Expected
+    total: **260/260** (was 259; +1 test).
 
 ## Manual Unity QA checklist for 1U
 
@@ -1023,7 +1038,8 @@ runtime objective systems observe gameplay events and evaluate progress:
 10. 3 sections / 12 enemies / 9 Basic + 3 Runner remain unchanged.
 11. Gates/upgrades, Runner behaviour, Toon Soldier walk+shoot, ragdoll all unchanged.
 12. Console clean during normal gameplay.
-13. Full EditMode suite: 238 previous + 21 new 1U tests → **259/259**, 0 failed.
+13. Full EditMode suite: 238 previous + 21 new 1U tests + 1 event-contract
+    regression → **260/260**, 0 failed.
 
 ## What Milestone 1P.5 delivered
 
