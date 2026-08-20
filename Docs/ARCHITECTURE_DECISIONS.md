@@ -794,6 +794,62 @@
   `if (missionNumber == 1)` reconstruction. The runtime executes whatever
   MissionDefinition it is given.
 
+## Milestone 1U decisions
+
+### AD-1U-1: Objectives are plain serializable tagged data, not a class hierarchy
+
+- **Decision:** `MissionObjectiveDefinition` is a single `[Serializable]` data class
+  (stable `objectiveId`, `title`, `objectiveType`, `required`) held in an ordered
+  list on `MissionDefinition`. There is NO per-objective-type class hierarchy and
+  no `Mission01ObjectiveController`-style runtime duplication.
+- **Why:** the brief's core rule — mission data defines objectives, runtime systems
+  evaluate them. Future types extend the `MissionObjectiveType` enum and the runtime
+  evaluator; a simple tagged-data model is cleaner than speculative inheritance for
+  the foundation milestone.
+
+### AD-1U-2: Required progress DERIVES from mission structure (never stored)
+
+- **Decision:** `ClearAllSections` has no stored completion value — its
+  `RequiredProgress` is the mission's section count at evaluation time, so an
+  objective can never drift out of sync with the sections it depends on.
+
+### AD-1U-3: ONE completion authority, four clean owners
+
+- **Decision (completion chain):** `MissionSectionController` publishes progress
+  (`SectionCleared` / `MissionCompleted`); `MissionObjectiveController` evaluates
+  required objectives and is the single completion gate; `MissionCompleteController`
+  presents the final state (unchanged, listening to
+  `EnemySpawner.EncounterCompleted`). `MissionSectionController` NO LONGER calls
+  `CompleteEncounter()` — it only publishes progress, so no two systems can declare
+  victory.
+- **Boundaries:** the objective controller does NOT spawn, fight, duplicate the
+  section controller, or own rewards/save/progression.
+
+### AD-1U-4: Event-driven evaluation, no polling, no duplicate events
+
+- **Decision:** the objective runtime reuses the existing
+  `MissionSectionController.SectionCleared` event (the project already publishes
+  exactly the progress information objectives need). No new global events were
+  added for information that already exists, and no per-frame scene polling.
+
+### AD-1U-5: Fail loud on missing objective data
+
+- **Decision:** a missing MissionDefinition, an objective list with no REQUIRED
+  objective, or a null objective logs a loud `[1U]` error and completion is NEVER
+  triggered. The committed Mission_01 always carries explicit objective data (and
+  the in-memory prototype fallback carries the same objective), so the normal path
+  is fully defined; malformed data can never silently complete or silently hang.
+- Editor validation (`CollectProblems` + `Validate Mission Definitions`) rejects
+  the same defects up front: null/empty/duplicate/unsupported objectives and a
+  mission with no required completion objective.
+
+### AD-1U-6: Runtime progress is never serialized into the mission asset
+
+- **Decision:** `MissionObjectiveRuntime` is a plain runtime class (not a
+  `UnityEngine.Object`, not serialized). `MissionDefinition` holds only static
+  objective DEFINITIONS; progress lives in scene-lifetime state, so a reload
+  resets objectives exactly like the rest of the mission flow.
+
 ## UNKNOWN / open questions
 
 - Pre-1P architecture rationale for gates (1J series) could not be recovered (original

@@ -26,6 +26,12 @@ namespace OperationOutbreak.Mission
     /// Mission Complete path after the final section. There is still exactly ONE
     /// mission-flow system and ONE victory path.
     ///
+    /// Milestone 1U - completion ownership is split deliberately: this component OWNS
+    /// section progression and PUBLISHES it (SectionCleared / MissionCompleted), while
+    /// the objective runtime (MissionObjectiveController) EVALUATES required objectives
+    /// and is the single completion authority that triggers the Mission Complete
+    /// presentation. This component no longer declares victory itself.
+    ///
     /// Fallback policy (documented): a missing MissionDefinition reference is a setup
     /// error - it logs a loud, actionable diagnostic AND falls back to the verified
     /// prototype mission (3 sections / 9 Basic + 3 Runner) so gameplay can never become
@@ -80,9 +86,11 @@ namespace OperationOutbreak.Mission
         public event Action<int, MissionDefinition.MissionSection> SectionCleared;
 
         /// <summary>
-        /// Raised once when the LAST section has been cleared. This is the single mission
-        /// victory signal - Mission Complete listens to the spawner's own encounter event,
-        /// which is only raised at the end of the final section.
+        /// Raised once when the LAST section has been cleared. Milestone 1U: this is a
+        /// PROGRESS signal (all sections done), not the victory trigger - the objective
+        /// runtime (MissionObjectiveController) is the single completion authority and
+        /// triggers the Mission Complete presentation once every required objective is
+        /// satisfied.
         /// </summary>
         public event Action MissionCompleted;
 
@@ -342,14 +350,13 @@ namespace OperationOutbreak.Mission
                     Debug.Log("All mission sections cleared.", this);
                 }
 
+                // Milestone 1U - this event is now the "all sections cleared" PROGRESS
+                // signal, not the victory trigger. Victory is decided by the objective
+                // runtime (MissionObjectiveController), which observes SectionCleared and,
+                // once every REQUIRED objective is complete, triggers the single
+                // presentation path (enemySpawner.CompleteEncounter -> EncounterCompleted
+                // -> Mission Complete UI). No second victory path exists.
                 MissionCompleted?.Invoke();
-
-                // The spawner raises its own EncounterCompleted here, which is what the
-                // existing Mission Complete UI already listens to. One victory path only.
-                if (enemySpawner != null)
-                {
-                    enemySpawner.CompleteEncounter();
-                }
 
                 return;
             }

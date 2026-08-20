@@ -61,6 +61,12 @@ namespace OperationOutbreak.Mission
         [SerializeField]
         private List<MissionSection> sections = new List<MissionSection>();
 
+        [Header("Objectives (Milestone 1U)")]
+        [Tooltip("Ordered objective definitions. REQUIRED objectives gate mission " +
+                 "completion; optional objectives are tracked but never block victory.")]
+        [SerializeField]
+        private List<MissionObjectiveDefinition> objectives = new List<MissionObjectiveDefinition>();
+
         // ------------------------------------------------------------------ read-only views
 
         public string MissionId => missionId;
@@ -72,6 +78,56 @@ namespace OperationOutbreak.Mission
         public IReadOnlyList<MissionSection> Sections => sections;
 
         public int SectionCount => sections != null ? sections.Count : 0;
+
+        /// <summary>Ordered, read-only objective list (static configuration only).</summary>
+        public IReadOnlyList<MissionObjectiveDefinition> Objectives => objectives;
+
+        public int ObjectiveCount => objectives != null ? objectives.Count : 0;
+
+        /// <summary>How many objectives are REQUIRED (gate completion). Derived, never stored.</summary>
+        public int RequiredObjectiveCount
+        {
+            get
+            {
+                if (objectives == null)
+                {
+                    return 0;
+                }
+
+                int required = 0;
+                for (int i = 0; i < objectives.Count; i++)
+                {
+                    if (objectives[i] != null && objectives[i].required)
+                    {
+                        required++;
+                    }
+                }
+
+                return required;
+            }
+        }
+
+        /// <summary>True when the mission declares at least one required objective.</summary>
+        public bool HasRequiredObjective => RequiredObjectiveCount > 0;
+
+        /// <summary>The objective with <paramref name="objectiveId"/>, or null when absent.</summary>
+        public MissionObjectiveDefinition GetObjective(string objectiveId)
+        {
+            if (objectives == null)
+            {
+                return null;
+            }
+
+            for (int i = 0; i < objectives.Count; i++)
+            {
+                if (objectives[i] != null && objectives[i].objectiveId == objectiveId)
+                {
+                    return objectives[i];
+                }
+            }
+
+            return null;
+        }
 
         /// <summary>
         /// Total enemies across every section, DERIVED from the section composition
@@ -272,6 +328,62 @@ namespace OperationOutbreak.Mission
                 problems.Add(label + ": mission spawns no enemies.");
             }
 
+            // ------------------------------------------------------------------ objectives (1U)
+
+            if (definition.objectives == null || definition.objectives.Count == 0)
+            {
+                problems.Add(label + ": mission has no objectives (a required completion " +
+                             "objective is mandatory).");
+            }
+            else
+            {
+                bool anyRequired = false;
+                HashSet<string> seenObjectiveIds = new HashSet<string>();
+
+                for (int k = 0; k < definition.objectives.Count; k++)
+                {
+                    MissionObjectiveDefinition objective = definition.objectives[k];
+                    string objectiveWhere = label + " / objective " + (k + 1);
+
+                    if (objective == null)
+                    {
+                        problems.Add(label + ": objective entry " + (k + 1) + " is null.");
+                        continue;
+                    }
+
+                    if (string.IsNullOrEmpty(objective.objectiveId))
+                    {
+                        problems.Add(objectiveWhere + ": missing stable objective id.");
+                    }
+                    else if (!seenObjectiveIds.Add(objective.objectiveId))
+                    {
+                        problems.Add(objectiveWhere + ": duplicate objective id '" +
+                                     objective.objectiveId + "'.");
+                    }
+
+                    if (!Enum.IsDefined(typeof(MissionObjectiveType), objective.objectiveType))
+                    {
+                        problems.Add(objectiveWhere + ": unsupported objective type '" +
+                                     objective.objectiveType + "'.");
+                    }
+
+                    if (objective.required)
+                    {
+                        anyRequired = true;
+                    }
+
+                    // ClearAllSections carries no explicit section/archetype reference -
+                    // its required progress derives from the mission's section count, and
+                    // section validity is already enforced by the section loop above.
+                }
+
+                if (!anyRequired)
+                {
+                    problems.Add(label + ": mission has no REQUIRED objective - mission " +
+                                 "completion would never gate.");
+                }
+            }
+
             return problems;
         }
 
@@ -333,6 +445,19 @@ namespace OperationOutbreak.Mission
                         new EnemyCompositionEntry(BasicArchetypeId, 3),
                         new EnemyCompositionEntry(RunnerArchetypeId, 2)
                     }
+                }
+            };
+
+            // Milestone 1U - the fallback carries the same explicit objective data as the
+            // committed Mission_01: one required ClearAllSections objective.
+            mission.objectives = new List<MissionObjectiveDefinition>
+            {
+                new MissionObjectiveDefinition
+                {
+                    objectiveId = "clear_all_sections",
+                    title = "Clear All Sections",
+                    objectiveType = MissionObjectiveType.ClearAllSections,
+                    required = true
                 }
             };
 

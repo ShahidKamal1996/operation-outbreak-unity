@@ -31,7 +31,8 @@
 | **1Q — production enemy foundation (Basic Infected)** | **VERIFIED** (2026-08-19 — owner manual Unity QA PASSED; EditMode 205/205; verified assets committed by the owner at `0ca4d76` "Milestone 1Q: save verified production zombie ragdoll assets") |
 | 1R — enemy animation & death foundation | **VERIFIED through the extended 1Q delivery** (roadmap reconciliation: 1R's scope was fully delivered and QA-verified during the 1Q implementation/QA cycle — hybrid animation → ragdoll death, stabilized ragdoll, collider lifecycle, reuse/reset. NOT rebuilt separately.) |
 | **1S — enemy variant architecture** | **VERIFIED** (2026-08-19 — real Unity EditMode 219/219 passed; Validate Enemy Archetypes PASS; Basic/Runner/Toon Soldier/ragdoll/reuse verified; console clean) |
-| **1T — mission definition foundation** | **IMPLEMENTED — AWAITING MANUAL UNITY QA** (2026-08-20) |
+| **1T — mission definition foundation** | **VERIFIED** (2026-08-20 — real Unity EditMode 238/238 passed; Validate Mission Definitions PASS; Validate Enemy Archetypes PASS; Mission 01 data-driven 3 sections / 12 enemies / 9 Basic + 3 Runner; Runner controller committed and validated) |
+| **1U — objective framework foundation** | **IMPLEMENTED — AWAITING MANUAL UNITY QA** (2026-08-20) |
 
 ## What Milestone 1P delivered
 
@@ -939,6 +940,90 @@ mission contains; runtime gameplay systems execute it:
 12. `Tools > Operation Outbreak > Validate Mission Definitions` → PASS.
 13. Full EditMode suite: 219 previous + 18 new 1T tests + 1 runner-controller
     regression → **238/238**, 0 failed.
+
+## What Milestone 1U delivered
+
+Reusable data-driven OBJECTIVE framework — mission data defines the objectives;
+runtime objective systems observe gameplay events and evaluate progress:
+
+1. **Objective data model** — `MissionObjectiveDefinition` (`[Serializable]`, pure
+   data): stable `objectiveId`, `title`, `objectiveType` and the
+   `required`/optional flag. `MissionDefinition` gains an ordered `objectives`
+   list (`Objectives`, `ObjectiveCount`, `RequiredObjectiveCount`,
+   `HasRequiredObjective`, `GetObjective(id)`). The FIRST production type is
+   `MissionObjectiveType.ClearAllSections` — required progress DERIVES from the
+   mission's section count (never stored, can never drift).
+2. **Extensibility seam** — future types (defeat N enemies, survive N seconds,
+   reach/escort/protect/destroy, boss, collect, multi-stage) extend the enum and
+   the runtime evaluator only; the mission-flow architecture never changes. No
+   switch statements spread across gameplay.
+3. **Runtime authority** — `MissionObjectiveController` (one `DisallowMultipleComponent`
+   component): reads the definition's objectives, subscribes to
+   `MissionSectionController.SectionCleared` (reusing the existing event — no new
+   duplicate global events, no per-frame polling), tracks progress, exposes
+   read-only status (`Objectives`, `HasRequiredObjective`,
+   `AreAllRequiredObjectivesComplete`, per-objective `ObjectiveCompleted` +
+   `AllRequiredObjectivesCompleted` events) and decides completion. It does NOT
+   spawn, fight, duplicate the section controller or own rewards.
+4. **`MissionObjectiveRuntime`** — plain runtime state (NOT serialized, NOT a
+   Unity asset): `CurrentProgress` / `RequiredProgress` / `IsComplete` /
+   `NormalizedProgress`, with `RecordSectionCleared(index)` (dedup: a section
+   counts once) and the pure `AllRequiredObjectivesComplete(...)` gate (true only
+   when ≥1 required objective exists AND every required objective is complete).
+5. **Mission 01 migration** — the committed asset now carries ONE required
+   `clear_all_sections` objective (ClearAllSections). Gameplay is unchanged: the
+   objective completes exactly when Section 3 clears, which is the same moment
+   Mission Complete fired before.
+6. **Completion authority (single path)** — `MissionSectionController` publishes
+   progress only (`SectionCleared` / `MissionCompleted`); it no longer declares
+   victory. `MissionObjectiveController` is the ONE completion gate: when every
+   required objective completes it triggers the existing presentation path
+   (`EnemySpawner.CompleteEncounter` → `EncounterCompleted` →
+   `MissionCompleteController`). `MissionCompleteController` is unchanged.
+7. **Required vs optional** — required objectives gate completion; optional
+   objectives are tracked but never block victory (the data seam exists; no
+   stars/rewards built on it yet).
+8. **Fallback policy (fail loud)** — a missing MissionDefinition, an objective
+   list with no required objective, or a null objective logs a loud `[1U]` error
+   and completion is NEVER triggered (never silently completes, never silently
+   hangs on the committed scene — Mission_01 always carries explicit objective
+   data; the in-memory prototype fallback also carries the same objective).
+9. **Validation** — `MissionDefinition.CollectProblems` now also rejects: null
+   objectives, empty objective ids, duplicate objective ids, unsupported
+   objective types, and a mission with no required completion objective (or no
+   objectives at all). ClearAllSections needs no extra section/archetype
+   reference (it means "all sections", whose validity the section loop already
+   enforces). `Tools > Operation Outbreak > Validate Mission Definitions` keeps
+   using the same validation authority.
+10. **Authoring workflow** — a designer adds objectives to a MissionDefinition
+    asset (create → identity → sections → objectives → choose type/required →
+    validate) without writing C#.
+11. **Tests** — `MissionObjectiveTests.cs` (+21) pins the committed objective,
+    the derived required progress, the full progress semantics (zero → one-per-
+    section → complete exactly at the end, never early, never double-counted),
+    required-vs-optional gating, every validation rejection, the no-serialized-
+    progress invariant, the preserved Mission 01 shape, the no-duplication rule
+    and the single completion path. Expected total: **259/259** (238 verified +
+    21 new).
+
+## Manual Unity QA checklist for 1U
+
+1. Project compiles with no new errors/warnings.
+2. `Tools > Operation Outbreak > Validate Enemy Archetypes` → PASS.
+3. `Tools > Operation Outbreak > Validate Mission Definitions` → PASS (Mission 01
+   now carries its required `clear_all_sections` objective and validates cleanly).
+4. Mission 01 starts normally; the objective runtime logs
+   `[1U] Objective runtime loaded for mission 'Mission_01': 1 objective(s), 1 required.`
+5. Section 1 clear logs `Section 1 cleared` (progress 1/3 in the objective runtime).
+6. Section 2 clear logs `Section 2 cleared` (progress 2/3).
+7. Section 3 clear logs `Objective 'clear_all_sections' completed (3/3)` then
+   `All required objectives complete - mission completion triggered.`
+8. Mission Complete occurs exactly once (via the existing MissionCompleteController).
+9. Mission never completes before the final section clears.
+10. 3 sections / 12 enemies / 9 Basic + 3 Runner remain unchanged.
+11. Gates/upgrades, Runner behaviour, Toon Soldier walk+shoot, ragdoll all unchanged.
+12. Console clean during normal gameplay.
+13. Full EditMode suite: 238 previous + 21 new 1U tests → **259/259**, 0 failed.
 
 ## What Milestone 1P.5 delivered
 

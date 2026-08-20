@@ -48,3 +48,8 @@ MonoBehaviour:
       count: 3
     - archetypeId: runner
       count: 2
+  objectives:
+  - objectiveId: clear_all_sections
+    title: Clear All Sections
+    objectiveType: 0
+    required: 1
