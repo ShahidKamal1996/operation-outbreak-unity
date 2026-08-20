@@ -1288,6 +1288,23 @@ grey prototype strip, while every gameplay number stays byte-identical:
     `ScenePrefabInstancesReferenceThePrefabObjectFileId` pins that every kit
     instance's `m_SourcePrefab` uses fileID `100100000` (never `100001`).
     Expected total: **311/311** (was 309; +2 tests).
+14. **1W QA fix #2 (2026-08-20) — SceneContainsAuthoredOutskirtsDressing now uses
+    real scene inspection:** real-Unity EditMode failed
+    `SceneContainsAuthoredOutskirtsDressing` ("The scene must instance the
+    concrete barrier kit module. Expected: True But was: False") while the two QA
+    fix #1 prefab regressions passed (so the prefab repair is sound). Root cause:
+    a TEST DETECTION-LOGIC defect, not scene authoring. The test searched the
+    scene TEXT for the literal string `m_Name: C1_Barrier_Concrete`, but a prefab
+    INSTANCE's name is serialized as a `propertyPath: m_Name` modification with a
+    separate `value:` line - never as a GameObject `m_Name:` field - so the check
+    could never match and the (correctly-authored) barrier looked absent. Fix:
+    the test now opens the committed scene (`EditorSceneManager`) and inspects the
+    REAL scene objects via `PrefabUtility`: it proves the authored `Outskirts`
+    root + `Roadside_Left`/`Roadside_Right` strips exist and that EVERY kit module
+    (concrete barrier, checkpoint barrier, debris, crate, cone, start gate,
+    transition, final roadblock) is present as a genuine prefab instance resolved
+    by its SOURCE-prefab GUID (not by name). No test was added or removed;
+    production scene/prefab assets unchanged. Expected total unchanged: **311/311**.
 
 ## Manual Unity QA checklist for 1W
 

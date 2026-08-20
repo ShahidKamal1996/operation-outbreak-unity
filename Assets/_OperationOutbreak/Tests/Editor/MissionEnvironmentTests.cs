@@ -6,7 +6,9 @@ using OperationOutbreak.EditorTools;
 using OperationOutbreak.Environment;
 using OperationOutbreak.Mission;
 using UnityEditor;
+using UnityEditor.SceneManagement;
 using UnityEngine;
+using UnityEngine.SceneManagement;
 
 namespace OperationOutbreak.Tests
 {
@@ -35,6 +37,11 @@ namespace OperationOutbreak.Tests
         private const string StartGateGuid = "c3c5895d25567ec4878a1177e0e368b0";
         private const string TransitionGuid = "7ce6c24146d69fd1187b5f82747ff9fc";
         private const string FinalRoadblockGuid = "fc64bef05209876643cf175da50b95a0";
+        private const string ConcreteBarrierGuid = "a30581505fc58961ad5eb626f307a567";
+        private const string CheckpointBarrierGuid = "72d64da3c86ae5500d31b1fe46826896";
+        private const string DebrisGuid = "c3adb0b9d1e468101a7c8205f30ae0de";
+        private const string CrateGuid = "f458a656813567caf6570c07bfe20a80";
+        private const string ConeGuid = "10d476f7440c1c82af2a6c43610aa159";
 
         // ------------------------------------------------------------------ helpers
 
@@ -361,16 +368,126 @@ namespace OperationOutbreak.Tests
         [Test]
         public void SceneContainsAuthoredOutskirtsDressing()
         {
-            string scene = ReadSceneText();
+            // 1W QA fix #2 - the previous version searched the scene TEXT for the
+            // literal string "m_Name: C1_Barrier_Concrete". A prefab INSTANCE's name is
+            // serialized as a m_Name property modification with a separate `value:`
+            // line (not as a GameObject `m_Name:` field), so that string could never
+            // match and the correctly-authored dressing looked absent. This test now
+            // opens the committed scene and inspects the REAL scene objects via
+            // PrefabUtility: the authored Outskirts root + roadside strips must exist,
+            // and every kit module must be present as a genuine prefab instance of its
+            // source prefab (by source-prefab GUID, not by name).
+            Scene scene = EditorSceneManager.GetSceneByPath(ScenePath);
+            bool opened = false;
 
-            Assert.IsTrue(scene.Contains("m_Name: Outskirts"),
-                "The scene must contain the Outskirts environment root.");
-            Assert.IsTrue(scene.Contains("Roadside_Left") && scene.Contains("Roadside_Right"),
-                "The scene must contain the roadside dressing strips.");
-            Assert.IsTrue(scene.Contains("m_Name: C1_Barrier_Concrete"),
-                "The scene must instance the concrete barrier kit module.");
-            Assert.IsTrue(scene.Contains("m_Name: C1_Prop_Debris"),
-                "The scene must instance the debris kit module.");
+            if (!scene.isLoaded)
+            {
+                scene = EditorSceneManager.OpenScene(ScenePath, OpenSceneMode.Additive);
+                opened = true;
+            }
+
+            try
+            {
+                Assert.IsNotNull(FindSceneObject(scene, "Outskirts"),
+                    "The scene must contain the Outskirts environment root.");
+                Assert.IsNotNull(FindSceneObject(scene, "Roadside_Left"),
+                    "The scene must contain the Roadside_Left dressing strip.");
+                Assert.IsNotNull(FindSceneObject(scene, "Roadside_Right"),
+                    "The scene must contain the Roadside_Right dressing strip.");
+
+                Assert.Greater(CountPrefabInstances(scene, ConcreteBarrierGuid), 0,
+                    "The scene must instance the concrete barrier kit module.");
+                Assert.Greater(CountPrefabInstances(scene, CheckpointBarrierGuid), 0,
+                    "The scene must instance the checkpoint barrier kit module.");
+                Assert.Greater(CountPrefabInstances(scene, DebrisGuid), 0,
+                    "The scene must instance the debris kit module.");
+                Assert.Greater(CountPrefabInstances(scene, CrateGuid), 0,
+                    "The scene must instance the crate kit module.");
+                Assert.Greater(CountPrefabInstances(scene, ConeGuid), 0,
+                    "The scene must instance the cone kit module.");
+                Assert.Greater(CountPrefabInstances(scene, StartGateGuid), 0,
+                    "The scene must instance the start checkpoint landmark.");
+                Assert.Greater(CountPrefabInstances(scene, TransitionGuid), 0,
+                    "The scene must instance the section-transition landmark.");
+                Assert.Greater(CountPrefabInstances(scene, FinalRoadblockGuid), 0,
+                    "The scene must instance the final roadblock landmark.");
+            }
+            finally
+            {
+                if (opened)
+                {
+                    EditorSceneManager.CloseScene(scene, true);
+                }
+            }
+        }
+
+        private static GameObject FindSceneObject(Scene scene, string objectName)
+        {
+            foreach (GameObject root in scene.GetRootGameObjects())
+            {
+                GameObject found = FindNamedRecursive(root, objectName);
+                if (found != null)
+                {
+                    return found;
+                }
+            }
+
+            return null;
+        }
+
+        private static GameObject FindNamedRecursive(GameObject gameObject, string objectName)
+        {
+            if (gameObject.name == objectName)
+            {
+                return gameObject;
+            }
+
+            Transform transform = gameObject.transform;
+            for (int i = 0; i < transform.childCount; i++)
+            {
+                GameObject found = FindNamedRecursive(transform.GetChild(i).gameObject, objectName);
+                if (found != null)
+                {
+                    return found;
+                }
+            }
+
+            return null;
+        }
+
+        private static int CountPrefabInstances(Scene scene, string prefabGuid)
+        {
+            int count = 0;
+            foreach (GameObject root in scene.GetRootGameObjects())
+            {
+                count += CountInstancesRecursive(root, prefabGuid);
+            }
+
+            return count;
+        }
+
+        private static int CountInstancesRecursive(GameObject gameObject, string prefabGuid)
+        {
+            int count = 0;
+
+            if (PrefabUtility.IsPartOfPrefabInstance(gameObject) &&
+                PrefabUtility.GetOutermostPrefabInstanceRoot(gameObject) == gameObject)
+            {
+                GameObject source = PrefabUtility.GetCorrespondingObjectFromSource(gameObject) as GameObject;
+                if (source != null &&
+                    AssetDatabase.AssetPathToGUID(AssetDatabase.GetAssetPath(source)) == prefabGuid)
+                {
+                    count++;
+                }
+            }
+
+            Transform transform = gameObject.transform;
+            for (int i = 0; i < transform.childCount; i++)
+            {
+                count += CountInstancesRecursive(transform.GetChild(i).gameObject, prefabGuid);
+            }
+
+            return count;
         }
 
         // ------------------------------------------------- validation
