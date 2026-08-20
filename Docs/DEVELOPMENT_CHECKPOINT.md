@@ -845,6 +845,23 @@ mission contains; runtime gameplay systems execute it:
    asset WITHOUT invoking any rebuild and pins the whole structure - a missing
    committed controller fails the test rather than being silently regenerated.
    Expected total: 238/238 (was 237; +1 test).
+9. **1T QA fix #2 (2026-08-20) — null-composition validation fixture repaired:**
+   real-Unity EditMode failed
+   `MissionDefinitionTests.ValidationRejectsNullAndEmptyCompositionEntries`
+   ("A null composition entry must be rejected. Expected: True But was: False").
+   Root cause was the TEST FIXTURE, not production validation:
+   `MissionDefinition.CollectProblems` has always rejected null composition
+   entries, but the test's `CreateMission` helper copied sections through
+   `SerializedObject`. `EnemyCompositionEntry` is a plain `[Serializable]`
+   class and Unity serializes such classes BY VALUE, so a null element in a
+   `List<EnemyCompositionEntry>` cannot be represented - the serialization
+   round-trip materialized the null entry into a default instance
+   (archetypeId `basic_infected`, count 1), which is valid, so the null never
+   reached the validator. Fix (test-only): `CreateMission` now assigns the
+   authored sections directly (reflection) instead of copying them through the
+   serialized property, so a genuinely null entry reaches `CollectProblems` and
+   is rejected. Production validation unchanged; no new test added. Expected
+   total unchanged: 238/238.
 
 ## Manual Unity QA checklist for 1S
 

@@ -61,7 +61,10 @@ namespace OperationOutbreak.Tests
             return File.ReadAllText(ScenePath);
         }
 
-        /// <summary>Builds a MissionDefinition in memory through the serialized fields.</summary>
+        /// <summary>
+        /// Builds a MissionDefinition in memory: identity through the serialized
+        /// fields, sections assigned directly (see the comment below).
+        /// </summary>
         private static MissionDefinition CreateMission(
             string missionId, int missionNumber, int chapterNumber,
             params MissionDefinition.MissionSection[] sections)
@@ -73,42 +76,24 @@ namespace OperationOutbreak.Tests
             so.FindProperty("missionNumber").intValue = missionNumber;
             so.FindProperty("chapterNumber").intValue = chapterNumber;
             so.FindProperty("displayName").stringValue = missionId;
-
-            SerializedProperty list = so.FindProperty("sections");
-            list.arraySize = sections != null ? sections.Length : 0;
-
-            for (int i = 0; i < list.arraySize; i++)
-            {
-                SerializedProperty element = list.GetArrayElementAtIndex(i);
-                MissionDefinition.MissionSection source = sections[i];
-
-                element.FindPropertyRelative("sectionId").stringValue = source.sectionId;
-                element.FindPropertyRelative("label").stringValue = source.label;
-                element.FindPropertyRelative("subtitle").stringValue = source.subtitle;
-                element.FindPropertyRelative("activationZ").floatValue = source.activationZ;
-                element.FindPropertyRelative("forwardLimitZ").floatValue = source.forwardLimitZ;
-                element.FindPropertyRelative("spawnAheadOfLimit").floatValue = source.spawnAheadOfLimit;
-
-                SerializedProperty composition = element.FindPropertyRelative("composition");
-                composition.arraySize = source.composition != null ? source.composition.Count : 0;
-
-                for (int j = 0; j < composition.arraySize; j++)
-                {
-                    // A null source entry is left as a null serialized element, which is
-                    // exactly what the null-entry validation tests need.
-                    if (source.composition[j] == null)
-                    {
-                        continue;
-                    }
-
-                    SerializedProperty entry = composition.GetArrayElementAtIndex(j);
-                    entry.FindPropertyRelative("archetypeId").stringValue =
-                        source.composition[j].archetypeId;
-                    entry.FindPropertyRelative("count").intValue = source.composition[j].count;
-                }
-            }
-
             so.ApplyModifiedPropertiesWithoutUndo();
+
+            // Sections are assigned DIRECTLY rather than copied through the serialized
+            // property. EnemyCompositionEntry is a plain [Serializable] class, and
+            // Unity's serializer stores such classes BY VALUE - a null element inside a
+            // List<EnemyCompositionEntry> cannot be represented, so a serialization
+            // round-trip materializes the null entry into a default instance
+            // (archetypeId 'basic_infected', count 1) and the null-entry validation
+            // test could never observe one. Injecting the authored sections as-is keeps
+            // the fixture faithful to the exact data model CollectProblems reads.
+            FieldInfo sectionsField = typeof(MissionDefinition).GetField(
+                "sections", BindingFlags.Instance | BindingFlags.NonPublic);
+            Assert.IsNotNull(sectionsField, "MissionDefinition must keep its 'sections' field.");
+            sectionsField.SetValue(
+                mission,
+                new List<MissionDefinition.MissionSection>(
+                    sections ?? new MissionDefinition.MissionSection[0]));
+
             return mission;
         }
 
