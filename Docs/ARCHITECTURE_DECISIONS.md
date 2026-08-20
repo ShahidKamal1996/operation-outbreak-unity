@@ -913,6 +913,50 @@
   scene exists yet, so Return/Next emit the intent and log a documented
   development fallback - no invented scene, no fragile hard-coded scene names.
 
+## Milestone 1W decisions
+
+### AD-1W-1: Environment is static data; the scene is an authored instance of the kit
+
+- **Decision:** `MissionEnvironmentDefinition` is a pure, static ScriptableObject
+  (materials, landmark prefabs, dressing library, deterministic seed). The
+  committed Mission 01 scene is a DETERMINISTIC AUTHORED instance of the kit (not
+  runtime-procedural), placed by a fixed formula (`BuildEnvironmentPlan`) — the
+  same mission always yields the same layout, so the environment never changes
+  randomly between Unity sessions.
+- **Why:** the brief forbids one gigantic unreusable scene AND random layout; the
+  reusable pieces are the kit prefabs + profile, and the scene placement is
+  deterministic authored output.
+
+### AD-1W-2: No mission-specific environment controllers
+
+- **Decision:** there is no `Mission01EnvironmentController`-style class. The
+  environment namespace is data-only (no lifecycle methods, no events, no
+  references into mission/objective/reward authority systems). Future Chapter 1
+  missions reuse the kit + profile + plan seam.
+
+### AD-1W-3: Decorative dressing is collider-free and outside the playable band
+
+- **Decision:** every kit module is collider/rigidbody-free, and all Mission 01
+  dressing sits at |x| >= 6.6 (outside the playable band and the boundary walls)
+  or overhead (gates span the lane above y=2.7 with no collider). The verified
+  gameplay geometry (CombatLane, boundaries, markings, spawn points, upgrade
+  locations, camera) is byte-preserved — dressing conforms to gameplay, never the
+  reverse.
+
+### AD-1W-4: Mobile-first, shared-material kit
+
+- **Decision:** 7 shared URP materials and cube geometry for the entire kit — no
+  extra realtime lights, no transparent effects, no per-frame environment logic,
+  no physics on decoration. Batching-friendly and Android-portrait appropriate.
+
+### AD-1W-5: Lighting/atmosphere stays conservative for readability
+
+- **Decision:** the verified directional light and Global Volume are UNCHANGED;
+  no fog (it would wash out far enemies on the 100-unit corridor). The outbreak
+  mood comes from the authored overcast palette (dark asphalt, concrete, worn
+  yellow markings, quarantine orange) rather than dark cinematic lighting that
+  could hide gameplay.
+
 ## UNKNOWN / open questions
 
 - Pre-1P architecture rationale for gates (1J series) could not be recovered (original

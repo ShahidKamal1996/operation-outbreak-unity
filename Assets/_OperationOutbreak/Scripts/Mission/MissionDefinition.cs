@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using OperationOutbreak.Enemies;
+using OperationOutbreak.Environment;
 using UnityEngine;
 
 namespace OperationOutbreak.Mission
@@ -73,6 +74,13 @@ namespace OperationOutbreak.Mission
         [SerializeField]
         private MissionRewardDefinition reward = new MissionRewardDefinition();
 
+        [Header("Environment (Milestone 1W)")]
+        [Tooltip("The Chapter 1 environment profile this mission presents (road, barriers, " +
+                 "roadside dressing, landmarks). Assign a profile - no hard-coded " +
+                 "environment logic lives in mission code.")]
+        [SerializeField]
+        private MissionEnvironmentDefinition environment;
+
         // ------------------------------------------------------------------ read-only views
 
         public string MissionId => missionId;
@@ -118,6 +126,9 @@ namespace OperationOutbreak.Mission
 
         /// <summary>Static reward configuration (Coins / Supplies). Never null once constructed.</summary>
         public MissionRewardDefinition Reward => reward;
+
+        /// <summary>The Chapter 1 environment profile this mission presents (may be null).</summary>
+        public MissionEnvironmentDefinition Environment => environment;
 
         /// <summary>The objective with <paramref name="objectiveId"/>, or null when absent.</summary>
         public MissionObjectiveDefinition GetObjective(string objectiveId)

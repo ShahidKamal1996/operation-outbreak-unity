@@ -56,3 +56,4 @@ MonoBehaviour:
   reward:
     coins: 0
     supplies: 0
+  environment: {fileID: 11400000, guid: ee09536f114a83f02bc479d352ef816a, type: 2}

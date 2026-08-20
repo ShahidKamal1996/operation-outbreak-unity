@@ -33,7 +33,8 @@
 | **1S — enemy variant architecture** | **VERIFIED** (2026-08-19 — real Unity EditMode 219/219 passed; Validate Enemy Archetypes PASS; Basic/Runner/Toon Soldier/ragdoll/reuse verified; console clean) |
 | **1T — mission definition foundation** | **VERIFIED** (2026-08-20 — real Unity EditMode 238/238 passed; Validate Mission Definitions PASS; Validate Enemy Archetypes PASS; Mission 01 data-driven 3 sections / 12 enemies / 9 Basic + 3 Runner; Runner controller committed and validated) |
 | **1U — objective framework foundation** | **VERIFIED** (2026-08-20 — real Unity EditMode 261/261 passed; objective runtime + ClearAllSections verified; final section committed before completion; Mission Complete exactly once; console clean) |
-| **1V — rewards & results foundation** | **IMPLEMENTED — AWAITING MANUAL UNITY QA** (2026-08-20) |
+| **1V — rewards & results foundation** | **VERIFIED** (2026-08-20 — real Unity EditMode 291/291 passed; Mission Complete results + Coins/Supplies display, Retry/Return, Game Over Retry/Return verified; console clean) |
+| **1W — Chapter 1 content pipeline + first Outskirts environment integration** | **IMPLEMENTED — AWAITING MANUAL UNITY QA** (2026-08-20) |
 
 ## What Milestone 1P delivered
 
@@ -1187,6 +1188,103 @@ navigation requests Retry/Return:
     ReloadCurrentScene()` returns early when the active scene has `buildIndex < 0`
     (it never performs a real scene load inside the test). Expected total
     unchanged: **291/291**.
+
+## What Milestone 1W delivered
+
+Chapter 1 Content Pipeline + the first visible Outbreak Outskirts integration —
+Mission 01 now reads as an actual abandoned-quarantine location instead of the old
+grey prototype strip, while every gameplay number stays byte-identical:
+
+1. **Asset audit** — the repo contained NO environment kit (only enemy/character
+   prefabs, prototype `OO_Proto_*` materials and TMP assets). The Chapter 1 kit was
+   therefore authored from scratch using project-owned Unity primitives + original
+   URP materials (no third-party/copyrighted assets, nothing downloaded).
+2. **Chapter 1 Outbreak Outskirts visual direction** — abandoned evacuation
+   outskirts: dark asphalt road, concrete roadside barriers, worn yellow road
+   markings, quarantine-orange checkpoint accents, roadside verges, debris/crates/
+   cones, checkpoint gates at each section line and a final roadblock backdrop.
+   Desaturated overcast palette; enemy/player silhouettes stay highly readable.
+3. **Environment profile architecture** — `MissionEnvironmentDefinition`
+   (ScriptableObject, `Scripts/Environment/`): stable `environmentId`, materials
+   (road/barrier/road-marking/roadside/accent), the three landmark prefabs
+   (start/transition/final), the dressing library and a `deterministicSeed`. PURE
+   static data — no lifecycle, no events, no gameplay state. `MissionDefinition`
+   gains an optional `environment` reference (static presentation config only).
+4. **Modular Outskirts kit** — 8 reusable prefabs under
+   `Prefabs/Environment/`: `C1_Barrier_Concrete`, `C1_Barrier_Checkpoint`,
+   `C1_Prop_Debris`, `C1_Prop_Crate`, `C1_Prop_Cone`, `C1_Landmark_StartGate`,
+   `C1_Landmark_Transition`, `C1_Landmark_FinalRoadblock` — all shared-material,
+   cube-based, batching-friendly, and DECORATIVE (no colliders, no rigidbodies,
+   no scripts). 7 shared URP materials under `Materials/Environment/`.
+5. **Mission assembly tooling** —
+   `Tools > Operation Outbreak > Validate Mission Environment`
+   (`MissionEnvironmentEditorTools`): validates profiles (null/id/missing
+   materials/prefabs/null dressing), duplicate environment ids, and that every
+   committed mission references a valid profile. `BuildEnvironmentPlan(mission)`
+   is the DETERMINISTIC assembly seam: the same mission always yields the same
+   ordered plan (road, roadside, landmarks ON the section activation lines, final
+   landmark beyond the last forward limit, dressing library) — no random layout,
+   no gameplay geometry generation.
+6. **Mission 01 visible changes** — the scene's `Environment` root gained an
+   `Outskirts` child: two roadside strips, concrete barrier runs along both
+   shoulders, a start checkpoint gate (z=-5), section-transition gates on the
+   Section 2/3 activation lines (z=20, z=38), a final roadblock (z=62), and
+   deterministic debris/crate/cone dressing. The verified prototype materials on
+   `CombatLane`/`Boundaries`/`LaneMarkings` were swapped for the authored palette
+   (presentation only — geometry and colliders untouched).
+7. **Section landmarks** — S1 = outer evacuation checkpoint (start gate +
+   checkpoint barriers); S2 = damaged roadside quarantine (transition gate +
+   debris clusters); S3 = final roadblock/abandoned checkpoint area (transition
+   gate + final roadblock backdrop). Visual/content themes only — 3/4/5 enemies
+   and 9 Basic + 3 Runner are unchanged.
+8. **Lighting/atmosphere** — intentionally conservative: the verified directional
+   light and the Global Volume (Tonemapping/ColorAdjustments/Vignette/Bloom) are
+   UNCHANGED so enemy/player readability is preserved; the outbreak mood comes
+   from the authored overcast palette and the roadside/checkpoint dressing. No
+   fog was added (it would wash out far enemies on the 100-unit corridor).
+9. **Collider/gameplay-lane protection** — every dressing object sits outside the
+   playable band (|x| >= 6.6) or overhead (gates span the lane ABOVE y=2.7, no
+   collider); the kit carries no physics components; `CombatLane`, both boundaries
+   and all lane markings keep their exact transforms/colliders. Upgrade pickups,
+   spawn points, Runner standoff and the camera are untouched.
+10. **Mobile performance** — 7 shared materials total, cube geometry, no extra
+    realtime lights, no transparent effects, no per-frame environment logic, no
+    physics on decoration.
+11. **Validation** — environment validation rejects null profiles, empty/duplicate
+    ids, missing materials/prefabs and null dressing entries, and reports any
+    committed mission with no environment profile. `Validate Mission Environment`
+    and the existing `Validate Mission Definitions` / `Validate Enemy Archetypes`
+    all stay authoritative; malformed data is never silently repaired.
+12. **Tests** — `MissionEnvironmentTests.cs` (+18) pins: Mission 01 references the
+    valid `c1_outbreak_outskirts` profile; the profile resolves its materials/
+    prefabs; the plan is deterministic and section-aligned (landmarks at z=20/38,
+    final at z=62); no mission-specific environment controllers; no second
+    completion path; the environment never replaces MissionDefinition authority;
+    Mission 01 shape (3/12/9/3) and objective/reward are unchanged; landmarks are
+    present in the profile AND instanced in the scene; validation rejections;
+    gameplay corridor byte-preserved; no dressing inside the playable band; kit
+    modules carry no physics; and the profile holds no runtime state. Expected
+    total: **309/309** (291 verified + 18 new).
+
+## Manual Unity QA checklist for 1W
+
+1. Project compiles with 0 errors / no relevant warnings.
+2. `Tools > Operation Outbreak > Validate Enemy Archetypes` → PASS.
+3. `Tools > Operation Outbreak > Validate Mission Definitions` → PASS.
+4. `Tools > Operation Outbreak > Validate Mission Environment` → PASS.
+5. Full EditMode suite: 291 previous + 18 new 1W tests → **309/309**, 0 failed.
+6. **Visual QA (MANDATORY)** — open Mission 01 and confirm the environment reads
+   as an Outbreak Outskirts location (screenshots of mission start, Section 1,
+   Section 2, Section 3/final area and the Mission Complete area): asphalt road,
+   barriers, worn markings, quarantine gates at each section line, roadside
+   debris/crates, final roadblock. The player lane must remain clearly readable.
+7. Gameplay unchanged: 3 sections, 12 enemies, 9 Basic + 3 Runner; sections clear
+   1→2→3; objective reaches 3/3; diagnostics report 3/3 (MIS-FINAL PASS);
+   Mission Complete exactly once.
+8. Toon Soldier, Runner, ragdoll, gates/upgrades, Retry/Return all unchanged.
+9. No environment collider snags the player, blocks enemies or intercepts
+   projectiles; upgrades remain reachable and unobstructed.
+10. Console clean during normal gameplay (no new errors/warnings from the kit).
 
 ## Manual Unity QA checklist for 1V
 
