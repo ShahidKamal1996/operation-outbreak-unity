@@ -70,6 +70,22 @@ namespace OperationOutbreak.Mission
         public bool AreAllRequiredObjectivesComplete =>
             MissionObjectiveRuntime.AllRequiredObjectivesComplete(_objectives);
 
+        /// <summary>
+        /// Milestone 1X - overrides the serialized mission with the mission selected through
+        /// the mission-selection system, so the chosen MissionDefinition becomes the
+        /// authoritative objective configuration for this run. Called once at scene boot by
+        /// MissionRuntimeAssignment before this component builds its objective runtime in
+        /// OnEnable; a null argument is ignored so the serialized default is preserved when no
+        /// mission is active. Additive setter only - the existing evaluation logic is unchanged.
+        /// </summary>
+        public void AssignActiveMission(MissionDefinition definition)
+        {
+            if (definition != null)
+            {
+                missionDefinition = definition;
+            }
+        }
+
         /// <summary>Raised the moment one objective completes. Carries the completed runtime.</summary>
         public event Action<MissionObjectiveRuntime> ObjectiveCompleted;
 

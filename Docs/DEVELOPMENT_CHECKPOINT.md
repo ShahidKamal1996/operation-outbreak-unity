@@ -35,6 +35,7 @@
 | **1U — objective framework foundation** | **VERIFIED** (2026-08-20 — real Unity EditMode 261/261 passed; objective runtime + ClearAllSections verified; final section committed before completion; Mission Complete exactly once; console clean) |
 | **1V — rewards & results foundation** | **VERIFIED** (2026-08-20 — real Unity EditMode 291/291 passed; Mission Complete results + Coins/Supplies display, Retry/Return, Game Over Retry/Return verified; console clean) |
 | **1W — Chapter 1 content pipeline + first Outskirts environment integration** | **IMPLEMENTED — AWAITING MANUAL UNITY QA** (2026-08-20) |
+| **1X — Chapter 1 mission progression foundation** | **IMPLEMENTED — AWAITING MANUAL UNITY QA** (2026-08-22). No Unity Editor is available in the Arena sandbox, so the EditMode suite was NOT executed; verification is static review only. See "What Milestone 1X delivered" and the 1X QA checklist below. |
 
 ## What Milestone 1P delivered
 
@@ -1641,3 +1642,202 @@ silhouettes are unverified. See `Docs/QA/1W_visual_fix3/`.
     `MissionEnvironmentTests.KitPrefabsLoadAsValidRegularPrefabsWithResolvedComponents`
     was relaxed from `== 8` to `>= 8` kit prefabs plus an explicit check that the 8
     original kit GUIDs still resolve).
+
+## What Milestone 1X delivered
+
+Chapter 1 mission progression foundation — DATA-DRIVEN multiple-mission support with
+local progression + selection, on top of the existing single gameplay scene. No second
+gameplay scene, no per-mission controllers, no new combat/AI/mechanics; every verified
+gameplay system keeps running exactly as before when no mission is selected.
+
+### Architecture (built by INSPECTING and EXTENDING existing systems, not duplicating)
+
+- **`ChapterDefinition`** (`Scripts/Mission/ChapterDefinition.cs`, ScriptableObject) — the
+  data-driven chapter container: stable `chapterId`, `chapterNumber`, `displayName`, and
+  an ORDERED `missions` list. Order IS the unlock sequence. Provides `GetMission`,
+  `IndexOf`, `GetNextMission` and a pure `CollectProblems` that validates the chapter AND
+  every mission it references (identity, sequential 1..N numbering, unique ids, chapter
+  consistency, per-mission sections/composition/objectives/reward/environment). The
+  committed asset is `Resources/ChapterDefinitions/Chapter_01.asset`.
+- **`MissionProgression`** (`Scripts/Mission/MissionProgression.cs`, plain C#) — the pure,
+  add-only completed-id set. `MarkCompleted`/`IsCompleted`/`Clear`/`Restore`/`GetCompletedMissionIds`.
+  Add-only is what guarantees the two hard invariants: replaying an earlier mission can
+  never erase later progress, and a completed mission stays completed until a full Reset.
+- **`MissionProgressionSave`** (`Scripts/Mission/MissionProgressionSave.cs`, `[Serializable]`)
+  — versioned JSON transfer object (completed mission ids) for `JsonUtility`/PlayerPrefs.
+- **`IMissionProgressionStore`** + **`PlayerPrefsMissionProgressionStore`**
+  (`Scripts/Mission/`) — the persistence seam and its lightweight production impl. Uses
+  Unity PlayerPrefs (no cloud, no plugins, survives restart). Corrupt/incompatible saves
+  degrade to an empty progression (never crash). Tests inject an in-memory store.
+- **`MissionProgressionService`** (`Scripts/Mission/MissionProgressionService.cs`) — the
+  ONE progression facade: composes a chapter + the completed set + a store, and DERIVES
+  sequential unlocks (Mission 1 unlocked by default; every later mission unlocks when its
+  predecessor is completed). Because unlocks are derived from completion + chapter order,
+  marking a mission completed automatically unlocks the next one and the service never
+  stores a separate "unlocked" set. `MarkCompleted` persists on every change; `Reset`
+  clears + persists; `Load`/`Save` round-trip. A lazy Chapter-1 `Default` instance is
+  shared by the runtime components so they never hold divergent copies.
+- **`ChapterRuntimeLoader`** (`Scripts/Mission/ChapterRuntimeLoader.cs`) — loads the
+  committed Chapter 1 definition from Resources (build-safe, no scene wiring), mirroring
+  `EnemyArchetypeRegistry`.
+- **`MissionSelectionService`** (`Scripts/Mission/MissionSelectionService.cs`) — the
+  CODE/DATA FOUNDATION for selecting a mission: `Missions`, `IsUnlocked`, `IsCompleted`,
+  `SelectedMission`, `CanSelect`/`Select` (UNLOCKED only), `CanStartSelected`/
+  `StartSelected`. `StartSelected` makes the selected mission authoritative via
+  `ActiveMissionContext` and raises `MissionStarting`; it does NOT load a scene (keeps the
+  pure service decoupled from scene names/build settings — the caller performs the
+  transition).
+- **`ActiveMissionContext`** (`Scripts/Mission/ActiveMissionContext.cs`, static) — the
+  single intentional bridge between selection and a gameplay run: holds the selected
+  `MissionDefinition`, set on `StartSelected`, cleared explicitly. When null (scene opened
+  directly for QA) every consumer keeps its serialized default (Mission 01).
+- **`MissionRuntimeAssignment`** (`Scripts/Mission/MissionRuntimeAssignment.cs`,
+  `[DefaultExecutionOrder(-32000)]`) — the one scene boot step that makes a SELECTED
+  mission authoritative. In an early Awake it pushes `ActiveMissionContext.Current` into
+  the three existing mission consumers via their ADDITIVE `AssignActiveMission` setters,
+  before those consumers read their mission in Awake/OnEnable. Verified
+  section/objective/reward logic is byte-identical when no mission is active (the setter is
+  pure and additive; nothing in the existing logic branches on it).
+- **`MissionProgressionRecorder`** (`Scripts/Mission/MissionProgressionRecorder.cs`) —
+  records completion into the persistent progression by listening to the EXISTING
+  `MissionRewardService.ResultCreated` success signal. On a SUCCESS result it marks the
+  played mission's id completed (which derives the next unlock). Idempotent per run; a
+  replayed completed mission is a no-op. Reuses the result/reward architecture — no second
+  completion signal.
+- **`MissionSelectionDebugUi`** (`Scripts/Mission/MissionSelectionDebugUi.cs`) — an
+  EXTREMELY SIMPLE debug overlay (toggle with **M**) listing the 10 Chapter 1 missions with
+  LOCKED/READY/DONE state, click-to-start any unlocked mission (reloads the gameplay scene
+  with that mission authoritative), and a dev RESET button. Production mission-select UI is
+  explicitly out of scope.
+- **Editor tools** — `Tools > Operation Outbreak > Validate Chapter Definitions`
+  (`ChapterDefinitionEditorTools`) and `Tools > Operation Outbreak > Reset Mission
+  Progression` (`MissionProgressionEditorTools`).
+
+### Gameplay integration (minimal, additive, preserves verified systems)
+
+The three existing mission consumers gained ONE additive public method each
+(`AssignActiveMission(MissionDefinition)`) — a pure setter that overwrites the serialized
+default when a mission is active and is a no-op otherwise. NO existing section/objective/
+reward logic changed:
+
+- `MissionSectionController.AssignActiveMission` — routes the authoritative mission into
+  the section flow.
+- `MissionObjectiveController.AssignActiveMission` — routes it into the objective runtime
+  (built in OnEnable, after the early-Awake assignment).
+- `MissionRewardService.AssignActiveMission` — routes it into the reward/result so the
+  result's `MissionId` is the mission actually played (the recorder then keys off it).
+
+`Gameplay_Prototype.unity` gains ONE new root GameObject `MissionSystem` carrying
+`MissionRuntimeAssignment`, `MissionProgressionRecorder` and `MissionSelectionDebugUi`.
+The three existing mission consumers STILL reference `Mission_01.asset` as their serialized
+default (verified by a regression test). No camera, lighting, environment, collider,
+player, enemy, weapon, projectile, upgrade, animation or composition change.
+
+### Chapter 1 mission configurations (10 missions, data only)
+
+All 10 reuse the verified corridor layout (sections at activationZ -100/20/38,
+forwardLimitZ 15/33/51, spawnAheadOfLimit 1/4/4 — byte-identical to Mission 01) so they are
+all playable in the existing scene without geometry changes. Difficulty escalates using
+ONLY existing parameters (enemy quantity + Runner ratio + reward values). Every mission
+references the single `C1_OutbreakOutskirts` environment profile and carries one required
+`clear_all_sections` objective.
+
+| # | Id | Name | S1 | S2 | S3 | Total | Basic / Runner | Coins / Supplies |
+|---|---|---|---|---|---|---|---|---|
+| 1 | mission_01 | Outbreak | 3B | 3B+1R | 3B+2R | 12 | 9 / 3 | 0 / 0 |
+| 2 | mission_02 | First Contact | 3B | 4B+1R | 4B+2R | 14 | 11 / 3 | 10 / 0 |
+| 3 | mission_03 | Holding the Line | 4B | 4B+1R | 4B+3R | 16 | 12 / 4 | 20 / 0 |
+| 4 | mission_04 | Pushback | 4B | 5B+2R | 5B+3R | 19 | 14 / 5 | 30 / 5 |
+| 5 | mission_05 | Containment | 5B | 5B+2R | 5B+4R | 21 | 15 / 6 | 40 / 10 |
+| 6 | mission_06 | Breach | 5B+1R | 6B+2R | 6B+4R | 24 | 17 / 7 | 55 / 15 |
+| 7 | mission_07 | Quarantine | 6B+1R | 6B+3R | 6B+5R | 27 | 18 / 9 | 70 / 20 |
+| 8 | mission_08 | Evacuation | 6B+2R | 7B+3R | 7B+5R | 30 | 20 / 10 | 90 / 30 |
+| 9 | mission_09 | Last Stand | 7B+2R | 7B+4R | 7B+6R | 33 | 21 / 12 | 110 / 40 |
+| 10 | mission_10 | Outskirts Fallen | 7B+3R | 8B+4R | 8B+7R | 37 | 23 / 14 | 150 / 60 |
+
+Mission 1 is the VERIFIED prototype mission byte-for-byte (reward 0/0 kept as-authored).
+Mission 10 is the hardest configuration achievable with existing systems (no boss — boss
+implementation belongs to a later dedicated milestone).
+
+### Progression / save architecture
+
+- Local-only persistence via PlayerPrefs key `oo_mission_progression_v1` (JSON, versioned).
+- Unlocks are DERIVED (Mission 1 default; Mission N unlocked iff Mission N-1 completed) —
+  never stored, so they cannot drift.
+- `MarkCompleted` is add-only and persists; replay is a no-op; completing an earlier
+  mission never reduces later progress; completed missions stay replayable.
+- Reset clears the save (dev/test), exposed via the menu and the debug UI.
+- Survives application restart (PlayerPrefs). No cloud.
+
+### Tests added
+
+- `Assets/_OperationOutbreak/Tests/Editor/MissionProgressionTests.cs` — pure
+  progression/selection/store logic against an in-memory 10-mission chapter + an in-memory
+  JSON store (isolated from real PlayerPrefs): completed-set semantics; sequential unlock
+  (M1 default → M2 on M1 → through M10); no Mission 11 access; replayable; replay does not
+  reduce later progress; locked cannot be selected/started; selection start sets
+  ActiveMissionContext; save/load round-trip across service instances; reset; the production
+  PlayerPrefs store round-trip + delete + incompatible-version rejection (isolated keys).
+- `Assets/_OperationOutbreak/Tests/Editor/Chapter1MissionTests.cs` — committed Chapter 1
+  asset regression: exactly 10 missions; unique ids; sequential numbers 1..10; stable ids;
+  escalating difficulty; every mission has the valid environment reference + valid objective
+  + valid reward (CollectProblems empty); chapter validates end-to-end; the validation tool
+  passes; progression against the REAL chapter (M1 unlocked, sequential through M10, no
+  M11, locked cannot select/start, save/load round-trip, reset, no-regress); Mission 01's
+  verified shape (3/12/9+3); the environment profile still validates; exactly 10 mission
+  assets exist; the scene wires Mission 01 to all three consumers AND hosts the
+  MissionRuntimeAssignment + MissionProgressionRecorder; no per-mission controller
+  duplication.
+
+### Exact validation performed (NOT a Unity run)
+
+No Unity Editor is available in the Arena sandbox, so the EditMode suite was **not**
+executed. The following were verified by static review instead: all new C# compiles
+against the existing API surface (namespaces, usings, attribute usage, delegate/event
+signatures, `DefaultExecutionOrder`, InputSystem `Keyboard.current.mKey`, TMP/UGUI
+construction); all 9 new mission assets + `Chapter_01.asset` are well-formed YAML matching
+the `Mission_01.asset`/profile shape; every cross-reference GUID resolves (mission assets ↔
+`Chapter_01`, missions ↔ environment profile, scene MonoBehaviours ↔ new script metas);
+the scene's `MissionSystem` root is a valid GameObject with a registered root Transform; the
+three additive `AssignActiveMission` setters introduce no naming/type ambiguity and change
+no existing branch; the test fixtures inject isolated stores and clear `ActiveMissionContext`
+in TearDown. **Real Unity EditMode execution is still required.**
+
+## Manual Unity QA checklist for 1X
+
+1. Project compiles with 0 errors / no new warnings.
+2. `Tools > Operation Outbreak > Validate Enemy Archetypes` → PASS.
+3. `Tools > Operation Outbreak > Validate Mission Definitions` → PASS (all 10 missions).
+4. `Tools > Operation Outbreak > Validate Chapter Definitions` → PASS.
+5. Full EditMode suite: 324 previous + the new `MissionProgressionTests` +
+   `Chapter1MissionTests` → expect **324 + new** (count the new tests in those two files),
+   0 failed. (Cannot state an exact total from this sandbox — Unity was not run.)
+6. **Default path unchanged:** open `Gameplay_Prototype` directly (no mission started) and
+   Play — Mission 01 runs exactly as before: 3 sections, 12 enemies, 9 Basic + 3 Runner,
+   objective 3/3, Mission Complete exactly once, diagnostics 3/3 (MIS-FINAL PASS). The
+   debug panel is hidden by default.
+7. **Debug mission select loop:** press **M** to open the debug panel. Only Mission 1 is
+   READY; 2–10 are LOCKED. Click Mission 1 → scene reloads running Mission 1; complete it
+   → on the next open, Mission 1 is DONE and Mission 2 is READY. Click Mission 2 → it runs
+   the harder configuration (more enemies / Runners). Verify Mission 2 actually plays the
+   Mission 02 data (14 enemies, the displayed Coins/Supplies on Mission Complete match 10/0).
+8. **Sequential unlock:** complete missions in order and confirm each next one becomes
+   READY only after the previous is DONE. Confirm Mission 10 can be reached.
+9. **No Mission 11:** completing Mission 10 marks it DONE and unlocks nothing further (no
+   crash, no phantom mission).
+10. **Replay:** re-click a DONE mission — it replays cleanly and does NOT change any other
+    mission's state.
+11. **No regress on replay:** after reaching Mission 5, replay Mission 1 — Missions 2–5
+    stay DONE and Mission 6 stays READY.
+12. **Persistence:** complete a mission, STOP Play, START Play again, press M — the
+    completed mission is still DONE (PlayerPrefs persisted across the session).
+13. **Reset:** click `RESET PROGRESSION (dev)` in the debug panel (or `Tools > Operation
+    Outbreak > Reset Mission Progression`) — Mission 1 becomes the only READY mission.
+14. **Locked cannot start:** a LOCKED mission's button is non-interactable; it cannot be
+    started.
+15. **Verified systems unchanged:** Toon Soldier walk+shoot, Runner, hybrid ragdoll,
+    gates/upgrades, camera composition, lighting/visibility, environment geometry, URP and
+    post-processing are all identical to the 1W Visual QA fix #3 state.
+16. Console clean during normal gameplay and during the debug select loop (the only
+    expected logs are the intentional `[1X]` progression/recorder logs).
+

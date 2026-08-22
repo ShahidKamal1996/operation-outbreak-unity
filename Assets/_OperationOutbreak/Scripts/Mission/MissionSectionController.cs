@@ -133,6 +133,23 @@ namespace OperationOutbreak.Mission
         public float CurrentSectionMinZ { get; private set; }
 
         /// <summary>
+        /// Milestone 1X - overrides the serialized mission with the mission selected through
+        /// the mission-selection system, so the chosen MissionDefinition becomes the
+        /// authoritative configuration for this run. Called once at scene boot by
+        /// MissionRuntimeAssignment (before this component reads its mission); a null argument
+        /// is ignored so the serialized default (Mission 01) is preserved when no mission is
+        /// active. This is intentionally an additive setter: the existing mission-flow logic
+        /// is unchanged, only the source of the definition is redirected.
+        /// </summary>
+        public void AssignActiveMission(MissionDefinition definition)
+        {
+            if (definition != null)
+            {
+                missionDefinition = definition;
+            }
+        }
+
+        /// <summary>
         /// The mission sections this controller executes. Primary source is the assigned
         /// MissionDefinition asset; when none is assigned the verified prototype mission is
         /// built in memory (with a loud diagnostic) so gameplay stays well-defined.

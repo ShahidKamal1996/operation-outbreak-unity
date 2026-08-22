@@ -64,6 +64,22 @@ namespace OperationOutbreak.Rewards
         /// <summary>True when the current run already GRANTED its success reward.</summary>
         public bool RewardGrantedThisRun { get; private set; }
 
+        /// <summary>
+        /// Milestone 1X - overrides the serialized mission with the mission selected through
+        /// the mission-selection system, so the reward/identity produced for this run matches
+        /// the mission actually played (and the result's MissionId is the selected mission).
+        /// Called once at scene boot by MissionRuntimeAssignment before any outcome can occur;
+        /// a null argument is ignored so the serialized default is preserved when no mission is
+        /// active. Additive setter only - the existing grant/result logic is unchanged.
+        /// </summary>
+        public void AssignActiveMission(OperationOutbreak.Mission.MissionDefinition definition)
+        {
+            if (definition != null)
+            {
+                missionDefinition = definition;
+            }
+        }
+
         /// <summary>Raised once per outcome (success or failure), carrying the immutable result.</summary>
         public event Action<MissionResultData> ResultCreated;
 
