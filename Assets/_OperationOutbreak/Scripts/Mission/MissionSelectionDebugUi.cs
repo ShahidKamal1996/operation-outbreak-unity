@@ -295,7 +295,9 @@ namespace OperationOutbreak.Mission
             text.font = TMP_Settings.defaultFontAsset;
             text.text = label;
             text.fontSize = 26f;
-            text.alignment = TextAlignmentOptions.MiddleLeft;
+            // TextMeshPro's middle-row (vertically centered) horizontal-left alignment is
+            // 'Left' (NOT 'MiddleLeft', which is not a member of this TMP version).
+            text.alignment = TextAlignmentOptions.Left;
             text.color = interactable ? Color.white : new Color(1f, 1f, 1f, 0.5f);
             text.raycastTarget = false;
 
