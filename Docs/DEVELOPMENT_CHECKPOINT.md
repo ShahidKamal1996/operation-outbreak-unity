@@ -1599,3 +1599,45 @@ Character presentation replacement ONLY — zero gameplay changes:
 
 - `Docs/` records referenced by the brief were absent from the entire repository history
   (see note at top). Recreated as best as possible; roadmap intentionally not fabricated.
+
+## Milestone 1W — Visual QA fix #3 (2026-08-23): Outskirts presentation rework
+
+Presentation-only. Nothing in camera, gameplay, colliders, playable corridor, player,
+enemies, combat, spawning, upgrades, objectives, rewards, UI, mission progression or
+result flow was touched. The `Environment` subtree (CombatLane, Boundaries,
+LaneMarkings) is byte-identical; only `Outskirts`, the kit prefabs, the shared
+Chapter 1 materials and the profile's dressing library changed.
+
+### What could NOT be validated here
+
+No Unity Editor exists in the Arena sandbox, so **the EditMode suite was not executed**
+and **no real Unity frame was rendered**. Every constraint below was verified offline by
+parsing the committed YAML (world transforms expanded through the prefab hierarchy) and
+by a software rasteriser using the authored camera (`0/11/-11`, pitch 31°, vertical FOV
+44, 9:16). Lighting response, URP post-processing, shadows, GI and real character
+silhouettes are unverified. See `Docs/QA/1W_visual_fix3/`.
+
+### Manual portrait QA checklist
+
+1. Open `Gameplay_Prototype`, run in a **portrait** aspect (e.g. 1080x1920).
+2. **No red/orange bar crosses the road anywhere.** The start gate and the section
+   transitions must read as shoulder-mounted structures with an open sky gap over the
+   lane.
+3. Section 1 (z ≈ -8 → 18) reads as a **relatively intact evacuation checkpoint**:
+   symmetric barrier line, guard booth, upright floodlights, crisp painted chevrons.
+4. Section 2 (z ≈ 18 → 36) reads as **damaged and abandoned**: broken barrier rhythm,
+   toppled kit, wrecked cars, leaning poles, worn paint.
+5. Section 3 / final approach (z ≈ 36 → 62) reads as **heavily compromised**: containers
+   narrowing the funnel, tank traps, rubble mounds, buried road.
+6. The **final roadblock at z = 62** reads as a dramatic collapsed overpass, not a wall
+   with a stripe, and never obstructs the fight (last forward limit is z = 51).
+7. The player, the green infected, the orange Runner and the **yellow projectiles all stay
+   the most legible things on screen** — environment must sit behind them tonally.
+8. Player movement, lane bounds, targeting, all 3 sections, Mission Complete (exactly
+   once), Retry/Return and Game Over are unchanged.
+9. Console clean — no missing prefabs, no "PPtr cast failed", no pink materials.
+10. Full EditMode suite — expect **324/324** (311 before + 13 new in
+    `Chapter1EnvironmentVisualTests.cs`; one existing assertion in
+    `MissionEnvironmentTests.KitPrefabsLoadAsValidRegularPrefabsWithResolvedComponents`
+    was relaxed from `== 8` to `>= 8` kit prefabs plus an explicit check that the 8
+    original kit GUIDs still resolve).

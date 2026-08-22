@@ -244,7 +244,24 @@ namespace OperationOutbreak.Tests
             // Regular prefab whose components and materials resolve (no corrupt prefab,
             // no missing Variant parent, no broken references).
             string[] prefabs = Directory.GetFiles(KitFolder, "*.prefab");
-            Assert.AreEqual(8, prefabs.Length, "All 8 committed kit prefabs must exist.");
+
+            // 1W visual QA fix #3 - the kit GREW (finished roadside structures were
+            // added); the original eight must still be there, and every module in the
+            // folder must still import cleanly.
+            Assert.GreaterOrEqual(prefabs.Length, 8, "The committed kit prefabs must exist.");
+
+            string[] originalKitGuids =
+            {
+                ConcreteBarrierGuid, CheckpointBarrierGuid, DebrisGuid, CrateGuid, ConeGuid,
+                StartGateGuid, TransitionGuid, FinalRoadblockGuid
+            };
+
+            for (int g = 0; g < originalKitGuids.Length; g++)
+            {
+                string originalPath = AssetDatabase.GUIDToAssetPath(originalKitGuids[g]);
+                Assert.IsFalse(string.IsNullOrEmpty(originalPath),
+                    "Original kit GUID " + originalKitGuids[g] + " must still resolve.");
+            }
 
             for (int i = 0; i < prefabs.Length; i++)
             {
