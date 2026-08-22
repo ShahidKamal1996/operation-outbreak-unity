@@ -216,10 +216,19 @@ namespace OperationOutbreak.Mission
         }
 
         /// <summary>
-        /// Development/test hook: drops the cached Default so the next access reloads from
-        /// Resources + PlayerPrefs (used after a Reset invoked through the static API).
+        /// Drops the cached Chapter-1 Default so the next access reloads it from
+        /// Resources + PlayerPrefs. Used after a Reset invoked through the static API, by
+        /// the editor Reset Mission Progression tool, by the debug UI reset button and by
+        /// test teardown.
+        ///
+        /// PUBLIC (not internal): MissionProgressionService lives in Assembly-CSharp, but
+        /// the editor reset tool and the EditMode tests live in Assembly-CSharp-Editor
+        /// (Unity assigns these by folder when there is no .asmdef). An internal member is
+        /// invisible across that assembly boundary, so this must be public for the reset
+        /// tooling and tests to invalidate the cache. This matches the project convention
+        /// (EnemyArchetypeRegistry / ChapterRuntimeLoader / the *EditorTools are all public).
         /// </summary>
-        internal static void InvalidateDefaultCache()
+        public static void InvalidateDefaultCache()
         {
             s_default = null;
         }

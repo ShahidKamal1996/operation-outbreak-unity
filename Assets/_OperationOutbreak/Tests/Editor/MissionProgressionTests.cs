@@ -472,6 +472,25 @@ namespace OperationOutbreak.Tests
             }
         }
 
+        [Test]
+        public void InvalidateDefaultCacheIsPublicStaticForCrossAssemblyTooling()
+        {
+            // Regression guard for the 1X QA fix #2 root cause: MissionProgressionService lives
+            // in Assembly-CSharp, but the editor Reset tool and these EditMode tests live in
+            // Assembly-CSharp-Editor. An 'internal' InvalidateDefaultCache is invisible across
+            // that boundary and broke the build. Pin that the cache-invalidation API stays a
+            // PUBLIC static method so the editor reset tooling and tests can always call it.
+            MethodInfo method = typeof(MissionProgressionService).GetMethod(
+                "InvalidateDefaultCache",
+                BindingFlags.Public | BindingFlags.Static);
+
+            Assert.IsNotNull(method,
+                "MissionProgressionService.InvalidateDefaultCache must be a public static method " +
+                "(it is called from the editor assembly: reset tool + tests).");
+            Assert.AreEqual(typeof(void), method.ReturnType,
+                "InvalidateDefaultCache must return void.");
+        }
+
         // ============================================================ selection
 
         [Test]
