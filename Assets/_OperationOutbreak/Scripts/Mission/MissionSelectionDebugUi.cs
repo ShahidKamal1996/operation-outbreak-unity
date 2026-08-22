@@ -222,13 +222,28 @@ namespace OperationOutbreak.Mission
             scaler.uiScaleMode = CanvasScaler.ScaleMode.ScaleWithScreenSize;
             scaler.referenceResolution = new Vector2(1080, 1920);
 
-            // The scene needs exactly one EventSystem for clicks.
-            if (FindAnyObjectByType<EventSystem>() == null)
+            // The scene needs exactly one EventSystem with a CONFIGURED InputSystemUIInputModule
+            // to receive pointer/click input. A module created at runtime has NO UI actions by
+            // default, so without configuration NO button in any ScreenSpaceOverlay canvas
+            // responds to clicks in Play Mode - this was the QA #3 root cause (the READY mission
+            // buttons did nothing). Find-or-create the EventSystem (so a bare module another UI
+            // builder created first is repaired too) and wire real UI actions onto its module.
+            EventSystem eventSystem = FindAnyObjectByType<EventSystem>();
+            if (eventSystem == null)
             {
-                GameObject es = new GameObject("DebugEventSystem",
+                GameObject esGo = new GameObject("DebugEventSystem",
                     typeof(EventSystem), typeof(InputSystemUIInputModule));
-                es.transform.SetParent(transform, false);
+                esGo.transform.SetParent(transform, false);
+                eventSystem = esGo.GetComponent<EventSystem>();
             }
+
+            InputSystemUIInputModule inputModule = eventSystem.GetComponent<InputSystemUIInputModule>();
+            if (inputModule == null)
+            {
+                inputModule = eventSystem.gameObject.AddComponent<InputSystemUIInputModule>();
+            }
+
+            ConfigureInputModule(inputModule);
 
             _panel = new GameObject("DebugPanel",
                 typeof(RectTransform), typeof(Image), typeof(VerticalLayoutGroup));
@@ -257,6 +272,88 @@ namespace OperationOutbreak.Mission
 
             ContentSizeFitter fitter = _panel.AddComponent<ContentSizeFitter>();
             fitter.verticalFit = ContentSizeFitter.FitMode.PreferredSize;
+        }
+
+        /// <summary>
+        /// Builds a self-contained InputActionAsset with the UI actions an InputSystemUIInputModule
+        /// needs to generate pointer/click events (Point, LeftClick, RightClick, MiddleClick,
+        /// ScrollWheel, Submit, Cancel). Built in code so the debug UI needs no external asset
+        /// reference and works identically in the editor and in builds.
+        ///
+        /// Public/static so the editor tooling and the EditMode tests exercise the EXACT action
+        /// set the runtime uses (regression guard for QA fix #3).
+        /// </summary>
+        public static InputActionAsset BuildDebugUiActions()
+        {
+            InputActionAsset asset = ScriptableObject.CreateInstance<InputActionAsset>();
+            asset.name = "OO_DebugUI_Actions";
+
+            InputActionMap uiMap = asset.AddActionMap("UI");
+
+            InputAction point = uiMap.AddAction("Point", InputActionType.Value);
+            point.AddBinding("<Mouse>/position");
+            point.AddBinding("<Touchscreen>/touch*/position");
+            point.AddBinding("<Pen>/position");
+
+            InputAction leftClick = uiMap.AddAction("LeftClick", InputActionType.Button);
+            leftClick.AddBinding("<Mouse>/leftButton");
+            leftClick.AddBinding("<Touchscreen>/touch*/press");
+            leftClick.AddBinding("<Pen>/tip");
+
+            InputAction rightClick = uiMap.AddAction("RightClick", InputActionType.Button);
+            rightClick.AddBinding("<Mouse>/rightButton");
+
+            InputAction middleClick = uiMap.AddAction("MiddleClick", InputActionType.Button);
+            middleClick.AddBinding("<Mouse>/middleButton");
+
+            InputAction scroll = uiMap.AddAction("ScrollWheel", InputActionType.Value);
+            scroll.AddBinding("<Mouse>/scroll");
+
+            InputAction submit = uiMap.AddAction("Submit", InputActionType.Button);
+            submit.AddBinding("<Keyboard>/enter");
+            submit.AddBinding("<Gamepad>/buttonSouth");
+
+            InputAction cancel = uiMap.AddAction("Cancel", InputActionType.Button);
+            cancel.AddBinding("<Keyboard>/escape");
+            cancel.AddBinding("<Gamepad>/buttonEast");
+
+            return asset;
+        }
+
+        /// <summary>
+        /// Wires UI input actions onto <paramref name="module"/> so it actually produces
+        /// pointer/click events. Idempotent and safe on a fresh OR already-enabled module: it
+        /// disables the module while reconfiguring so OnEnable re-runs and (re)enables the newly
+        /// assigned actions (assigning actions to an already-enabled module alone would NOT enable
+        /// them). Public so editor tooling and tests share the exact runtime configuration.
+        /// </summary>
+        public static void ConfigureInputModule(InputSystemUIInputModule module)
+        {
+            if (module == null)
+            {
+                return;
+            }
+
+            InputActionAsset asset = BuildDebugUiActions();
+
+            // Disable first so a subsequent enable re-runs OnEnable, which (re)enables the
+            // actions bound below - whether the module was just created or already enabled.
+            module.enabled = false;
+            module.actionsAsset = asset;
+            module.pointAction = ToProperty(asset, "Point");
+            module.leftClickAction = ToProperty(asset, "LeftClick");
+            module.rightClickAction = ToProperty(asset, "RightClick");
+            module.middleClickAction = ToProperty(asset, "MiddleClick");
+            module.scrollWheelAction = ToProperty(asset, "ScrollWheel");
+            module.submitAction = ToProperty(asset, "Submit");
+            module.cancelAction = ToProperty(asset, "Cancel");
+            module.enabled = true;
+        }
+
+        private static InputActionProperty ToProperty(InputActionAsset asset, string actionName)
+        {
+            InputAction action = asset.FindAction("UI/" + actionName);
+            return action != null ? InputActionProperty.FromAction(action) : default;
         }
 
         private static GameObject MakeButton(string label, Color tint, bool interactable,

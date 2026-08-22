@@ -3,6 +3,8 @@ using System.Reflection;
 using NUnit.Framework;
 using OperationOutbreak.Mission;
 using UnityEngine;
+using UnityEngine.EventSystems;
+using UnityEngine.InputSystem.UI;
 
 namespace OperationOutbreak.Tests
 {
@@ -590,6 +592,79 @@ namespace OperationOutbreak.Tests
             ActiveMissionContext.Clear();
 
             Assert.IsFalse(ActiveMissionContext.HasCurrent);
+        }
+
+        // ============================================================ debug UI input (QA fix #3)
+
+        [Test]
+        public void DebugUiActionsAssetDefinesPointerAndClickActions()
+        {
+            // The QA #3 root cause was a runtime-created InputSystemUIInputModule with no UI
+            // actions, so ScreenSpaceOverlay buttons did not respond to clicks. Pin that the
+            // debug UI builds a UI action map containing the actions the module needs.
+            UnityEngine.InputSystem.InputActionAsset asset = MissionSelectionDebugUi.BuildDebugUiActions();
+
+            try
+            {
+                Assert.IsNotNull(asset, "BuildDebugUiActions must return an action asset.");
+
+                UnityEngine.InputSystem.InputActionMap uiMap = asset.FindActionMap("UI");
+                Assert.IsNotNull(uiMap, "The asset must contain a 'UI' action map.");
+
+                UnityEngine.InputSystem.InputAction point = uiMap.FindAction("Point");
+                Assert.IsNotNull(point, "The UI map must contain a Point action.");
+                Assert.GreaterOrEqual(point.bindings.Count, 1,
+                    "Point must have at least one input binding (mouse/touch/pen).");
+
+                UnityEngine.InputSystem.InputAction leftClick = uiMap.FindAction("LeftClick");
+                Assert.IsNotNull(leftClick, "The UI map must contain a LeftClick action.");
+                Assert.GreaterOrEqual(leftClick.bindings.Count, 1,
+                    "LeftClick must have at least one input binding.");
+            }
+            finally
+            {
+                if (asset != null)
+                {
+                    Object.DestroyImmediate(asset);
+                }
+            }
+        }
+
+        [Test]
+        public void ConfiguringTheInputModuleWiresPointerAndClickActions()
+        {
+            // A FRESH module has no pointer/click actions (the bug). After ConfigureInputModule it
+            // must carry a real Point + LeftClick action so buttons become clickable.
+            GameObject esGo = new GameObject("TestEventSystem",
+                typeof(EventSystem), typeof(InputSystemUIInputModule));
+            InputSystemUIInputModule module = esGo.GetComponent<InputSystemUIInputModule>();
+
+            try
+            {
+                Assert.IsNull(module.pointAction.action,
+                    "Sanity: a fresh runtime module has no Point action (the QA #3 root cause).");
+
+                MissionSelectionDebugUi.ConfigureInputModule(module);
+
+                Assert.IsNotNull(module.pointAction.action,
+                    "After configuration the module must have a Point action.");
+                Assert.GreaterOrEqual(module.pointAction.action.bindings.Count, 1,
+                    "The Point action must have input bindings.");
+
+                Assert.IsNotNull(module.leftClickAction.action,
+                    "After configuration the module must have a LeftClick action.");
+                Assert.GreaterOrEqual(module.leftClickAction.action.bindings.Count, 1,
+                    "The LeftClick action must have input bindings.");
+            }
+            finally
+            {
+                if (module != null && module.actionsAsset != null)
+                {
+                    Object.DestroyImmediate(module.actionsAsset);
+                }
+
+                Object.DestroyImmediate(esGo);
+            }
         }
     }
 }
