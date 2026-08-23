@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using System.Reflection;
 using NUnit.Framework;
+using OperationOutbreak.Mission;
 using OperationOutbreak.Story;
 using UnityEngine;
 
