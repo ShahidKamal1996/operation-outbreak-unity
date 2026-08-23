@@ -594,6 +594,21 @@ namespace OperationOutbreak.Tests
             Assert.IsFalse(ActiveMissionContext.HasCurrent);
         }
 
+        // ============================================================ debug canvas ownership (QA fix #4)
+
+        [Test]
+        public void DebugCanvasRendersAboveResultOverlaysSoItStaysClickable()
+        {
+            // QA fix #4 root cause: the debug canvas was at sortingOrder 5, BELOW the Mission
+            // Complete and Game Over overlays (sortingOrder 30, full-screen raycast Images), so
+            // those overlays intercepted EVERY click and the debug mission buttons were
+            // unclickable while a result overlay was up. The debug canvas MUST render above them.
+            Assert.Greater(MissionSelectionDebugUi.DebugCanvasSortingOrder, 30,
+                "The debug canvas sortingOrder (" + MissionSelectionDebugUi.DebugCanvasSortingOrder +
+                ") must exceed the result-overlay sortingOrder (30). Otherwise the result overlay's " +
+                "full-screen raycast Image intercepts all clicks to the debug panel.");
+        }
+
         // ============================================================ debug UI input (QA fix #3)
 
         [Test]

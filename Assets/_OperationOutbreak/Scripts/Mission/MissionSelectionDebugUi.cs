@@ -33,6 +33,16 @@ namespace OperationOutbreak.Mission
         [SerializeField] private bool showOnStart = true;
         [SerializeField] private bool verboseLogging = false;
 
+        /// <summary>
+        /// The debug canvas sortingOrder. MUST be higher than the Mission Complete and Game Over
+        /// overlay canvases (both sortingOrder 30, with full-screen raycast-target Images): if the
+        /// debug canvas renders below them, their full-screen Image intercepts every pointer click
+        /// and the debug mission buttons become unclickable while a result overlay is up (the QA
+        /// fix #4 root cause). 100 keeps the debug panel on top so it stays clickable without
+        /// spatially overlapping the centred Retry/Return buttons.
+        /// </summary>
+        public const int DebugCanvasSortingOrder = 100;
+
         private MissionSelectionService _selection;
         private GameObject _canvas;
         private GameObject _panel;
@@ -65,6 +75,15 @@ namespace OperationOutbreak.Mission
         {
             _shown = !_shown;
             Refresh();
+
+            // One concise diagnostic dump each time the panel is opened (never per-frame) so a
+            // human QA can confirm the pointer path end-to-end: EventSystem, input module,
+            // Point/LeftClick enabled, the debug canvas sortingOrder, and the topmost raycast
+            // hit under the pointer (which reveals whether a result overlay is intercepting).
+            if (_shown)
+            {
+                LogPointerDiagnostics();
+            }
         }
 
         /// <summary>Rebuilds the panel contents from the live selection/progression state.</summary>
@@ -216,7 +235,11 @@ namespace OperationOutbreak.Mission
 
             Canvas canvas = _canvas.GetComponent<Canvas>();
             canvas.renderMode = RenderMode.ScreenSpaceOverlay;
-            canvas.sortingOrder = 5; // Below Mission Complete (30) and Game Over so it never hides a result.
+            // ABOVE the Mission Complete / Game Over overlays (sortingOrder 30, full-screen
+            // raycast Images) so the result overlay cannot intercept clicks meant for the debug
+            // panel. The centred Retry/Return buttons are not spatially covered by this
+            // bottom-left panel, so they stay clickable too.
+            canvas.sortingOrder = DebugCanvasSortingOrder;
 
             CanvasScaler scaler = _canvas.GetComponent<CanvasScaler>();
             scaler.uiScaleMode = CanvasScaler.ScaleMode.ScaleWithScreenSize;
@@ -348,12 +371,82 @@ namespace OperationOutbreak.Mission
             module.submitAction = ToProperty(asset, "Submit");
             module.cancelAction = ToProperty(asset, "Cancel");
             module.enabled = true;
+
+            // Explicitly enable the UI action map so Point/LeftClick are guaranteed to be
+            // processing input in Play Mode regardless of the module's own enable path
+            // (enabling an already-enabled action/map is a no-op, so this is always safe).
+            InputActionMap uiMap = asset.FindActionMap("UI");
+            if (uiMap != null)
+            {
+                uiMap.Enable();
+            }
         }
 
         private static InputActionProperty ToProperty(InputActionAsset asset, string actionName)
         {
             InputAction action = asset.FindAction("UI/" + actionName);
             return action != null ? InputActionProperty.FromAction(action) : default;
+        }
+
+        /// <summary>
+        /// Logs a concise, one-shot picture of the UI pointer path so manual Play Mode QA can
+        /// be conclusive about WHY a button is or is not clickable. Called once when the panel
+        /// is toggled open (never per-frame).
+        /// </summary>
+        private void LogPointerDiagnostics()
+        {
+            EventSystem[] systems = FindObjectsByType<EventSystem>(FindObjectsSortMode.None);
+            Debug.Log("[1X] Active EventSystem count: " + systems.Length);
+
+            EventSystem current = EventSystem.current;
+            if (current == null)
+            {
+                Debug.LogWarning("[1X] EventSystem.current is null - UI clicks will not work.");
+                return;
+            }
+
+            BaseInputModule module = current.currentInputModule;
+            Debug.Log("[1X] Current input module: " + (module != null ? module.GetType().Name : "null") +
+                      ", enabled=" + (module != null && module.enabled));
+
+            if (module is InputSystemUIInputModule uiModule)
+            {
+                LogInputAction(uiModule.pointAction, "Point");
+                LogInputAction(uiModule.leftClickAction, "LeftClick");
+            }
+
+            Canvas debugCanvas = _canvas != null ? _canvas.GetComponent<Canvas>() : null;
+            Debug.Log("[1X] Debug canvas sortingOrder: " +
+                      (debugCanvas != null ? debugCanvas.sortingOrder : -1) +
+                      " (result overlays are 30; debug must be higher to stay clickable).");
+
+            Vector2 probe = ResolvePointerPosition();
+            PointerEventData ped = new PointerEventData(current) { position = probe };
+            List<RaycastResult> hits = new List<RaycastResult>();
+            current.RaycastAll(ped, hits);
+            Debug.Log("[1X] Pointer raycast top hit @ " + probe + ": " +
+                      (hits.Count > 0
+                          ? hits[0].gameObject.name + " (canvas sortingOrder " + hits[0].sortingOrder + ")"
+                          : "(nothing - pointer is over non-UI space)"));
+        }
+
+        private static void LogInputAction(InputActionProperty property, string label)
+        {
+            InputAction action = property.action;
+            Debug.Log("[1X] " + label + " action: " +
+                      (action != null ? "set, enabled=" + action.enabled : "MISSING"));
+        }
+
+        private static Vector2 ResolvePointerPosition()
+        {
+            // activeInputHandler is 1 (new Input System only), so use the InputSystem mouse,
+            // not UnityEngine.Input.mousePosition. Fall back to screen centre on touch-only.
+            if (Mouse.current != null)
+            {
+                return Mouse.current.position.ReadValue();
+            }
+
+            return new Vector2(Screen.width * 0.5f, Screen.height * 0.5f);
         }
 
         private static GameObject MakeButton(string label, Color tint, bool interactable,
