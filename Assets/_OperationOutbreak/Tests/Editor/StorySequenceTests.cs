@@ -291,5 +291,22 @@ namespace OperationOutbreak.Tests
             player.SetCinematicMovementLock(false);
             Assert.IsFalse(player.IsMovementLocked, "Cinematic lock alone should fully release on unlock.");
         }
+
+        [Test]
+        public void EnemySpawnerCinematicPauseBlocksAndResumes()
+        {
+            GameObject spawnerGo = new GameObject("Spawner");
+            _created.Add(spawnerGo);
+            OperationOutbreak.Enemies.EnemySpawner spawner = spawnerGo.AddComponent<OperationOutbreak.Enemies.EnemySpawner>();
+
+            Assert.IsFalse(spawner.IsSpawnPaused, "Pre-condition: not paused.");
+
+            spawner.SuspendActiveEnemiesForCinematic();
+            Assert.IsTrue(spawner.IsSpawnPaused, "Cinematic suspend must set spawn pause.");
+            Assert.IsTrue(spawner.IsCombatStopped == false, "Cinematic pause must NOT cancel the encounter.");
+
+            spawner.ResumeActiveEnemiesAfterCinematic();
+            Assert.IsFalse(spawner.IsSpawnPaused, "Cinematic resume must clear spawn pause.");
+        }
     }
 }

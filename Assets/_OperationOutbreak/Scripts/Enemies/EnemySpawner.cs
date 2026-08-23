@@ -178,7 +178,7 @@ namespace OperationOutbreak.Enemies
                 ZombieController zombie = Instantiate(zombiePrefab, position, Quaternion.identity);
                 zombie.SetTarget(playerTarget, playerHealth);
                 zombie.Died += HandleEnemyDied;
-                _activeEnemies.Add(zombie);
+                RegisterEnemy(zombie);
 
                 // Milestone 1O - same observation hook on the legacy wave path.
                 EnemySpawned?.Invoke(zombie, new EnemySpawnReport(
@@ -271,7 +271,7 @@ namespace OperationOutbreak.Enemies
 
             zombie.SetTarget(playerTarget, playerHealth);
             zombie.Died += HandleEnemyDied;
-            _activeEnemies.Add(zombie);
+            RegisterEnemy(zombie);
 
             EnemySpawned?.Invoke(zombie, new EnemySpawnReport(
                 definition != null ? definition.ArchetypeId : EnemyArchetypeId.Basic,
@@ -444,6 +444,7 @@ namespace OperationOutbreak.Enemies
             int sectionIndex, int count, float spawnLineZ, IList<EnemySpawnEntry> composition = null)
         {
             if (_cancelled || _encounterComplete || _sectionRunning) return;
+            if (_spawnPaused) return; // 1Z QA fix #4 - don't start a new section during cinematic
             if (zombiePrefab == null || playerTarget == null || playerHealth == null) return;
             if (playerHealth.IsDead) { _cancelled = true; return; }
 
@@ -474,6 +475,7 @@ namespace OperationOutbreak.Enemies
             for (int i = 0; i < count; i++)
             {
                 if (_cancelled) { _sectionRunning = false; yield break; }
+                while (_spawnPaused) yield return null; // 1Z QA fix #4 - pause spawning during cinematic
 
                 Vector3 position = GetSpawnPosition(i % 3);
                 position.z += zShift;
@@ -509,7 +511,7 @@ namespace OperationOutbreak.Enemies
                 ZombieController zombie = Instantiate(prefab, position, Quaternion.identity);
                 zombie.SetTarget(playerTarget, playerHealth);
                 zombie.Died += HandleEnemyDied;
-                _activeEnemies.Add(zombie);
+                RegisterEnemy(zombie);
 
                 // Milestone 1O - observation hook. Raised after the enemy is fully set up
                 // and tracked, so nothing about the spawn can be changed by a listener.
@@ -580,6 +582,24 @@ namespace OperationOutbreak.Enemies
         {
             if (zombie != null) zombie.Died -= HandleEnemyDied;
             _activeEnemies.Remove(zombie);
+        }
+
+        /// <summary>
+        /// 1Z QA fix #4 - registers a newly created enemy in the active set and, if a cinematic
+        /// pause is currently active, immediately suspends its combat so it cannot attack the
+        /// player before the cinematic unlock. This is the safety net that catches ANY spawn
+        /// path (section coroutine, reinforcement seam, legacy waves) — no new hostile can
+        /// damage the player during a cinematic lock, regardless of which code created it.
+        /// </summary>
+        private void RegisterEnemy(ZombieController zombie)
+        {
+            if (zombie == null) return;
+            _activeEnemies.Add(zombie);
+
+            if (_spawnPaused)
+            {
+                zombie.SuspendCombat();
+            }
         }
         /// <summary>
         /// Milestone 1K - halts all remaining combat activity after victory: no further
