@@ -23,11 +23,6 @@ MonoBehaviour:
       text: 
       voiceClip: {fileID: 0}
       durationOverride: 0
-      isRadio: 0 
-      speakerId: 
-      text: 
-      voiceClip: {fileID: 0}
-      durationOverride: 0
       isRadio: 0
     autoAdvance: 1
     duration: 0
@@ -40,11 +35,6 @@ MonoBehaviour:
       text: 
       voiceClip: {fileID: 0}
       durationOverride: 0
-      isRadio: 0 
-      speakerId: 
-      text: 
-      voiceClip: {fileID: 0}
-      durationOverride: 0
       isRadio: 0
     autoAdvance: 1
     duration: 0
@@ -53,11 +43,6 @@ MonoBehaviour:
   - beatType: 1
     dialogue:
       lineId: 
-      speakerId: 
-      text: 
-      voiceClip: {fileID: 0}
-      durationOverride: 0
-      isRadio: 0 
       speakerId: 
       text: 
       voiceClip: {fileID: 0}
@@ -98,11 +83,6 @@ MonoBehaviour:
       text: 
       voiceClip: {fileID: 0}
       durationOverride: 0
-      isRadio: 0 
-      speakerId: 
-      text: 
-      voiceClip: {fileID: 0}
-      durationOverride: 0
       isRadio: 0
     autoAdvance: 1
     duration: 2
@@ -118,16 +98,11 @@ MonoBehaviour:
       isRadio: 1
     autoAdvance: 1
     duration: 1
-    cueId: distress_signal
+    cueId: 
     cuePolicy: 0
   - beatType: 1
     dialogue:
       lineId: 
-      speakerId: 
-      text: 
-      voiceClip: {fileID: 0}
-      durationOverride: 0
-      isRadio: 0 
       speakerId: 
       text: 
       voiceClip: {fileID: 0}
@@ -165,7 +140,7 @@ MonoBehaviour:
     dialogue:
       lineId: 
       speakerId: sofia_reyes
-      text: Kane—
+      text: Kane-
       voiceClip: {fileID: 0}
       durationOverride: 0
       isRadio: 1
@@ -192,11 +167,6 @@ MonoBehaviour:
       text: 
       voiceClip: {fileID: 0}
       durationOverride: 0
-      isRadio: 0 
-      speakerId: 
-      text: 
-      voiceClip: {fileID: 0}
-      durationOverride: 0
       isRadio: 0
     autoAdvance: 1
     duration: 0
@@ -205,11 +175,6 @@ MonoBehaviour:
   - beatType: 3
     dialogue:
       lineId: 
-      speakerId: 
-      text: 
-      voiceClip: {fileID: 0}
-      durationOverride: 0
-      isRadio: 0 
       speakerId: 
       text: 
       voiceClip: {fileID: 0}

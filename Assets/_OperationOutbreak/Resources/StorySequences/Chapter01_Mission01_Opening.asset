@@ -23,11 +23,6 @@ MonoBehaviour:
       text: 
       voiceClip: {fileID: 0}
       durationOverride: 0
-      isRadio: 0 
-      speakerId: 
-      text: 
-      voiceClip: {fileID: 0}
-      durationOverride: 0
       isRadio: 0
     autoAdvance: 1
     duration: 0
@@ -36,11 +31,6 @@ MonoBehaviour:
   - beatType: 4
     dialogue:
       lineId: 
-      speakerId: 
-      text: 
-      voiceClip: {fileID: 0}
-      durationOverride: 0
-      isRadio: 0 
       speakerId: 
       text: 
       voiceClip: {fileID: 0}
@@ -69,11 +59,6 @@ MonoBehaviour:
       text: 
       voiceClip: {fileID: 0}
       durationOverride: 0
-      isRadio: 0 
-      speakerId: 
-      text: 
-      voiceClip: {fileID: 0}
-      durationOverride: 0
       isRadio: 0
     autoAdvance: 1
     duration: 0
@@ -82,11 +67,6 @@ MonoBehaviour:
   - beatType: 1
     dialogue:
       lineId: 
-      speakerId: 
-      text: 
-      voiceClip: {fileID: 0}
-      durationOverride: 0
-      isRadio: 0 
       speakerId: 
       text: 
       voiceClip: {fileID: 0}
@@ -139,11 +119,6 @@ MonoBehaviour:
       text: 
       voiceClip: {fileID: 0}
       durationOverride: 0
-      isRadio: 0 
-      speakerId: 
-      text: 
-      voiceClip: {fileID: 0}
-      durationOverride: 0
       isRadio: 0
     autoAdvance: 1
     duration: 1
@@ -152,11 +127,6 @@ MonoBehaviour:
   - beatType: 5
     dialogue:
       lineId: 
-      speakerId: 
-      text: 
-      voiceClip: {fileID: 0}
-      durationOverride: 0
-      isRadio: 0 
       speakerId: 
       text: 
       voiceClip: {fileID: 0}
@@ -209,11 +179,6 @@ MonoBehaviour:
       text: 
       voiceClip: {fileID: 0}
       durationOverride: 0
-      isRadio: 0 
-      speakerId: 
-      text: 
-      voiceClip: {fileID: 0}
-      durationOverride: 0
       isRadio: 0
     autoAdvance: 1
     duration: 0
@@ -226,11 +191,6 @@ MonoBehaviour:
       text: 
       voiceClip: {fileID: 0}
       durationOverride: 0
-      isRadio: 0 
-      speakerId: 
-      text: 
-      voiceClip: {fileID: 0}
-      durationOverride: 0
       isRadio: 0
     autoAdvance: 1
     duration: 0
@@ -239,11 +199,6 @@ MonoBehaviour:
   - beatType: 3
     dialogue:
       lineId: 
-      speakerId: 
-      text: 
-      voiceClip: {fileID: 0}
-      durationOverride: 0
-      isRadio: 0 
       speakerId: 
       text: 
       voiceClip: {fileID: 0}
