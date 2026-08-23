@@ -81,6 +81,13 @@ namespace OperationOutbreak.Mission
         [SerializeField]
         private MissionEnvironmentDefinition environment;
 
+        [Header("Cinematics (Milestone 1Z)")]
+        [Tooltip("Optional pre-mission cinematic sequence. May be null.")]
+        [SerializeField] private OperationOutbreak.Story.StorySequenceDefinition preMissionSequence;
+
+        [Tooltip("Optional post-mission cinematic sequence. May be null.")]
+        [SerializeField] private OperationOutbreak.Story.StorySequenceDefinition postMissionSequence;
+
         // ------------------------------------------------------------------ read-only views
 
         public string MissionId => missionId;
@@ -129,6 +136,12 @@ namespace OperationOutbreak.Mission
 
         /// <summary>The Chapter 1 environment profile this mission presents (may be null).</summary>
         public MissionEnvironmentDefinition Environment => environment;
+
+        /// <summary>1Z - optional pre-mission cinematic. Null = no cinematic.</summary>
+        public OperationOutbreak.Story.StorySequenceDefinition PreMissionSequence => preMissionSequence;
+
+        /// <summary>1Z - optional post-mission cinematic. Null = no cinematic.</summary>
+        public OperationOutbreak.Story.StorySequenceDefinition PostMissionSequence => postMissionSequence;
 
         /// <summary>The objective with <paramref name="objectiveId"/>, or null when absent.</summary>
         public MissionObjectiveDefinition GetObjective(string objectiveId)
