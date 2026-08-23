@@ -131,7 +131,26 @@ namespace OperationOutbreak.Weapons
         {
             if (_firingSuspended || _isOwnerDead || muzzlePoint == null || projectilePrefab == null) return;
             RefreshTarget();
-            if (_currentTarget == null || Time.time < _nextShotTime)
+
+            if (_currentTarget == null)
+            {
+                // 1X.5 - no zombie target. If destroyable objective targets (barricades) are
+                // present, fire straight ahead so the existing projectile -> IDamageable damage
+                // path reaches them. Gated on barricades existing: missions without barricades
+                // (1/2/3/5) keep the original hold-fire behaviour byte-for-byte.
+                if (OperationOutbreak.Mission.ObjectiveTargetAimProvider.ActiveDamageableCount <= 0
+                    || Time.time < _nextShotTime)
+                {
+                    return;
+                }
+
+                _aimDirection = Vector3.forward;
+                FireForward();
+                _nextShotTime = Time.time + (1f / fireRate);
+                return;
+            }
+
+            if (Time.time < _nextShotTime)
             {
                 return;
             }

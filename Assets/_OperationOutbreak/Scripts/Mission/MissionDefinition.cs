@@ -392,9 +392,75 @@ namespace OperationOutbreak.Mission
                         anyRequired = true;
                     }
 
+                    // Milestone 1X.5 - per-type data validation. Each new objective type owns
+                    // specific parameters that must be sensible or the mission is unplayable.
+                    switch (objective.objectiveType)
+                    {
+                        case MissionObjectiveType.SurviveDuration:
+                            if (objective.durationSeconds <= 0f)
+                            {
+                                problems.Add(objectiveWhere + ": SurviveDuration requires durationSeconds > 0 (got " +
+                                             objective.durationSeconds + ").");
+                            }
+                            break;
+                        case MissionObjectiveType.DestroyTargets:
+                            if (objective.requiredTargetCount <= 0)
+                            {
+                                problems.Add(objectiveWhere + ": DestroyTargets requires requiredTargetCount > 0 (got " +
+                                             objective.requiredTargetCount + ").");
+                            }
+                            if (objective.targetHealth <= 0)
+                            {
+                                problems.Add(objectiveWhere + ": DestroyTargets requires targetHealth > 0 (got " +
+                                             objective.targetHealth + ").");
+                            }
+                            break;
+                        case MissionObjectiveType.ActivateTargets:
+                            if (objective.requiredTargetCount <= 0)
+                            {
+                                problems.Add(objectiveWhere + ": ActivateTargets requires requiredTargetCount > 0 (got " +
+                                             objective.requiredTargetCount + ").");
+                            }
+                            if (objective.activationDuration <= 0f)
+                            {
+                                problems.Add(objectiveWhere + ": ActivateTargets requires activationDuration > 0 (got " +
+                                             objective.activationDuration + ").");
+                            }
+                            if (objective.activationRadius <= 0f)
+                            {
+                                problems.Add(objectiveWhere + ": ActivateTargets requires activationRadius > 0 (got " +
+                                             objective.activationRadius + ").");
+                            }
+                            break;
+                    }
+
                     // ClearAllSections carries no explicit section/archetype reference -
                     // its required progress derives from the mission's section count, and
                     // section validity is already enforced by the section loop above.
+                }
+
+                // Milestone 1X.5 - objective sequencing references must point at a real, DIFFERENT
+                // objective id (a self- or missing-reference would make the stage permanently
+                // inactive and the mission uncompletable).
+                for (int k = 0; k < definition.objectives.Count; k++)
+                {
+                    MissionObjectiveDefinition objective = definition.objectives[k];
+                    if (objective == null || string.IsNullOrEmpty(objective.activateAfterObjectiveId))
+                    {
+                        continue;
+                    }
+
+                    string prereq = objective.activateAfterObjectiveId;
+                    if (prereq == objective.objectiveId)
+                    {
+                        problems.Add(label + " / objective " + (k + 1) + ": activateAfterObjectiveId '" +
+                                     prereq + "' references itself (would never activate).");
+                    }
+                    else if (definition.GetObjective(prereq) == null)
+                    {
+                        problems.Add(label + " / objective " + (k + 1) + ": activateAfterObjectiveId '" +
+                                     prereq + "' does not match any objective id.");
+                    }
                 }
 
                 if (!anyRequired)

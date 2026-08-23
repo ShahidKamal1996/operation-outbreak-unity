@@ -1,83 +1,84 @@
 using System;
 using System.Collections.Generic;
 using OperationOutbreak.Enemies;
+using OperationOutbreak.Player;
 using UnityEngine;
 
 namespace OperationOutbreak.Mission
 {
     /// <summary>
-    /// Milestone 1U - the ONE runtime objective evaluator/completion authority.
+    /// Milestone 1U/1X.5 - the ONE runtime objective evaluator/completion authority.
     ///
-    ///   MissionSectionController  publishes section progress   (SectionCleared)
-    ///   MissionObjectiveController  evaluates required objectives + decides completion
-    ///   MissionCompleteController   presents the final Mission Complete state (unchanged)
+    ///   MissionSectionController / target events  publish progress
+    ///   MissionObjectiveController                evaluates required objectives + decides completion
+    ///   MissionCompleteController                 presents the final Mission Complete state (unchanged)
     ///
-    /// There is exactly ONE authoritative completion decision (this component): when
-    /// every REQUIRED objective is complete it triggers the existing single
-    /// presentation path (EnemySpawner.CompleteEncounter -> EncounterCompleted ->
-    /// MissionCompleteController). MissionSectionController no longer declares
-    /// victory itself - it only publishes progress, so the two systems can never
-    /// both declare completion. The completion evaluation is DEFERRED to the end of
-    /// the frame (LateUpdate), never fired reentrantly inside the SectionCleared
-    /// dispatch, so every observer of that event commits its state first.
+    /// There is exactly ONE authoritative completion decision (this component): when every REQUIRED
+    /// objective is complete it triggers the existing single presentation path
+    /// (EnemySpawner.CompleteEncounter -> EncounterCompleted -> MissionCompleteController). No second
+    /// victory path exists. Completion evaluation is DEFERRED to LateUpdate (1U QA fix #2).
     ///
-    /// Responsibilities kept narrow: it reads the MissionDefinition objectives,
-    /// subscribes to gameplay events, tracks progress and decides completion. It
-    /// does NOT spawn enemies, own combat, duplicate the section controller, own
-    /// save/progression or manage rewards.
+    /// 1X.5 adds three objective behaviours without changing that authority:
+    ///   * SurviveDuration - this controller advances the timer each Update, only while the
+    ///     objective is active and the player is alive, then completes it at the configured time.
+    ///   * DestroyTargets / ActivateTargets - the controller routes MissionObjectiveTargetEvents
+    ///     (raised by world-space barricade/activation targets) into the matching runtime.
+    ///   * Sequencing - objectives with an 'activateAfterObjectiveId' stay inactive until their
+    ///     prerequisite completes (Mission 5's clear -> activate -> defend chain); SurviveDuration
+    ///     additionally waits for the final section to start (the player reaches the hold point).
+    /// ObjectiveActivated is raised when an objective transitions to active so world-space directors
+    /// can enable the matching targets at the right stage.
     ///
-    /// Fallback policy (fail loud): a missing MissionDefinition, an objective list
-    /// with no REQUIRED objective, or a null objective is logged as a loud error and
-    /// completion is NEVER triggered - malformed objective data must not silently
-    /// complete (nor silently hang): the committed Mission_01 always carries explicit
-    /// objective data, so the normal path is fully defined.
+    /// Fallback policy (fail loud): a missing MissionDefinition, no REQUIRED objective, or a null
+    /// objective is logged loudly and completion is NEVER triggered.
     /// </summary>
     [DisallowMultipleComponent]
     public sealed class MissionObjectiveController : MonoBehaviour
     {
         [Header("Mission Data (Milestone 1U)")]
-        [Tooltip("The data-driven mission whose objectives this controller evaluates. " +
-                 "Assign the same committed Mission_01 asset the section controller uses.")]
+        [Tooltip("The data-driven mission whose objectives this controller evaluates.")]
         [SerializeField] private MissionDefinition missionDefinition;
 
-        [Tooltip("The section-flow controller this observer listens to (SectionCleared).")]
+        [Tooltip("The section-flow controller (SectionCleared + SectionStarted).")]
         [SerializeField] private MissionSectionController missionSections;
 
-        [Tooltip("The shared spawner whose CompleteEncounter() is the single victory " +
-                 "presentation trigger (raised once all required objectives complete).")]
+        [Tooltip("The shared spawner whose CompleteEncounter() is the single victory trigger.")]
         [SerializeField] private EnemySpawner enemySpawner;
+
+        [Tooltip("1X.5 - player health, used to freeze the survival timer on death so a death " +
+                 "can never produce mission success.")]
+        [SerializeField] private PlayerHealth playerHealth;
 
         [SerializeField] private bool verboseLogging = true;
 
         private readonly List<MissionObjectiveRuntime> _objectives = new List<MissionObjectiveRuntime>();
         private bool _completionTriggered;
-
-        // Milestone 1U QA fix #2 - completion is evaluated at the END of the frame,
-        // never reentrantly inside the SectionCleared dispatch, so every observer of
-        // that event (e.g. GameplayDiagnostics marking the final section cleared) has
-        // committed its state before the completion path (CompleteEncounter -> report)
-        // runs. This is a deferred boundary, not a polling mechanism: the flag is only
-        // ever set by a section-clear and only read once per frame in LateUpdate.
         private bool _evaluationPending;
+        private bool _playerDead;
+        private bool _finalSectionStarted;
 
         /// <summary>Read-only runtime progress of every configured objective.</summary>
         public IReadOnlyList<MissionObjectiveRuntime> Objectives => _objectives;
 
-        /// <summary>True when the mission data carries at least one REQUIRED objective.</summary>
         public bool HasRequiredObjective { get; private set; }
 
-        /// <summary>True once every required objective is complete (the completion gate).</summary>
         public bool AreAllRequiredObjectivesComplete =>
             MissionObjectiveRuntime.AllRequiredObjectivesComplete(_objectives);
 
+        /// <summary>Raised the moment one objective completes. Carries the completed runtime.</summary>
+        public event Action<MissionObjectiveRuntime> ObjectiveCompleted;
+
+        /// <summary>Raised exactly once when every required objective completes.</summary>
+        public event Action AllRequiredObjectivesCompleted;
+
         /// <summary>
-        /// Milestone 1X - overrides the serialized mission with the mission selected through
-        /// the mission-selection system, so the chosen MissionDefinition becomes the
-        /// authoritative objective configuration for this run. Called once at scene boot by
-        /// MissionRuntimeAssignment before this component builds its objective runtime in
-        /// OnEnable; a null argument is ignored so the serialized default is preserved when no
-        /// mission is active. Additive setter only - the existing evaluation logic is unchanged.
+        /// 1X.5 - raised when an objective transitions from inactive to active (its stage begins),
+        /// so world-space directors can enable the matching targets at the right time. Carries the
+        /// activated runtime.
         /// </summary>
+        public event Action<MissionObjectiveRuntime> ObjectiveActivated;
+
+        /// <summary>1X - overrides the serialized mission with the selected mission.</summary>
         public void AssignActiveMission(MissionDefinition definition)
         {
             if (definition != null)
@@ -86,32 +87,27 @@ namespace OperationOutbreak.Mission
             }
         }
 
-        /// <summary>Raised the moment one objective completes. Carries the completed runtime.</summary>
-        public event Action<MissionObjectiveRuntime> ObjectiveCompleted;
-
-        /// <summary>Raised exactly once when every required objective completes.</summary>
-        public event Action AllRequiredObjectivesCompleted;
-
         private void Awake()
         {
             if (missionSections == null) missionSections = FindAnyObjectByType<MissionSectionController>();
             if (enemySpawner == null) enemySpawner = FindAnyObjectByType<EnemySpawner>();
+            if (playerHealth == null) playerHealth = FindAnyObjectByType<PlayerHealth>();
         }
 
         private void OnEnable()
         {
-            // Instance state only: a scene reload rebuilds every objective fresh.
             _completionTriggered = false;
             _evaluationPending = false;
+            _playerDead = false;
+            _finalSectionStarted = false;
             _objectives.Clear();
             HasRequiredObjective = false;
 
             if (missionDefinition == null)
             {
                 Debug.LogError(
-                    "[1U] No MissionDefinition is assigned to '" + name + "'. Assign the " +
-                    "committed Mission_01 asset. No objective can be evaluated and mission " +
-                    "completion will NOT be triggered.", this);
+                    "[1U] No MissionDefinition is assigned to '" + name + "'. Mission completion " +
+                    "will NOT be triggered.", this);
                 return;
             }
 
@@ -122,15 +118,13 @@ namespace OperationOutbreak.Mission
             {
                 Debug.LogError(
                     "[1U] Mission '" + missionDefinition.name + "' declares NO objectives. " +
-                    "Mission completion will NOT be triggered - author a required objective " +
-                    "in the MissionDefinition asset.", this);
+                    "Mission completion will NOT be triggered.", this);
                 return;
             }
 
             for (int i = 0; i < definitions.Count; i++)
             {
                 MissionObjectiveDefinition definition = definitions[i];
-
                 if (definition == null)
                 {
                     Debug.LogError(
@@ -151,22 +145,36 @@ namespace OperationOutbreak.Mission
             {
                 Debug.LogError(
                     "[1U] Mission '" + missionDefinition.name + "' has no REQUIRED objective. " +
-                    "Mission completion will NOT be triggered - mark at least one objective " +
-                    "required in the MissionDefinition asset.", this);
+                    "Mission completion will NOT be triggered.", this);
                 return;
             }
 
             if (missionSections != null)
             {
                 missionSections.SectionCleared += HandleSectionCleared;
+                missionSections.SectionStarted += HandleSectionStarted;
             }
+
+            if (playerHealth != null)
+            {
+                playerHealth.Died += HandlePlayerDied;
+                _playerDead = playerHealth.IsDead;
+            }
+
+            MissionObjectiveTargetEvents.TargetDestroyed += HandleTargetDestroyed;
+            MissionObjectiveTargetEvents.TargetActivated += HandleTargetActivated;
+
+            // Every objective starts inactive; activate those whose conditions are already met
+            // (ClearAllSections / DestroyTargets with no prerequisite). Gated ones (SurviveDuration
+            // until the hold section, prerequisite-chained ones) stay inactive until their stage.
+            RefreshActivations();
 
             if (verboseLogging)
             {
                 Debug.Log(
                     "[1U] Objective runtime loaded for mission '" + missionDefinition.name +
-                    "': " + _objectives.Count + " objective(s), " +
-                    CountRequired() + " required.", this);
+                    "': " + _objectives.Count + " objective(s), " + CountRequired() + " required.",
+                    this);
             }
         }
 
@@ -175,16 +183,29 @@ namespace OperationOutbreak.Mission
             if (missionSections != null)
             {
                 missionSections.SectionCleared -= HandleSectionCleared;
+                missionSections.SectionStarted -= HandleSectionStarted;
+            }
+
+            if (playerHealth != null)
+            {
+                playerHealth.Died -= HandlePlayerDied;
+            }
+
+            MissionObjectiveTargetEvents.TargetDestroyed -= HandleTargetDestroyed;
+            MissionObjectiveTargetEvents.TargetActivated -= HandleTargetActivated;
+        }
+
+        private void HandleSectionStarted(int index, MissionDefinition.MissionSection section)
+        {
+            if (missionDefinition != null && index == missionDefinition.SectionCount - 1)
+            {
+                _finalSectionStarted = true;
+                RefreshActivations();
             }
         }
 
         private void HandleSectionCleared(int index, MissionDefinition.MissionSection section)
         {
-            // The 'section' argument is the MissionSectionController.SectionCleared
-            // payload (Action<int, MissionDefinition.MissionSection>); only the index
-            // is needed to record progress against the section-indexed ClearAllSections
-            // objective. The payload is accepted verbatim so the handler matches the
-            // event delegate exactly - no adapter, no signature change.
             if (_completionTriggered)
             {
                 return;
@@ -193,40 +214,166 @@ namespace OperationOutbreak.Mission
             for (int i = 0; i < _objectives.Count; i++)
             {
                 MissionObjectiveRuntime objective = _objectives[i];
-
                 if (objective == null || objective.IsComplete)
                 {
                     continue;
                 }
 
-                objective.RecordSectionCleared(index);
-
-                if (objective.IsComplete)
+                if (objective.RecordSectionCleared(index))
                 {
-                    Debug.Log(
-                        "[1U] Objective '" + objective.ObjectiveId + "' completed (" +
-                        objective.CurrentProgress + "/" + objective.RequiredProgress + ").",
-                        this);
-                    ObjectiveCompleted?.Invoke(objective);
+                    OnObjectiveCompleted(objective);
                 }
             }
 
-            // Milestone 1U QA fix #2 - do NOT evaluate completion here. This handler runs
-            // synchronously inside MissionSectionController's SectionCleared dispatch, and
-            // GameplayDiagnostics (another subscriber of the SAME event) may not have
-            // recorded the final section as cleared yet - completing now would emit the
-            // diagnostics report with the final section still showing "cleared = NO".
-            // Defer the evaluation to LateUpdate so the whole dispatch has finished
-            // before the single completion path is raised.
             _evaluationPending = true;
         }
 
+        private void HandleTargetDestroyed(string targetId)
+        {
+            RouteTargetEvent(targetId, MissionObjectiveType.DestroyTargets, (o, id) => o.RecordTargetDestroyed(id));
+        }
+
+        private void HandleTargetActivated(string targetId)
+        {
+            RouteTargetEvent(targetId, MissionObjectiveType.ActivateTargets, (o, id) => o.RecordTargetActivated(id));
+        }
+
+        private void RouteTargetEvent(string targetId, MissionObjectiveType type,
+            Func<MissionObjectiveRuntime, string, bool> record)
+        {
+            if (_completionTriggered)
+            {
+                return;
+            }
+
+            for (int i = 0; i < _objectives.Count; i++)
+            {
+                MissionObjectiveRuntime objective = _objectives[i];
+                if (objective == null || objective.IsComplete || objective.Type != type)
+                {
+                    continue;
+                }
+
+                if (record(objective, targetId))
+                {
+                    OnObjectiveCompleted(objective);
+                }
+            }
+
+            _evaluationPending = true;
+        }
+
+        private void Update()
+        {
+            if (_completionTriggered || _playerDead)
+            {
+                return;
+            }
+
+            bool anySurvival = false;
+
+            for (int i = 0; i < _objectives.Count; i++)
+            {
+                MissionObjectiveRuntime objective = _objectives[i];
+                if (objective == null || objective.Type != MissionObjectiveType.SurviveDuration)
+                {
+                    continue;
+                }
+
+                anySurvival = true;
+
+                if (objective.IsComplete)
+                {
+                    continue;
+                }
+
+                if (objective.RecordSurviveTick(Time.deltaTime))
+                {
+                    OnObjectiveCompleted(objective);
+                }
+            }
+
+            if (anySurvival)
+            {
+                // Survival progress changes every frame; re-evaluate completion at the deferred boundary.
+                _evaluationPending = true;
+            }
+        }
+
+        private void HandlePlayerDied()
+        {
+            _playerDead = true;
+        }
+
+        private void OnObjectiveCompleted(MissionObjectiveRuntime objective)
+        {
+            Debug.Log(
+                "[1U] Objective '" + objective.ObjectiveId + "' completed.", this);
+            ObjectiveCompleted?.Invoke(objective);
+
+            // A completed objective may unlock a dependent (prerequisite-chained) stage.
+            RefreshActivations();
+        }
+
         /// <summary>
-        /// Milestone 1U QA fix #2 - the deferred completion boundary. Runs after all
-        /// Update/coroutine work for the frame, i.e. strictly AFTER the SectionCleared
-        /// dispatch has returned and every observer has committed its state. Only acts
-        /// when a section-clear marked evaluation pending; it never polls for progress.
+        /// Activates every objective whose activation conditions are now met (prerequisite complete
+        /// and, for SurviveDuration, the final section started). Raises ObjectiveActivated for each
+        /// newly activated objective so world-space directors can enable the matching targets.
         /// </summary>
+        private void RefreshActivations()
+        {
+            for (int i = 0; i < _objectives.Count; i++)
+            {
+                MissionObjectiveRuntime objective = _objectives[i];
+                if (objective == null || objective.IsActive || objective.IsComplete)
+                {
+                    continue;
+                }
+
+                if (!CanActivate(objective))
+                {
+                    objective.Deactivate();
+                    continue;
+                }
+
+                objective.Activate();
+                ObjectiveActivated?.Invoke(objective);
+            }
+        }
+
+        private bool CanActivate(MissionObjectiveRuntime objective)
+        {
+            string prereq = objective.PrerequisiteObjectiveId;
+            if (!string.IsNullOrEmpty(prereq))
+            {
+                MissionObjectiveRuntime prerequisite = FindObjective(prereq);
+                if (prerequisite == null || !prerequisite.IsComplete)
+                {
+                    return false;
+                }
+            }
+
+            if (objective.Type == MissionObjectiveType.SurviveDuration && !_finalSectionStarted)
+            {
+                return false;
+            }
+
+            return true;
+        }
+
+        private MissionObjectiveRuntime FindObjective(string id)
+        {
+            for (int i = 0; i < _objectives.Count; i++)
+            {
+                if (_objectives[i] != null && _objectives[i].ObjectiveId == id)
+                {
+                    return _objectives[i];
+                }
+            }
+
+            return null;
+        }
+
         private void LateUpdate()
         {
             if (!_evaluationPending)
@@ -238,10 +385,6 @@ namespace OperationOutbreak.Mission
             EvaluateRequiredObjectives();
         }
 
-        /// <summary>
-        /// The single completion gate: when every required objective is complete,
-        /// triggers the existing victory presentation path exactly once.
-        /// </summary>
         private void EvaluateRequiredObjectives()
         {
             if (_completionTriggered || !HasRequiredObjective)
@@ -259,8 +402,6 @@ namespace OperationOutbreak.Mission
             Debug.Log("[1U] All required objectives complete - mission completion triggered.", this);
             AllRequiredObjectivesCompleted?.Invoke();
 
-            // Single victory path: Mission Complete UI already listens to
-            // EnemySpawner.EncounterCompleted, raised by CompleteEncounter().
             if (enemySpawner != null)
             {
                 enemySpawner.CompleteEncounter();
@@ -270,7 +411,6 @@ namespace OperationOutbreak.Mission
         private int CountRequired()
         {
             int required = 0;
-
             for (int i = 0; i < _objectives.Count; i++)
             {
                 if (_objectives[i] != null && _objectives[i].Required)

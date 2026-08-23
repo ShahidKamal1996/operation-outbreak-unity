@@ -25,7 +25,9 @@ MonoBehaviour:
     spawnAheadOfLimit: 1
     composition:
     - archetypeId: basic_infected
-      count: 3
+      count: 2
+    - archetypeId: runner
+      count: 1
   - sectionId: section_02
     label: SECTION 2
     subtitle: ADVANCE
@@ -34,9 +36,9 @@ MonoBehaviour:
     spawnAheadOfLimit: 4
     composition:
     - archetypeId: basic_infected
-      count: 4
+      count: 3
     - archetypeId: runner
-      count: 1
+      count: 2
   - sectionId: section_03
     label: SECTION 3
     subtitle: FINAL PUSH
@@ -45,9 +47,9 @@ MonoBehaviour:
     spawnAheadOfLimit: 4
     composition:
     - archetypeId: basic_infected
-      count: 4
+      count: 3
     - archetypeId: runner
-      count: 2
+      count: 3
   objectives:
   - objectiveId: clear_all_sections
     title: Clear All Sections

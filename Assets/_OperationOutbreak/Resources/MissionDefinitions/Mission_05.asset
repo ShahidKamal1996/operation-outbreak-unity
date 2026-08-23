@@ -25,7 +25,9 @@ MonoBehaviour:
     spawnAheadOfLimit: 1
     composition:
     - archetypeId: basic_infected
-      count: 5
+      count: 4
+    - archetypeId: runner
+      count: 1
   - sectionId: section_02
     label: SECTION 2
     subtitle: ADVANCE
@@ -49,10 +51,25 @@ MonoBehaviour:
     - archetypeId: runner
       count: 4
   objectives:
-  - objectiveId: clear_all_sections
-    title: Clear All Sections
+  - objectiveId: clear_approach
+    title: Clear the Infected
     objectiveType: 0
     required: 1
+  - objectiveId: activate_containment
+    title: Activate Containment Points
+    objectiveType: 3
+    required: 1
+    requiredTargetCount: 2
+    activationDuration: 2
+    activationRadius: 2
+    resetProgressOnLeave: 0
+    activateAfterObjectiveId: clear_approach
+  - objectiveId: defend_containment
+    title: Defend the Containment
+    objectiveType: 1
+    required: 1
+    durationSeconds: 20
+    activateAfterObjectiveId: activate_containment
   reward:
     coins: 40
     supplies: 10

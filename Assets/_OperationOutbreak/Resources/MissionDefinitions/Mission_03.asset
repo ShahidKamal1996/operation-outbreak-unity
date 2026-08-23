@@ -25,7 +25,7 @@ MonoBehaviour:
     spawnAheadOfLimit: 1
     composition:
     - archetypeId: basic_infected
-      count: 4
+      count: 3
   - sectionId: section_02
     label: SECTION 2
     subtitle: ADVANCE
@@ -34,7 +34,7 @@ MonoBehaviour:
     spawnAheadOfLimit: 4
     composition:
     - archetypeId: basic_infected
-      count: 4
+      count: 3
     - archetypeId: runner
       count: 1
   - sectionId: section_03
@@ -45,14 +45,15 @@ MonoBehaviour:
     spawnAheadOfLimit: 4
     composition:
     - archetypeId: basic_infected
-      count: 4
+      count: 5
     - archetypeId: runner
-      count: 3
+      count: 4
   objectives:
-  - objectiveId: clear_all_sections
-    title: Clear All Sections
-    objectiveType: 0
+  - objectiveId: survive_hold
+    title: Hold the Line
+    objectiveType: 1
     required: 1
+    durationSeconds: 25
   reward:
     coins: 20
     supplies: 0

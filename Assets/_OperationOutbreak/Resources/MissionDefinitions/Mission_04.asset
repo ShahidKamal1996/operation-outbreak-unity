@@ -34,7 +34,7 @@ MonoBehaviour:
     spawnAheadOfLimit: 4
     composition:
     - archetypeId: basic_infected
-      count: 5
+      count: 4
     - archetypeId: runner
       count: 2
   - sectionId: section_03
@@ -47,12 +47,14 @@ MonoBehaviour:
     - archetypeId: basic_infected
       count: 5
     - archetypeId: runner
-      count: 3
+      count: 4
   objectives:
-  - objectiveId: clear_all_sections
-    title: Clear All Sections
-    objectiveType: 0
+  - objectiveId: destroy_barricades
+    title: Destroy the Barricades
+    objectiveType: 2
     required: 1
+    requiredTargetCount: 2
+    targetHealth: 6
   reward:
     coins: 30
     supplies: 5

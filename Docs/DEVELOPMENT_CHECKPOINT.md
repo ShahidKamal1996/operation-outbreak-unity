@@ -1841,3 +1841,89 @@ in TearDown. **Real Unity EditMode execution is still required.**
 16. Console clean during normal gameplay and during the debug select loop (the only
     expected logs are the intentional `[1X]` progression/recorder logs).
 
+
+## What Milestone 1X.5 delivered
+
+Chapter 1 Missions 1-5 gameplay differentiation — each mission now differs by
+objective/interaction type, NOT only by enemy count. The tagged objective
+architecture is extended (single completion authority `MissionObjectiveController`
+preserved; no second victory path).
+
+### Objective types added (enum + data + runtime)
+
+- `SurviveDuration` (M3): `durationSeconds`; runtime timer advanced by the
+  controller each frame while active + player alive; completes only at duration.
+- `DestroyTargets` (M4): `requiredTargetCount` + `targetHealth`; runtime dedupes
+  destroyed target ids; completes only when enough distinct targets destroyed.
+- `ActivateTargets` (M5): `requiredTargetCount` + `activationDuration` +
+  `activationRadius` + `resetProgressOnLeave`; runtime dedupes activated ids.
+- Sequencing: `activateAfterObjectiveId` keeps an objective inactive until its
+  prerequisite completes (M5 clear -> activate -> defend).
+
+### Runtime components added (minimal, 1Y-extensible)
+
+- `MissionObjectiveTargetEvents` — static hub between world targets and the
+  objective authority.
+- `BarricadeTarget` (M4) — `IDamageable` barricade; reuses the existing
+  projectile damage path (`Projectile.SphereCast` -> `FindDamageable` ->
+  `TakeDamage`) with NO weapon change except a gated forward-fire when barricades
+  exist (`ObjectiveTargetAimProvider`; missions without barricades byte-identical).
+- `ActivationObjectiveTarget` (M5) — radius hold-to-activate point.
+- `MissionObjectiveWorldDirector` — spawns barricades/activation points from the
+  active mission's objective data at authored positions; enables activation points
+  only when their stage is active.
+- `SurvivalReinforcementDirector` — keeps pressure during a hold via the existing
+  `EnemySpawner.SpawnEnemyWithDefinition` (no parallel spawn system).
+- `ObjectiveHud` — prototype readout (SURVIVE / BARRICADES / ACTIVATE / SECTIONS).
+
+### Mission behaviour
+
+- M1 Outbreak: intro clear-all-sections (unchanged).
+- M2 First Contact: ClearAllSections but RUNNER-heavy (>=5 runners) for pace.
+- M3 Holding the Line: required SurviveDuration (25s); the player reaches the
+  final (hold) section, then must survive while reinforcements spawn. Killing
+  enemies cannot bypass the timer.
+- M4 Pushback: required DestroyTargets (2 barricades, 6 HP each); the player
+  destroys barricades while enemies attack. Killing enemies cannot complete it.
+- M5 Containment: sequenced Clear -> Activate(2 points) -> Survive(20s). The
+  player clears, then activates control points by standing in them, then defends.
+  Killing enemies alone cannot complete it.
+
+Enemy totals stay monotonically increasing (12/14/16/19/21) so the 1X escalation
+test still holds. Verified systems (camera, Toon Soldier, combat, Runner,
+ragdoll, upgrades, environment, lighting, URP, 1X progression/selection/persistence)
+are unchanged.
+
+### Validation performed (NOT a Unity run)
+
+No Unity Editor in the Arena sandbox — the EditMode suite was NOT executed. Static
+review: braces balanced; braces balanced on all new/modified scripts; all new
+script GUIDs match scene/.meta cross-references; the runtime API extensions
+preserve the existing ClearAllSections contract (existing tests untouched); the
+weapon forward-fire is gated on `ActiveDamageableCount > 0`. +25 focused EditMode
+tests in `MissionObjectiveTypesTests` (objective-data validation, survive/destroy/
+activate runtime semantics, barricade component damage+event, committed M1-M5
+objective configs). **The differentiation gameplay (survival timer, barricade
+destruction, activation hold) requires real Play Mode manual verification.**
+
+## Manual Unity QA checklist for 1X.5
+
+1. Project compiles 0 errors; full EditMode suite passes (~397 = ~372 prior + 25).
+2. `Tools > Operation Outbreak > Validate Mission Definitions` -> PASS (all 10,
+   including the new SurviveDuration/DestroyTargets/ActivateTargets data).
+3. **M1**: standard clear; feels like the intro.
+4. **M2**: noticeably faster/aggressive due to Runner pressure (6 runners).
+5. **M3**: the `ObjectiveHud` shows "SURVIVE 25s"; reach the final section, then
+   HOLD - confirm the timer counts down, reinforcements keep spawning, and killing
+   every enemy does NOT end the mission until the timer elapses. Dying = Game Over.
+6. **M4**: the HUD shows "BARRICADES 0/2"; 2 barricade slabs block the lane; the
+   weapon fires at them (forward when no zombie, or through to zombies beyond);
+   destroy both to complete. Killing all enemies alone does NOT complete M4.
+7. **M5**: HUD shows "SECTIONS" then "ACTIVATE 0/2" then "SURVIVE"; clear the
+   infected, walk into + hold the 2 activation pillars (they tint as they fill),
+   then survive the defense phase. Each stage unlocks the next; kills alone never
+   complete it.
+8. M6-M10 still play as before (Clear); progression M1->...->M5->M6 and rewards
+   unchanged; replay works; PlayerPrefs persistence works.
+9. Toon Soldier walk+shoot, Runner, ragdoll, upgrades, camera, lighting,
+   environment, URP all unchanged; console clean.
