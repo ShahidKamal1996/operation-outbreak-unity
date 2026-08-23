@@ -17,13 +17,35 @@ MonoBehaviour:
   sequenceType: 0
   beats:
   - beatType: 2
-    dialogue: {fileID: 0}
+    dialogue:
+      lineId: 
+      speakerId: 
+      text: 
+      voiceClip: {fileID: 0}
+      durationOverride: 0
+      isRadio: 0 
+      speakerId: 
+      text: 
+      voiceClip: {fileID: 0}
+      durationOverride: 0
+      isRadio: 0
     autoAdvance: 1
     duration: 0
     cueId: 
     cuePolicy: 0
   - beatType: 4
-    dialogue: {fileID: 0}
+    dialogue:
+      lineId: 
+      speakerId: 
+      text: 
+      voiceClip: {fileID: 0}
+      durationOverride: 0
+      isRadio: 0 
+      speakerId: 
+      text: 
+      voiceClip: {fileID: 0}
+      durationOverride: 0
+      isRadio: 0
     autoAdvance: 1
     duration: 0
     cueId: establishing_shot
@@ -41,13 +63,35 @@ MonoBehaviour:
     cueId: 
     cuePolicy: 0
   - beatType: 5
-    dialogue: {fileID: 0}
+    dialogue:
+      lineId: 
+      speakerId: 
+      text: 
+      voiceClip: {fileID: 0}
+      durationOverride: 0
+      isRadio: 0 
+      speakerId: 
+      text: 
+      voiceClip: {fileID: 0}
+      durationOverride: 0
+      isRadio: 0
     autoAdvance: 1
     duration: 0
     cueId: helicopter_approach
     cuePolicy: 0
   - beatType: 1
-    dialogue: {fileID: 0}
+    dialogue:
+      lineId: 
+      speakerId: 
+      text: 
+      voiceClip: {fileID: 0}
+      durationOverride: 0
+      isRadio: 0 
+      speakerId: 
+      text: 
+      voiceClip: {fileID: 0}
+      durationOverride: 0
+      isRadio: 0
     autoAdvance: 1
     duration: 2
     cueId: 
@@ -89,13 +133,35 @@ MonoBehaviour:
     cueId: 
     cuePolicy: 0
   - beatType: 1
-    dialogue: {fileID: 0}
+    dialogue:
+      lineId: 
+      speakerId: 
+      text: 
+      voiceClip: {fileID: 0}
+      durationOverride: 0
+      isRadio: 0 
+      speakerId: 
+      text: 
+      voiceClip: {fileID: 0}
+      durationOverride: 0
+      isRadio: 0
     autoAdvance: 1
     duration: 1
     cueId: 
     cuePolicy: 0
   - beatType: 5
-    dialogue: {fileID: 0}
+    dialogue:
+      lineId: 
+      speakerId: 
+      text: 
+      voiceClip: {fileID: 0}
+      durationOverride: 0
+      isRadio: 0 
+      speakerId: 
+      text: 
+      voiceClip: {fileID: 0}
+      durationOverride: 0
+      isRadio: 0
     autoAdvance: 1
     duration: 0
     cueId: helicopter_insert
@@ -137,19 +203,52 @@ MonoBehaviour:
     cueId: 
     cuePolicy: 0
   - beatType: 4
-    dialogue: {fileID: 0}
+    dialogue:
+      lineId: 
+      speakerId: 
+      text: 
+      voiceClip: {fileID: 0}
+      durationOverride: 0
+      isRadio: 0 
+      speakerId: 
+      text: 
+      voiceClip: {fileID: 0}
+      durationOverride: 0
+      isRadio: 0
     autoAdvance: 1
     duration: 0
     cueId: gameplay_handoff
     cuePolicy: 1
   - beatType: 5
-    dialogue: {fileID: 0}
+    dialogue:
+      lineId: 
+      speakerId: 
+      text: 
+      voiceClip: {fileID: 0}
+      durationOverride: 0
+      isRadio: 0 
+      speakerId: 
+      text: 
+      voiceClip: {fileID: 0}
+      durationOverride: 0
+      isRadio: 0
     autoAdvance: 1
     duration: 0
     cueId: helicopter_depart
     cuePolicy: 0
   - beatType: 3
-    dialogue: {fileID: 0}
+    dialogue:
+      lineId: 
+      speakerId: 
+      text: 
+      voiceClip: {fileID: 0}
+      durationOverride: 0
+      isRadio: 0 
+      speakerId: 
+      text: 
+      voiceClip: {fileID: 0}
+      durationOverride: 0
+      isRadio: 0
     autoAdvance: 1
     duration: 0
     cueId: 
