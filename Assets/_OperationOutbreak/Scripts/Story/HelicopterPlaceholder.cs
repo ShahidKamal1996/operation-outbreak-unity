@@ -68,6 +68,15 @@ namespace OperationOutbreak.Story
             }
         }
 
+        /// <summary>Instantly hides the helicopter (skip / handoff safety). Idempotent.</summary>
+        public void HideNow()
+        {
+            _moving = false;
+            _departed = false;
+            transform.position = new Vector3(0f, -500f, 0f);
+            _targetPos = transform.position;
+        }
+
         private void Update()
         {
             _rotorSpin += Time.deltaTime * 1200f;

@@ -182,6 +182,30 @@ MonoBehaviour:
       isRadio: 0
     autoAdvance: 1
     duration: 0
+    cueId: m01_interior_fade_out
+    cuePolicy: 0
+  - beatType: 1
+    dialogue:
+      lineId: 
+      speakerId: 
+      text: 
+      voiceClip: {fileID: 0}
+      durationOverride: 0
+      isRadio: 0
+    autoAdvance: 1
+    duration: 0.7
+    cueId: 
+    cuePolicy: 0
+  - beatType: 5
+    dialogue:
+      lineId: 
+      speakerId: 
+      text: 
+      voiceClip: {fileID: 0}
+      durationOverride: 0
+      isRadio: 0
+    autoAdvance: 1
+    duration: 0
     cueId: m01_interior_teardown
     cuePolicy: 1
   - beatType: 4
@@ -208,6 +232,18 @@ MonoBehaviour:
     duration: 0
     cueId: helicopter_approach
     cuePolicy: 0
+  - beatType: 5
+    dialogue:
+      lineId: 
+      speakerId: 
+      text: 
+      voiceClip: {fileID: 0}
+      durationOverride: 0
+      isRadio: 0
+    autoAdvance: 1
+    duration: 0
+    cueId: m01_fade_in
+    cuePolicy: 0
   - beatType: 1
     dialogue:
       lineId: 
@@ -217,7 +253,7 @@ MonoBehaviour:
       durationOverride: 0
       isRadio: 0
     autoAdvance: 1
-    duration: 3
+    duration: 2.5
     cueId: 
     cuePolicy: 0
   - beatType: 5

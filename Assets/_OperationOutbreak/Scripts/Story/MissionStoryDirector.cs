@@ -9,9 +9,22 @@ using UnityEngine;
 namespace OperationOutbreak.Story
 {
     /// <summary>
-    /// Milestone 1Z.1 QA fix #7 — revised director for M1's helicopter interior opening.
-    /// Creates interior rig + cinematic Kane on m01_interior_setup. Manages HUD visibility.
-    /// Interior is at y=-300 (far below gameplay). Transition to exterior via cues.
+    /// Milestone 1Z.1 QA fix #8 — director for Mission 01's helicopter interior opening.
+    ///
+    /// Owns the interior rig lifecycle, the cinematic fade (so the camera never visibly travels
+    /// between the gameplay world and the y=-300 interior), HUD visibility, and the real/cinematic
+    /// Kane swap. The interior uses a VISUAL-ONLY clone of the production Toon Soldier (same model,
+    /// material, avatar, controller) so the player recognises "that is my Kane"; the authoritative
+    /// gameplay Player is simply hidden during the briefing and re-shown at insertion.
+    ///
+    /// Cue flow (see Chapter01_Mission01_Opening.asset):
+    ///   m01_interior_setup (black + build + clone Kane + hide player)
+    ///   -> m01_interior_kane (camera snap + fade IN, revealing seated Kane)
+    ///   -> interior dialogue + reframes
+    ///   -> m01_interior_fade_out -> Wait -> m01_interior_teardown -> m01_exterior_approach (snap)
+    ///   -> helicopter_approach -> m01_fade_in (reveal exterior) -> helicopter_insert
+    ///   -> m01_insertion -> m01_player_grounded (real Kane on ground) -> gameplay_handoff
+    ///   -> helicopter_depart -> GameplayUnlock
     /// </summary>
     [DisallowMultipleComponent]
     public sealed class MissionStoryDirector : MonoBehaviour
@@ -24,6 +37,7 @@ namespace OperationOutbreak.Story
         private StoryCameraController _storyCam;
         private HelicopterPlaceholder _heli;
         private HelicopterInteriorRig _interiorRig;
+        private StoryFadeController _fade;
         private StoryHudVisibilityController _hudCtrl;
         private MissionSectionController _sections;
         private MissionCompleteController _resultCtrl;
@@ -37,6 +51,10 @@ namespace OperationOutbreak.Story
 
         // Interior rig world position — far from gameplay lane, invisible from gameplay camera.
         private static readonly Vector3 InteriorWorldPos = new Vector3(0f, -300f, 0f);
+
+        // Fade durations (short, cinematic).
+        private const float EntryFadeIn = 0.9f;
+        private const float ExitFade = 0.6f;
 
         private void Awake()
         {
@@ -59,12 +77,12 @@ namespace OperationOutbreak.Story
             _openingSeq = Resources.Load<StorySequenceDefinition>("StorySequences/Chapter01_Mission01_Opening");
             _outroSeq = Resources.Load<StorySequenceDefinition>("StorySequences/Chapter01_Mission01_Outro");
 
-            // HUD visibility controller
+            // HUD visibility controller.
             _hudCtrl = new GameObject("[Story] HudVisibility").AddComponent<StoryHudVisibilityController>();
             _hudCtrl.transform.SetParent(transform, false);
 
-            // Subscribe to cue events for interior/exterior management
             StoryCueEvents.EventCue += OnEventCue;
+            StoryCueEvents.CameraCue += OnCameraCue;
         }
 
         private void OnEnable()
@@ -96,11 +114,13 @@ namespace OperationOutbreak.Story
             }
             if (_spawner != null) _spawner.EncounterCompleted -= OnEncounterCompleted;
             StoryCueEvents.EventCue -= OnEventCue;
+            StoryCueEvents.CameraCue -= OnCameraCue;
         }
 
         private void OnDestroy()
         {
             StoryCueEvents.EventCue -= OnEventCue;
+            StoryCueEvents.CameraCue -= OnCameraCue;
         }
 
         private void Update()
@@ -126,43 +146,73 @@ namespace OperationOutbreak.Story
             }
         }
 
-        // ---- Cue event handler for interior/exterior management ----
+        // ---- Camera cue handler (fade triggers only; framing lives in StoryCameraController) ----
+
+        private void OnCameraCue(string cueId)
+        {
+            // Reveal the interior: the camera has already snapped to the first anchor; fade in.
+            if (cueId == "m01_interior_kane" && _fade != null)
+                _fade.FadeFromBlack(EntryFadeIn);
+        }
+
+        // ---- Event cue handler (rig / fade / helicopter / Kane swap) ----
 
         private void OnEventCue(string cueId)
         {
             switch (cueId)
             {
                 case "m01_interior_setup":
+                {
+                    // Cover the screen BEFORE any visible frame, then build + clone + hide player.
+                    if (_fade != null) _fade.SetBlackInstant();
+                    Transform sourceVisual = ResolveSourceKaneVisual();
                     if (_interiorRig == null)
                     {
                         _interiorRig = new GameObject("[Story] M01 Interior").AddComponent<HelicopterInteriorRig>();
                         _interiorRig.transform.SetParent(transform, false);
                     }
-                    _interiorRig.Setup(InteriorWorldPos);
+                    _interiorRig.Setup(InteriorWorldPos, sourceVisual);
                     if (_storyCam != null) _storyCam.SetInteriorRig(_interiorRig);
-                    // Hide the real player during cinematic
                     if (_player != null) _player.gameObject.SetActive(false);
+                    Debug.Log("[STORY M01] Interior setup behind black: cabin built, Kane cloned, real player hidden.");
+                    break;
+                }
+
+                case "m01_interior_fade_out":
+                    if (_fade != null) _fade.FadeToBlack(ExitFade);
                     break;
 
                 case "m01_interior_teardown":
                     if (_interiorRig != null) _interiorRig.Teardown();
                     break;
 
+                case "m01_fade_in":
+                    if (_fade != null) _fade.FadeFromBlack(ExitFade);
+                    break;
+
                 case "m01_player_grounded":
-                    // Show the real player at insertion point
+                    // Show the real, authoritative player at the insertion point.
                     if (_player != null)
                     {
                         _player.gameObject.SetActive(true);
                         _player.position = new Vector3(0f, 1f, 0f);
                     }
                     if (_interiorRig != null) _interiorRig.Teardown();
-                    Debug.Log("[STORY M01] Kane insertion complete.");
+                    Debug.Log("[STORY M01] Kane insertion complete — real player grounded.");
                     break;
 
                 case "helicopter_approach":
                     Debug.Log("[STORY M01] Transitioning to exterior approach.");
                     break;
             }
+        }
+
+        /// <summary>The live gameplay Toon Soldier transform to clone for the cinematic Kane.</summary>
+        private Transform ResolveSourceKaneVisual()
+        {
+            if (_player == null) return null;
+            var animator = _player.GetComponentInChildren<Animator>();
+            return animator != null ? animator.transform : _player;
         }
 
         // ---- Story flow callbacks ----
@@ -182,12 +232,18 @@ namespace OperationOutbreak.Story
                 if (_player != null && !_player.gameObject.activeSelf)
                     _player.gameObject.SetActive(true);
                 if (_interiorRig != null) _interiorRig.Teardown();
-                Debug.Log("[STORY M01] Gameplay handoff complete.");
+                if (_fade != null) _fade.ClearInstant();   // never leave a black screen
+                // On a normal finish the helicopter_depart beat already started a graceful fly-away
+                // (the placeholder hides itself on reaching its depart point). Only on a SKIP do we
+                // yank it instantly so no stray helicopter lingers over gameplay.
+                if (skipped && _heli != null) _heli.HideNow();
+                Debug.Log("[STORY M01] Opening complete -> gameplay (skip=" + skipped + ").");
             }
             else if (seq == _outroSeq)
             {
                 _phase = Phase.Done;
                 if (_resultCtrl != null) _resultCtrl.ReleaseResultDisplay();
+                if (_fade != null) _fade.ClearInstant();
                 Debug.Log("[STORY M01] Outro complete -> result UI.");
             }
         }
@@ -220,6 +276,13 @@ namespace OperationOutbreak.Story
             {
                 _heli = new GameObject("[Story] HelicopterPlaceholder").AddComponent<HelicopterPlaceholder>();
                 _heli.transform.SetParent(transform, false);
+            }
+
+            _fade = FindAnyObjectByType<StoryFadeController>();
+            if (_fade == null)
+            {
+                _fade = new GameObject("[Story] FadeController").AddComponent<StoryFadeController>();
+                _fade.transform.SetParent(transform, false);
             }
         }
 
