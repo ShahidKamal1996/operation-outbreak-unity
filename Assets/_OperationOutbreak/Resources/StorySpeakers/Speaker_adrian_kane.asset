@@ -9,7 +9,7 @@ MonoBehaviour:
   m_GameObject: {fileID: 0}
   m_Enabled: 1
   m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 082c21dd74934e0d8b6f071c75fd17ea, type: 3}
+  m_Script: {fileID: 11500000, guid: a0e5ad8081a74a4a96de517ec189198a, type: 3}
   m_Name: Speaker_adrian_kane
   m_EditorClassIdentifier: 
   speakerId: adrian_kane

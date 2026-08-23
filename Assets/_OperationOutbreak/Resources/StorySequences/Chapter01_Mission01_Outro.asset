@@ -9,7 +9,7 @@ MonoBehaviour:
   m_GameObject: {fileID: 0}
   m_Enabled: 1
   m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 082c21dd74934e0d8b6f071c75fd17ea, type: 3}
+  m_Script: {fileID: 11500000, guid: dcbaf2a5d5d545f294e3898af6bf1308, type: 3}
   m_Name: Chapter01_Mission01_Outro
   m_EditorClassIdentifier: 
   sequenceId: chapter01_mission01_outro
