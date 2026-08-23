@@ -66,6 +66,9 @@ namespace OperationOutbreak.Enemies
 
         public int CurrentHealth { get; private set; }
         public bool IsAlive => CurrentHealth > 0;
+
+        /// <summary>1X.5 QA fix #1 - true once SuspendCombat has frozen this enemy.</summary>
+        public bool IsCombatSuspended => _combatSuspended;
         public event Action<ZombieController> Died;
 
         /// <summary>

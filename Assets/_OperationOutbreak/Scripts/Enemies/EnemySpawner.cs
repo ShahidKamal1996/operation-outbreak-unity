@@ -110,6 +110,12 @@ namespace OperationOutbreak.Enemies
         public bool IsEncounterComplete => _encounterComplete;
 
         /// <summary>
+        /// 1X.5 QA fix #1 - true once StopEncounter/CancelEncounter has frozen all combat (success
+        /// or death). No further spawning or enemy chasing/attacking can occur.
+        /// </summary>
+        public bool IsCombatStopped => _cancelled;
+
+        /// <summary>
         /// Milestone 1O - read-only view of the authored spawn clearance radius, so the
         /// diagnostics overlap check measures against the same number the spawner used
         /// rather than a hard-coded copy.
@@ -244,6 +250,13 @@ namespace OperationOutbreak.Enemies
         public ZombieController SpawnEnemyWithDefinition(
             EnemyArchetypeDefinition definition, Vector3 position)
         {
+            // 1X.5 QA fix #1 - refuse to spawn after the encounter has ended (success or death),
+            // so no reinforcement can appear after Mission Complete / Game Over.
+            if (_cancelled || _encounterComplete)
+            {
+                return null;
+            }
+
             if (zombiePrefab == null)
             {
                 Debug.LogError("[1S] No shared enemy prefab assigned to the spawner.", this);
@@ -527,6 +540,16 @@ namespace OperationOutbreak.Enemies
 
             _encounterComplete = true;
             Debug.Log("Encounter complete", this);
+
+            // 1X.5 QA fix #1 - AUTHORITATIVE combat shutdown on success. StopEncounter freezes
+            // every living enemy (SuspendCombat), stops all spawn coroutines, and sets _cancelled so
+            // no further spawning (sections OR reinforcements) can occur - BEFORE the event fires,
+            // so every EncounterCompleted observer (Mission Complete UI, reward service, etc.) sees
+            // a fully inert encounter. Previously this was delegated to MissionCompleteController via
+            // the event chain; now the encounter authority owns it. MissionCompleteController's own
+            // StopEncounter call is now a harmless repeat.
+            StopEncounter();
+
             EncounterCompleted?.Invoke();
         }
         /// <summary>Returns the retained target when valid, otherwise closest living zombie generally ahead.</summary>
@@ -584,6 +607,16 @@ namespace OperationOutbreak.Enemies
             _cancelled = true;
             _sectionRunning = false;
             StopAllCoroutines();
+
+            // 1X.5 QA fix #1 - freeze all living enemies on Game Over too (consistent encounter
+            // termination): they stop chasing/attacking the dead player. They remain visible.
+            foreach (ZombieController zombie in _activeEnemies)
+            {
+                if (zombie != null)
+                {
+                    zombie.SuspendCombat();
+                }
+            }
         }
         private void UnsubscribeAll()
         {

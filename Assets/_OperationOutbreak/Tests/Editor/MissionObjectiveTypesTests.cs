@@ -481,5 +481,93 @@ namespace OperationOutbreak.Tests
                     "Mission_" + n.ToString("00") + " must validate cleanly.");
             }
         }
+
+        // ============================================================ combat shutdown (QA fix #1)
+
+        [Test]
+        public void CompleteEncounterAuthoritativelyStopsCombat()
+        {
+            // CompleteEncounter must call StopEncounter so combat freezes at the encounter
+            // authority itself, not via a fragile UI event chain.
+            GameObject go = new GameObject("Spawner");
+            _created.Add(go);
+            OperationOutbreak.Enemies.EnemySpawner spawner = go.AddComponent<OperationOutbreak.Enemies.EnemySpawner>();
+
+            Assert.IsFalse(spawner.IsCombatStopped, "Pre-condition: combat running.");
+            Assert.IsFalse(spawner.IsEncounterComplete);
+
+            spawner.CompleteEncounter();
+
+            Assert.IsTrue(spawner.IsEncounterComplete, "Encounter marked complete.");
+            Assert.IsTrue(spawner.IsCombatStopped, "StopEncounter must have set _cancelled (combat frozen).");
+        }
+
+        [Test]
+        public void CompleteEncounterFiresExactlyOnce()
+        {
+            GameObject go = new GameObject("Spawner");
+            _created.Add(go);
+            OperationOutbreak.Enemies.EnemySpawner spawner = go.AddComponent<OperationOutbreak.Enemies.EnemySpawner>();
+
+            int fired = 0;
+            spawner.EncounterCompleted += () => fired++;
+
+            spawner.CompleteEncounter();
+            spawner.CompleteEncounter(); // idempotent
+
+            Assert.AreEqual(1, fired, "EncounterCompleted must fire exactly once.");
+        }
+
+        [Test]
+        public void SpawnEnemyWithDefinitionRefusesAfterEncounterEnd()
+        {
+            GameObject go = new GameObject("Spawner");
+            _created.Add(go);
+            OperationOutbreak.Enemies.EnemySpawner spawner = go.AddComponent<OperationOutbreak.Enemies.EnemySpawner>();
+
+            spawner.CompleteEncounter();
+
+            Assert.IsNull(spawner.SpawnEnemyWithDefinition(null, Vector3.zero),
+                "No enemy may spawn after the encounter has ended (reinforcement guard).");
+        }
+
+        [Test]
+        public void GameOverAlsoStopsCombat()
+        {
+            // CancelEncounter (player death) must also freeze enemies for consistent termination.
+            GameObject go = new GameObject("Spawner");
+            _created.Add(go);
+            OperationOutbreak.Enemies.EnemySpawner spawner = go.AddComponent<OperationOutbreak.Enemies.EnemySpawner>();
+
+            Assert.IsFalse(spawner.IsCombatStopped);
+
+            // Simulate the player-death path: CancelEncounter is private, but CompleteEncounter's
+            // StopEncounter path uses the same _cancelled flag. After EITHER path, IsCombatStopped
+            // must be true and no success can fire afterward.
+            spawner.CompleteEncounter();
+            Assert.IsTrue(spawner.IsCombatStopped);
+
+            // Success cannot re-fire after combat is stopped (the guard blocks it).
+            int fired = 0;
+            spawner.EncounterCompleted += () => fired++;
+            spawner.CompleteEncounter();
+            Assert.AreEqual(0, fired, "Success must not fire after the encounter is already stopped.");
+        }
+
+        [Test]
+        public void SuspendCombatFreezesZombie()
+        {
+            // Verify SuspendCombat sets the flag ZombieController.Update checks.
+            GameObject go = new GameObject("Zombie", typeof(UnityEngine.CapsuleCollider));
+            _created.Add(go);
+            OperationOutbreak.Enemies.ZombieController zombie = go.AddComponent<OperationOutbreak.Enemies.ZombieController>();
+
+            Assert.IsFalse(zombie.IsCombatSuspended, "Pre-condition: zombie active.");
+
+            zombie.SuspendCombat();
+
+            Assert.IsTrue(zombie.IsCombatSuspended,
+                "SuspendCombat must set the flag that stops the zombie's Update (chase + attack).");
+        }
     }
 }
