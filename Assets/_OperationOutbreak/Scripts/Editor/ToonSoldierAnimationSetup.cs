@@ -179,31 +179,20 @@ namespace OperationOutbreak.EditorTools
             ConfigureUpperBodyMask(upperBodyMask);
 
             // Shoot layer: weight 1, Override blending, masked to the upper body.
-            AnimatorStateMachine shootMachine = new AnimatorStateMachine
-            {
-                name = ShootLayerName,
-            };
+            // 1Z.1 QA fix #4 — create the layer via controller.AddLayer(name) so Unity's
+            // NATIVE API creates and persists the layer's AnimatorStateMachine. The previous
+            // approach (new AnimatorStateMachine() + AddObjectToAsset) created a C# object that
+            // serialized but was not fully initialized as a native sub-asset, causing
+            // "Statemachine for layer 'Shoot Layer' is missing" after a clean Library import.
+            controller.AddLayer(ShootLayerName);
 
-            // QA fix #12B (persistence) - a LAYER state machine is a separate Unity
-            // object: it MUST be added as a sub-asset of the controller, otherwise it
-            // exists only in memory and the serialized layer keeps
-            // m_StateMachine: {fileID: 0}. That is exactly why Unity logged
-            // "Statemachine for layer 'Shoot Layer' is missing" after every
-            // editor/domain reload and scene restore. HideInHierarchy keeps it from
-            // appearing as a stray asset in the Project window (Unity's documented
-            // pattern for nested state machines).
-            shootMachine.hideFlags = HideFlags.HideInHierarchy;
-            AssetDatabase.AddObjectToAsset(shootMachine, controller);
+            AnimatorControllerLayer shootLayer = controller.layers[controller.layers.Length - 1];
+            shootLayer.defaultWeight = 1f;
+            shootLayer.blendingMode = AnimatorLayerBlendingMode.Override;
+            shootLayer.avatarMask = upperBodyMask;
 
-            AnimatorControllerLayer shootLayer = new AnimatorControllerLayer
-            {
-                name = ShootLayerName,
-                stateMachine = shootMachine,
-                defaultWeight = 1f,
-                blendingMode = AnimatorLayerBlendingMode.Override,
-                avatarMask = upperBodyMask,
-            };
-            controller.AddLayer(shootLayer);
+            // The state machine was created natively by AddLayer — no manual instantiation.
+            AnimatorStateMachine shootMachine = shootLayer.stateMachine;
 
             // Empty default state: under the mask, an empty state leaves the upper body
             // in the base-layer pose, so idle/run show normally when not firing.
