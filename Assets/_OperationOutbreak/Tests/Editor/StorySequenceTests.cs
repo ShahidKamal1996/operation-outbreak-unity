@@ -236,5 +236,60 @@ namespace OperationOutbreak.Tests
             lockAuth.ForceUnlock();
             Assert.IsFalse(lockAuth.IsLocked, "ForceUnlock releases all.");
         }
+
+        // ---- cinematic vs permanent lock separation (QA fix #3) ----
+
+        [Test]
+        public void PermanentMovementSuspensionIsNotUndoneByCinematicUnlock()
+        {
+            // The cinematic flag is separate from the permanent _movementSuspended flag.
+            // SuspendMovement (permanent) + cinematic Lock + cinematic Unlock → movement
+            // should still be locked (permanent flag still set).
+            GameObject playerGo = new GameObject("Player");
+            _created.Add(playerGo);
+            OperationOutbreak.Player.PlayerController player = playerGo.AddComponent<OperationOutbreak.Player.PlayerController>();
+
+            player.SuspendMovement(); // permanent (Mission Complete)
+            Assert.IsTrue(player.IsMovementLocked);
+
+            player.SetCinematicMovementLock(true); // cinematic
+            Assert.IsTrue(player.IsMovementLocked);
+
+            player.SetCinematicMovementLock(false); // cinematic unlock
+            Assert.IsTrue(player.IsMovementLocked, "Permanent movement suspension must NOT be cleared by cinematic unlock.");
+        }
+
+        [Test]
+        public void PermanentFiringSuspensionIsNotUndoneByCinematicUnlock()
+        {
+            GameObject weaponGo = new GameObject("Weapon");
+            _created.Add(weaponGo);
+            OperationOutbreak.Weapons.WeaponController weapon = weaponGo.AddComponent<OperationOutbreak.Weapons.WeaponController>();
+
+            weapon.SuspendFiring(); // permanent
+            Assert.IsTrue(weapon.IsFiringLocked);
+
+            weapon.SetCinematicFiringLock(true); // cinematic
+            Assert.IsTrue(weapon.IsFiringLocked);
+
+            weapon.SetCinematicFiringLock(false); // cinematic unlock
+            Assert.IsTrue(weapon.IsFiringLocked, "Permanent firing suspension must NOT be cleared by cinematic unlock.");
+        }
+
+        [Test]
+        public void CinematicLockAloneResumesOnUnlock()
+        {
+            GameObject playerGo = new GameObject("Player");
+            _created.Add(playerGo);
+            OperationOutbreak.Player.PlayerController player = playerGo.AddComponent<OperationOutbreak.Player.PlayerController>();
+
+            Assert.IsFalse(player.IsMovementLocked);
+
+            player.SetCinematicMovementLock(true);
+            Assert.IsTrue(player.IsMovementLocked);
+
+            player.SetCinematicMovementLock(false);
+            Assert.IsFalse(player.IsMovementLocked, "Cinematic lock alone should fully release on unlock.");
+        }
     }
 }

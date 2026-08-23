@@ -65,6 +65,7 @@ namespace OperationOutbreak.Player
         private float _groundY;
         private bool _isDead;
         private bool _movementSuspended;
+        private bool _cinematicMovementLock;
 
         private void Reset()
         {
@@ -136,6 +137,24 @@ namespace OperationOutbreak.Player
         }
 
         /// <summary>
+        /// 1Z QA fix #3 - TEMPORARY cinematic movement lock. Separate from the permanent
+        /// SuspendMovement used by Mission Complete / Game Over. Both must be clear for
+        /// movement to work. Reversible: call with false to release the cinematic lock.
+        /// </summary>
+        public void SetCinematicMovementLock(bool locked)
+        {
+            _cinematicMovementLock = locked;
+            if (locked)
+            {
+                _velocity = Vector3.zero;
+                _smoothingVelocity = Vector3.zero;
+            }
+        }
+
+        /// <summary>True while the permanent or cinematic movement lock is active.</summary>
+        public bool IsMovementLocked => _movementSuspended || _cinematicMovementLock;
+
+        /// <summary>
         /// Milestone 1L - runtime-only movement speed upgrade (MOVE SPEED +15% gate).
         ///
         /// Scales the two authored speeds this ONE controller already uses, so there is
@@ -159,7 +178,7 @@ namespace OperationOutbreak.Player
 
         private void Update()
         {
-            if (_movementSuspended || _isDead)
+            if (_movementSuspended || _isDead || _cinematicMovementLock)
             {
                 return;
             }

@@ -84,8 +84,10 @@ namespace OperationOutbreak.Story
 
         private void ApplyLock()
         {
-            if (playerController != null) playerController.SuspendMovement();
-            if (weaponController != null) weaponController.SuspendFiring();
+            // 1Z QA fix #3 - use TEMPORARY cinematic flags (separate from the permanent
+            // SuspendMovement / SuspendFiring used by Mission Complete / Game Over).
+            if (playerController != null) playerController.SetCinematicMovementLock(true);
+            if (weaponController != null) weaponController.SetCinematicFiringLock(true);
 
             // 1Z QA fix #2 - also freeze enemies + pause spawning so they can't attack during
             // the cinematic. This is TEMPORARY (the encounter is NOT ended/cancelled).
@@ -94,8 +96,12 @@ namespace OperationOutbreak.Story
 
         private void RestoreGameplay()
         {
-            if (playerController != null) playerController.enabled = true;
-            if (weaponController != null) weaponController.enabled = true;
+            // 1Z QA fix #3 - release the TEMPORARY cinematic flags. The permanent flags
+            // (_movementSuspended / _firingSuspended from Mission Complete, _isDead /
+            // _isOwnerDead from Game Over) are NOT touched here — if the encounter ended
+            // during the cinematic, the permanent flags stay set and gameplay stays stopped.
+            if (playerController != null) playerController.SetCinematicMovementLock(false);
+            if (weaponController != null) weaponController.SetCinematicFiringLock(false);
 
             // 1Z QA fix #2 - resume enemies + unpause spawning, but ONLY if the encounter is
             // still active. The EnemySpawner guards against resuming after encounter end.

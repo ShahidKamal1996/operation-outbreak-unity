@@ -78,6 +78,7 @@ namespace OperationOutbreak.Weapons
         private int _baseDamage;
         private bool _isOwnerDead;
         private bool _firingSuspended;
+        private bool _cinematicFiringLock;
         private ZombieController _currentTarget;
         private Vector3 _aimDirection = Vector3.forward;
         private float _nextTargetRefreshTime;
@@ -122,14 +123,29 @@ namespace OperationOutbreak.Weapons
         {
             _firingSuspended = true;
             _currentTarget = null;
-            // No flash cleanup needed here since Milestone 1P: the muzzle flash is spawned
-            // by the presentation layer in response to ShotFired, which simply stops being
-            // raised. Any flash already on screen finishes its own sub-0.1s lifetime.
         }
+
+        /// <summary>
+        /// 1Z QA fix #3 - TEMPORARY cinematic firing lock. Separate from the permanent
+        /// SuspendFiring used by Mission Complete / Game Over. Both must be clear for
+        /// firing to work. Reversible: call with false to release.
+        /// </summary>
+        public void SetCinematicFiringLock(bool locked)
+        {
+            _cinematicFiringLock = locked;
+            if (locked) _currentTarget = null;
+        }
+
+        /// <summary>True while the permanent or cinematic firing lock is active.</summary>
+        public bool IsFiringLocked => _firingSuspended || _cinematicFiringLock;
+
+        // No flash cleanup needed here since Milestone 1P: the muzzle flash is spawned
+        // by the presentation layer in response to ShotFired, which simply stops being
+        // raised. Any flash already on screen finishes its own sub-0.1s lifetime.
 
         private void Update()
         {
-            if (_firingSuspended || _isOwnerDead || muzzlePoint == null || projectilePrefab == null) return;
+            if (_firingSuspended || _isOwnerDead || _cinematicFiringLock || muzzlePoint == null || projectilePrefab == null) return;
             RefreshTarget();
 
             if (_currentTarget == null)
