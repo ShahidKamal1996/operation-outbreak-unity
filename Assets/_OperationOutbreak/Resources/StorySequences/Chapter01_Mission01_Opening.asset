@@ -28,6 +28,18 @@ MonoBehaviour:
     duration: 0
     cueId: 
     cuePolicy: 0
+  - beatType: 5
+    dialogue:
+      lineId: 
+      speakerId: 
+      text: 
+      voiceClip: {fileID: 0}
+      durationOverride: 0
+      isRadio: 0
+    autoAdvance: 1
+    duration: 0
+    cueId: m01_interior_setup
+    cuePolicy: 1
   - beatType: 4
     dialogue:
       lineId: 
@@ -38,19 +50,151 @@ MonoBehaviour:
       isRadio: 0
     autoAdvance: 1
     duration: 0
-    cueId: establishing_shot
+    cueId: m01_interior_kane
     cuePolicy: 1
   - beatType: 0
     dialogue:
       lineId: 
       speakerId: raven_ortiz
-      text: Corridor Seven ahead. No lights. No movement.
+      text: Corridor Seven went silent eleven minutes ago.
       voiceClip: {fileID: 0}
       durationOverride: 0
       isRadio: 0
     autoAdvance: 1
     duration: 1
     cueId: 
+    cuePolicy: 0
+  - beatType: 0
+    dialogue:
+      lineId: 
+      speakerId: sofia_reyes
+      text: Evacuation teams stopped responding at Checkpoint Delta.
+      voiceClip: {fileID: 0}
+      durationOverride: 0
+      isRadio: 1
+    autoAdvance: 1
+    duration: 1
+    cueId: 
+    cuePolicy: 0
+  - beatType: 4
+    dialogue:
+      lineId: 
+      speakerId: 
+      text: 
+      voiceClip: {fileID: 0}
+      durationOverride: 0
+      isRadio: 0
+    autoAdvance: 1
+    duration: 0
+    cueId: m01_interior_kane_close
+    cuePolicy: 0
+  - beatType: 0
+    dialogue:
+      lineId: 
+      speakerId: adrian_kane
+      text: Any survivors?
+      voiceClip: {fileID: 0}
+      durationOverride: 0
+      isRadio: 0
+    autoAdvance: 1
+    duration: 1
+    cueId: 
+    cuePolicy: 0
+  - beatType: 0
+    dialogue:
+      lineId: 
+      speakerId: raven_ortiz
+      text: Unknown. Your job is to reach the checkpoint and find out.
+      voiceClip: {fileID: 0}
+      durationOverride: 0
+      isRadio: 0
+    autoAdvance: 1
+    duration: 1
+    cueId: 
+    cuePolicy: 0
+  - beatType: 1
+    dialogue:
+      lineId: 
+      speakerId: 
+      text: 
+      voiceClip: {fileID: 0}
+      durationOverride: 0
+      isRadio: 0
+    autoAdvance: 1
+    duration: 2
+    cueId: 
+    cuePolicy: 0
+  - beatType: 4
+    dialogue:
+      lineId: 
+      speakerId: 
+      text: 
+      voiceClip: {fileID: 0}
+      durationOverride: 0
+      isRadio: 0
+    autoAdvance: 1
+    duration: 0
+    cueId: m01_interior_front
+    cuePolicy: 0
+  - beatType: 0
+    dialogue:
+      lineId: 
+      speakerId: sofia_reyes
+      text: Kane, once you are on the ground, you are on your own.
+      voiceClip: {fileID: 0}
+      durationOverride: 0
+      isRadio: 1
+    autoAdvance: 1
+    duration: 1
+    cueId: 
+    cuePolicy: 0
+  - beatType: 0
+    dialogue:
+      lineId: 
+      speakerId: raven_ortiz
+      text: Thirty seconds. Gear up.
+      voiceClip: {fileID: 0}
+      durationOverride: 0
+      isRadio: 0
+    autoAdvance: 1
+    duration: 1
+    cueId: 
+    cuePolicy: 0
+  - beatType: 0
+    dialogue:
+      lineId: 
+      speakerId: adrian_kane
+      text: Copy.
+      voiceClip: {fileID: 0}
+      durationOverride: 0
+      isRadio: 0
+    autoAdvance: 1
+    duration: 1
+    cueId: 
+    cuePolicy: 0
+  - beatType: 5
+    dialogue:
+      lineId: 
+      speakerId: 
+      text: 
+      voiceClip: {fileID: 0}
+      durationOverride: 0
+      isRadio: 0
+    autoAdvance: 1
+    duration: 0
+    cueId: m01_interior_teardown
+    cuePolicy: 1
+  - beatType: 4
+    dialogue:
+      lineId: 
+      speakerId: 
+      text: 
+      voiceClip: {fileID: 0}
+      durationOverride: 0
+      isRadio: 0
+    autoAdvance: 1
+    duration: 0
+    cueId: m01_exterior_approach
     cuePolicy: 0
   - beatType: 5
     dialogue:
@@ -73,55 +217,7 @@ MonoBehaviour:
       durationOverride: 0
       isRadio: 0
     autoAdvance: 1
-    duration: 2
-    cueId: 
-    cuePolicy: 0
-  - beatType: 0
-    dialogue:
-      lineId: 
-      speakerId: sofia_reyes
-      text: Kane, Evacuation Corridor Seven went silent eleven minutes ago.
-      voiceClip: {fileID: 0}
-      durationOverride: 0
-      isRadio: 1
-    autoAdvance: 1
-    duration: 1
-    cueId: 
-    cuePolicy: 0
-  - beatType: 0
-    dialogue:
-      lineId: 
-      speakerId: adrian_kane
-      text: Any response from the checkpoint?
-      voiceClip: {fileID: 0}
-      durationOverride: 0
-      isRadio: 0
-    autoAdvance: 1
-    duration: 1
-    cueId: 
-    cuePolicy: 0
-  - beatType: 0
-    dialogue:
-      lineId: 
-      speakerId: sofia_reyes
-      text: Nothing. Confirm the route and find out why.
-      voiceClip: {fileID: 0}
-      durationOverride: 0
-      isRadio: 1
-    autoAdvance: 1
-    duration: 1
-    cueId: 
-    cuePolicy: 0
-  - beatType: 1
-    dialogue:
-      lineId: 
-      speakerId: 
-      text: 
-      voiceClip: {fileID: 0}
-      durationOverride: 0
-      isRadio: 0
-    autoAdvance: 1
-    duration: 1
+    duration: 3
     cueId: 
     cuePolicy: 0
   - beatType: 5
@@ -136,42 +232,30 @@ MonoBehaviour:
     duration: 0
     cueId: helicopter_insert
     cuePolicy: 1
-  - beatType: 0
+  - beatType: 4
     dialogue:
       lineId: 
-      speakerId: raven_ortiz
-      text: I can't stay over this road. You're going in alone.
+      speakerId: 
+      text: 
       voiceClip: {fileID: 0}
       durationOverride: 0
       isRadio: 0
     autoAdvance: 1
-    duration: 1
-    cueId: 
+    duration: 0
+    cueId: m01_insertion
     cuePolicy: 0
-  - beatType: 0
+  - beatType: 5
     dialogue:
       lineId: 
-      speakerId: adrian_kane
-      text: Copy.
+      speakerId: 
+      text: 
       voiceClip: {fileID: 0}
       durationOverride: 0
       isRadio: 0
     autoAdvance: 1
-    duration: 1
-    cueId: 
-    cuePolicy: 0
-  - beatType: 0
-    dialogue:
-      lineId: 
-      speakerId: raven_ortiz
-      text: I'll be listening.
-      voiceClip: {fileID: 0}
-      durationOverride: 0
-      isRadio: 0
-    autoAdvance: 1
-    duration: 1
-    cueId: 
-    cuePolicy: 0
+    duration: 0
+    cueId: m01_player_grounded
+    cuePolicy: 1
   - beatType: 4
     dialogue:
       lineId: 

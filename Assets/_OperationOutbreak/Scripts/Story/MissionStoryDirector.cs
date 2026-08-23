@@ -9,13 +9,9 @@ using UnityEngine;
 namespace OperationOutbreak.Story
 {
     /// <summary>
-    /// Milestone 1Z.1 — the ONE director for Mission 01's story flow. Manages: opening cinematic
-    /// → gameplay → radio beats → outro → result UI. Creates all story runtime components at
-    /// runtime if they don't exist. Only activates when Mission 01 is the active mission.
-    ///
-    /// Flow: opening sequence (gameplay locked) → SequenceCompleted enables MissionSectionController
-    /// (gameplay starts) → radio beats at Z thresholds → EncounterCompleted suppresses result UI +
-    /// plays outro → outro SequenceCompleted releases result UI. Skip works at every stage.
+    /// Milestone 1Z.1 QA fix #7 — revised director for M1's helicopter interior opening.
+    /// Creates interior rig + cinematic Kane on m01_interior_setup. Manages HUD visibility.
+    /// Interior is at y=-300 (far below gameplay). Transition to exterior via cues.
     /// </summary>
     [DisallowMultipleComponent]
     public sealed class MissionStoryDirector : MonoBehaviour
@@ -27,6 +23,8 @@ namespace OperationOutbreak.Story
         private StorySequenceRunner _runner;
         private StoryCameraController _storyCam;
         private HelicopterPlaceholder _heli;
+        private HelicopterInteriorRig _interiorRig;
+        private StoryHudVisibilityController _hudCtrl;
         private MissionSectionController _sections;
         private MissionCompleteController _resultCtrl;
         private EnemySpawner _spawner;
@@ -37,19 +35,15 @@ namespace OperationOutbreak.Story
         private StorySequenceDefinition _outroSeq;
         private bool _beat1Fired, _beat2Fired;
 
+        // Interior rig world position — far from gameplay lane, invisible from gameplay camera.
+        private static readonly Vector3 InteriorWorldPos = new Vector3(0f, -300f, 0f);
+
         private void Awake()
         {
             _runner = FindAnyObjectByType<StorySequenceRunner>();
             if (_runner == null)
-            {
                 CreateCoreStoryComponents();
-            }
 
-            // 1Z.1 QA fix #6 — ALWAYS ensure presentation components exist, even if a runner
-            // was already created by StoryQaHarness (which creates runner+subtitle+audio+lock
-            // but NOT camera/helicopter). Without this, the camera/helicopter were never
-            // instantiated when the QA harness's runner was found first, causing all CameraCue
-            // and EventCue beats to be dead-lettered.
             EnsurePresentationComponents();
 
             _sections = FindAnyObjectByType<MissionSectionController>();
@@ -58,14 +52,19 @@ namespace OperationOutbreak.Story
             var pc = FindAnyObjectByType<PlayerController>();
             _player = pc != null ? pc.transform : null;
 
-            // Resolve M1 from active context or Resources.
             if (mission01 == null) mission01 = ActiveMissionContext.Current;
             if (mission01 == null)
                 mission01 = Resources.Load<MissionDefinition>("MissionDefinitions/Mission_01");
 
-            // Load sequences from Resources.
             _openingSeq = Resources.Load<StorySequenceDefinition>("StorySequences/Chapter01_Mission01_Opening");
             _outroSeq = Resources.Load<StorySequenceDefinition>("StorySequences/Chapter01_Mission01_Outro");
+
+            // HUD visibility controller
+            _hudCtrl = new GameObject("[Story] HudVisibility").AddComponent<StoryHudVisibilityController>();
+            _hudCtrl.transform.SetParent(transform, false);
+
+            // Subscribe to cue events for interior/exterior management
+            StoryCueEvents.EventCue += OnEventCue;
         }
 
         private void OnEnable()
@@ -77,12 +76,12 @@ namespace OperationOutbreak.Story
             }
             if (_spawner != null) _spawner.EncounterCompleted += OnEncounterCompleted;
 
-            // Start opening if this is M1 and it has a pre-mission sequence.
             if (mission01 != null && mission01.MissionId == "mission_01"
                 && _openingSeq != null && _runner != null)
             {
                 _phase = Phase.Opening;
-                if (_sections != null) _sections.enabled = false; // delay gameplay until opening completes
+                if (_sections != null) _sections.enabled = false;
+                _hudCtrl.HideGameplayHud();
                 Debug.Log("[STORY M01] Opening started.");
                 _runner.LoadSequence(_openingSeq);
             }
@@ -96,13 +95,18 @@ namespace OperationOutbreak.Story
                 _runner.SequenceCompleted -= OnSeqCompleted;
             }
             if (_spawner != null) _spawner.EncounterCompleted -= OnEncounterCompleted;
+            StoryCueEvents.EventCue -= OnEventCue;
+        }
+
+        private void OnDestroy()
+        {
+            StoryCueEvents.EventCue -= OnEventCue;
         }
 
         private void Update()
         {
-            // Radio beats during gameplay (not during opening/outro).
             if (_phase != Phase.Gameplay || _player == null || _runner == null) return;
-            if (_runner.IsRunning) return; // don't overlap
+            if (_runner.IsRunning) return;
 
             float z = _player.position.z;
 
@@ -122,7 +126,46 @@ namespace OperationOutbreak.Story
             }
         }
 
-        // ---- story flow callbacks ----
+        // ---- Cue event handler for interior/exterior management ----
+
+        private void OnEventCue(string cueId)
+        {
+            switch (cueId)
+            {
+                case "m01_interior_setup":
+                    if (_interiorRig == null)
+                    {
+                        _interiorRig = new GameObject("[Story] M01 Interior").AddComponent<HelicopterInteriorRig>();
+                        _interiorRig.transform.SetParent(transform, false);
+                    }
+                    _interiorRig.Setup(InteriorWorldPos);
+                    if (_storyCam != null) _storyCam.SetInteriorRig(_interiorRig);
+                    // Hide the real player during cinematic
+                    if (_player != null) _player.gameObject.SetActive(false);
+                    break;
+
+                case "m01_interior_teardown":
+                    if (_interiorRig != null) _interiorRig.Teardown();
+                    break;
+
+                case "m01_player_grounded":
+                    // Show the real player at insertion point
+                    if (_player != null)
+                    {
+                        _player.gameObject.SetActive(true);
+                        _player.position = new Vector3(0f, 1f, 0f);
+                    }
+                    if (_interiorRig != null) _interiorRig.Teardown();
+                    Debug.Log("[STORY M01] Kane insertion complete.");
+                    break;
+
+                case "helicopter_approach":
+                    Debug.Log("[STORY M01] Transitioning to exterior approach.");
+                    break;
+            }
+        }
+
+        // ---- Story flow callbacks ----
 
         private void OnSeqStarted(StorySequenceDefinition seq)
         {
@@ -135,6 +178,10 @@ namespace OperationOutbreak.Story
             {
                 _phase = Phase.Gameplay;
                 if (_sections != null) _sections.enabled = true;
+                if (_hudCtrl != null) _hudCtrl.RestoreGameplayHud();
+                if (_player != null && !_player.gameObject.activeSelf)
+                    _player.gameObject.SetActive(true);
+                if (_interiorRig != null) _interiorRig.Teardown();
                 Debug.Log("[STORY M01] Gameplay handoff complete.");
             }
             else if (seq == _outroSeq)
@@ -159,8 +206,6 @@ namespace OperationOutbreak.Story
 
         // ---- helpers ----
 
-        // 1Z.1 QA fix #6 — ensures camera + helicopter exist and are subscribed BEFORE the
-        // runner can execute any CameraCue/EventCue beat. Called from Awake unconditionally.
         private void EnsurePresentationComponents()
         {
             _storyCam = FindAnyObjectByType<StoryCameraController>();
@@ -168,7 +213,6 @@ namespace OperationOutbreak.Story
             {
                 _storyCam = new GameObject("[Story] CameraController").AddComponent<StoryCameraController>();
                 _storyCam.transform.SetParent(transform, false);
-                Debug.Log("[STORY M01] StoryCameraController created.");
             }
 
             _heli = FindAnyObjectByType<HelicopterPlaceholder>();
@@ -176,7 +220,6 @@ namespace OperationOutbreak.Story
             {
                 _heli = new GameObject("[Story] HelicopterPlaceholder").AddComponent<HelicopterPlaceholder>();
                 _heli.transform.SetParent(transform, false);
-                Debug.Log("[STORY M01] HelicopterPlaceholder created.");
             }
         }
 
@@ -194,12 +237,6 @@ namespace OperationOutbreak.Story
             var lok = new GameObject("[Story] LockAuthority");
             lok.transform.SetParent(transform, false);
             lok.AddComponent<GameplayLockAuthority>();
-
-            _storyCam = new GameObject("[Story] CameraController").AddComponent<StoryCameraController>();
-            _storyCam.transform.SetParent(transform, false);
-
-            _heli = new GameObject("[Story] HelicopterPlaceholder").AddComponent<HelicopterPlaceholder>();
-            _heli.transform.SetParent(transform, false);
 
             var run = new GameObject("[Story] Runner");
             run.transform.SetParent(transform, false);
