@@ -40,7 +40,17 @@ namespace OperationOutbreak.Story
         private void Awake()
         {
             _runner = FindAnyObjectByType<StorySequenceRunner>();
-            if (_runner == null) CreateStoryComponents();
+            if (_runner == null)
+            {
+                CreateCoreStoryComponents();
+            }
+
+            // 1Z.1 QA fix #6 — ALWAYS ensure presentation components exist, even if a runner
+            // was already created by StoryQaHarness (which creates runner+subtitle+audio+lock
+            // but NOT camera/helicopter). Without this, the camera/helicopter were never
+            // instantiated when the QA harness's runner was found first, causing all CameraCue
+            // and EventCue beats to be dead-lettered.
+            EnsurePresentationComponents();
 
             _sections = FindAnyObjectByType<MissionSectionController>();
             _resultCtrl = FindAnyObjectByType<MissionCompleteController>();
@@ -149,7 +159,28 @@ namespace OperationOutbreak.Story
 
         // ---- helpers ----
 
-        private void CreateStoryComponents()
+        // 1Z.1 QA fix #6 — ensures camera + helicopter exist and are subscribed BEFORE the
+        // runner can execute any CameraCue/EventCue beat. Called from Awake unconditionally.
+        private void EnsurePresentationComponents()
+        {
+            _storyCam = FindAnyObjectByType<StoryCameraController>();
+            if (_storyCam == null)
+            {
+                _storyCam = new GameObject("[Story] CameraController").AddComponent<StoryCameraController>();
+                _storyCam.transform.SetParent(transform, false);
+                Debug.Log("[STORY M01] StoryCameraController created.");
+            }
+
+            _heli = FindAnyObjectByType<HelicopterPlaceholder>();
+            if (_heli == null)
+            {
+                _heli = new GameObject("[Story] HelicopterPlaceholder").AddComponent<HelicopterPlaceholder>();
+                _heli.transform.SetParent(transform, false);
+                Debug.Log("[STORY M01] HelicopterPlaceholder created.");
+            }
+        }
+
+        private void CreateCoreStoryComponents()
         {
             var sub = new GameObject("[Story] Subtitle");
             sub.transform.SetParent(transform, false);
