@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using UnityEngine;
+using UnityEngine.InputSystem;
 
 namespace OperationOutbreak.Story
 {
@@ -97,10 +98,12 @@ namespace OperationOutbreak.Story
         {
             if (!_running || _completed) return;
 
-            // Skip input (desktop QA: Space or Escape).
+            // Skip input (desktop QA: Space or Escape). Uses the Input System (activeInputHandler=1).
             if (_sequence != null && _sequence.Skippable)
             {
-                if (Input.GetKeyDown(KeyCode.Space) || Input.GetKeyDown(KeyCode.Escape))
+                if (Keyboard.current != null
+                    && (Keyboard.current.spaceKey.wasPressedThisFrame
+                        || Keyboard.current.escapeKey.wasPressedThisFrame))
                 {
                     Skip();
                     return;
