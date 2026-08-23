@@ -36,6 +36,8 @@ namespace OperationOutbreak.Story
 
         private void Build()
         {
+            if (_image != null) return; // idempotent — never build twice.
+
             _canvas = new GameObject("StoryFadeCanvas",
                 typeof(RectTransform), typeof(Canvas), typeof(CanvasScaler))
                 .GetComponent<Canvas>();
@@ -63,9 +65,21 @@ namespace OperationOutbreak.Story
             _canvas.gameObject.SetActive(false);
         }
 
+        /// <summary>
+        /// Lifecycle-order-safe initialization. Awake builds the overlay in Play Mode, but a caller
+        /// may invoke the public API the instant the component exists (e.g. an Edit Mode test calling
+        /// SetBlackInstant right after AddComponent, where Awake has not yet run). Every public op
+        /// therefore guarantees the Canvas/Image references exist before touching alpha. Idempotent.
+        /// </summary>
+        private void EnsureBuilt()
+        {
+            if (_image == null) Build();
+        }
+
         /// <summary>Snaps the overlay to fully opaque black immediately.</summary>
         public void SetBlackInstant()
         {
+            EnsureBuilt();
             StopFade();
             EnsureActive();
             SetAlpha(1f);
@@ -74,6 +88,7 @@ namespace OperationOutbreak.Story
         /// <summary>Fades the overlay to fully opaque black over <paramref name="duration"/> seconds.</summary>
         public void FadeToBlack(float duration)
         {
+            EnsureBuilt();
             StopFade();
             EnsureActive();
             _fade = StartCoroutine(FadeRoutine(_image.color.a, 1f, duration));
@@ -82,12 +97,18 @@ namespace OperationOutbreak.Story
         /// <summary>Fades the overlay to fully transparent over <paramref name="duration"/> seconds.</summary>
         public void FadeFromBlack(float duration)
         {
+            EnsureBuilt();
             StopFade();
             EnsureActive();
             _fade = StartCoroutine(FadeRoutine(_image.color.a, 0f, duration));
         }
 
         /// <summary>Instantly clears the overlay (alpha 0). Use on skip / sequence end.</summary>
+        /// <remarks>
+        /// Deliberately does NOT lazily build: clearing a never-built overlay is a safe no-op, and
+        /// this keeps OnDisable (which routes here) from spawning GameObjects during teardown.
+        /// It is fully null-safe.
+        /// </remarks>
         public void ClearInstant()
         {
             StopFade();
