@@ -60,9 +60,22 @@ namespace OperationOutbreak.UI
         private TMP_Text _suppliesText;
         private bool _shown;
         private bool _playerDied;
+        private bool _resultSuppressed; // 1Z.1: delay panel until post-mission cinematic completes
 
         /// <summary>True once the victory state has been entered during this scene run.</summary>
         public bool IsVictory => _shown;
+
+        /// <summary>1Z.1 - delays the result panel until ReleaseResultDisplay is called
+        /// (post-mission cinematic). The victory STATE (combat shutdown, reward) is still
+        /// triggered immediately; only the PANEL display is gated.</summary>
+        public void SuppressResultDisplay() { _resultSuppressed = true; }
+
+        /// <summary>1Z.1 - releases the suppressed result panel (post-mission cinematic done).</summary>
+        public void ReleaseResultDisplay()
+        {
+            _resultSuppressed = false;
+            if (_shown && _panel != null) _panel.SetActive(true);
+        }
 
         /// <summary>
         /// Milestone 1O - raised once, the moment the victory screen is shown. Diagnostics
@@ -144,7 +157,7 @@ namespace OperationOutbreak.UI
 
             _shown = true;
             EnterVictoryState();
-            _panel.SetActive(true);
+            if (!_resultSuppressed) _panel.SetActive(true);
             Debug.Log("Mission complete", this);
 
             // Milestone 1O - end-of-run checkpoint for the diagnostics report.

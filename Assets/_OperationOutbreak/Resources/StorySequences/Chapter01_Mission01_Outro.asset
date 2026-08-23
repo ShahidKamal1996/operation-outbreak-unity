@@ -1,0 +1,148 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 082c21dd74934e0d8b6f071c75fd17ea, type: 3}
+  m_Name: Chapter01_Mission01_Outro
+  m_EditorClassIdentifier: 
+  sequenceId: chapter01_mission01_outro
+  displayName: Chapter 1 Mission 01 Outro
+  sequenceType: 1
+  beats:
+  - beatType: 2
+    dialogue: {fileID: 0}
+    autoAdvance: 1
+    duration: 0
+    cueId: 
+    cuePolicy: 0
+  - beatType: 4
+    dialogue: {fileID: 0}
+    autoAdvance: 1
+    duration: 0
+    cueId: checkpoint_view
+    cuePolicy: 1
+  - beatType: 1
+    dialogue: {fileID: 0}
+    autoAdvance: 1
+    duration: 2
+    cueId: 
+    cuePolicy: 0
+  - beatType: 0
+    dialogue:
+      lineId: 
+      speakerId: adrian_kane
+      text: Corridor Seven is gone.
+      voiceClip: {fileID: 0}
+      durationOverride: 0
+      isRadio: 0
+    autoAdvance: 1
+    duration: 1
+    cueId: 
+    cuePolicy: 0
+  - beatType: 0
+    dialogue:
+      lineId: 
+      speakerId: sofia_reyes
+      text: Then we're done. Fall back to Raven.
+      voiceClip: {fileID: 0}
+      durationOverride: 0
+      isRadio: 1
+    autoAdvance: 1
+    duration: 1
+    cueId: 
+    cuePolicy: 0
+  - beatType: 1
+    dialogue: {fileID: 0}
+    autoAdvance: 1
+    duration: 2
+    cueId: 
+    cuePolicy: 0
+  - beatType: 0
+    dialogue:
+      lineId: 
+      speakerId: narrator
+      text: ...please...
+      voiceClip: {fileID: 0}
+      durationOverride: 0
+      isRadio: 1
+    autoAdvance: 1
+    duration: 1
+    cueId: distress_signal
+    cuePolicy: 0
+  - beatType: 1
+    dialogue: {fileID: 0}
+    autoAdvance: 1
+    duration: 1.5
+    cueId: 
+    cuePolicy: 0
+  - beatType: 0
+    dialogue:
+      lineId: 
+      speakerId: narrator
+      text: Don't leave us.
+      voiceClip: {fileID: 0}
+      durationOverride: 0
+      isRadio: 1
+    autoAdvance: 1
+    duration: 1
+    cueId: 
+    cuePolicy: 0
+  - beatType: 0
+    dialogue:
+      lineId: 
+      speakerId: adrian_kane
+      text: Reyes, I have a survivor signal.
+      voiceClip: {fileID: 0}
+      durationOverride: 0
+      isRadio: 0
+    autoAdvance: 1
+    duration: 1
+    cueId: 
+    cuePolicy: 0
+  - beatType: 0
+    dialogue:
+      lineId: 
+      speakerId: sofia_reyes
+      text: Kane—
+      voiceClip: {fileID: 0}
+      durationOverride: 0
+      isRadio: 1
+    autoAdvance: 1
+    duration: 1
+    cueId: 
+    cuePolicy: 0
+  - beatType: 0
+    dialogue:
+      lineId: 
+      speakerId: adrian_kane
+      text: I'm going after it.
+      voiceClip: {fileID: 0}
+      durationOverride: 0
+      isRadio: 0
+    autoAdvance: 1
+    duration: 1
+    cueId: 
+    cuePolicy: 0
+  - beatType: 4
+    dialogue: {fileID: 0}
+    autoAdvance: 1
+    duration: 0
+    cueId: gameplay_handoff
+    cuePolicy: 1
+  - beatType: 3
+    dialogue: {fileID: 0}
+    autoAdvance: 1
+    duration: 0
+    cueId: 
+    cuePolicy: 0
+  skippable: 1
+  autoStart: 1
+  nextSequence: {fileID: 0}
+  associatedMission: {fileID: 0}

@@ -16741,6 +16741,7 @@ GameObject:
   - component: {fileID: 450007}
   - component: {fileID: 450008}
   - component: {fileID: 450009}
+  - component: {fileID: 450010}
   m_Layer: 0
   m_Name: MissionSystem
   m_TagString: Untagged
@@ -16869,6 +16870,19 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 5437653fb7174d468542a95fc6703b23, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
+--- !u!114 &450010
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 450001}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 63a3a5adf2a04bce9c575453a2247532, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  mission01: {fileID: 0}
 --- !u!1660057539 &9223372036854775807
 SceneRoots:
   m_ObjectHideFlags: 0

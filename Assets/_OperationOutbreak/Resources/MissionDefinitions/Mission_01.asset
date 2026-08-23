@@ -56,4 +56,6 @@ MonoBehaviour:
   reward:
     coins: 0
     supplies: 0
+  preMissionSequence: {fileID: 11400000, guid: 0f341bd1e4fc40198f01d815fe516c80, type: 2}
+  postMissionSequence: {fileID: 11400000, guid: 8f39d72dd84d40d8abd337cd900c1fa5, type: 2}
   environment: {fileID: 11400000, guid: ee09536f114a83f02bc479d352ef816a, type: 2}
