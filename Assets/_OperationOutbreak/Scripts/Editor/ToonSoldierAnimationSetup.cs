@@ -180,19 +180,27 @@ namespace OperationOutbreak.EditorTools
 
             // Shoot layer: weight 1, Override blending, masked to the upper body.
             // 1Z.1 QA fix #4 — create the layer via controller.AddLayer(name) so Unity's
-            // NATIVE API creates and persists the layer's AnimatorStateMachine. The previous
-            // approach (new AnimatorStateMachine() + AddObjectToAsset) created a C# object that
-            // serialized but was not fully initialized as a native sub-asset, causing
-            // "Statemachine for layer 'Shoot Layer' is missing" after a clean Library import.
+            // NATIVE API creates and persists the layer's AnimatorStateMachine.
             controller.AddLayer(ShootLayerName);
 
-            AnimatorControllerLayer shootLayer = controller.layers[controller.layers.Length - 1];
-            shootLayer.defaultWeight = 1f;
-            shootLayer.blendingMode = AnimatorLayerBlendingMode.Override;
-            shootLayer.avatarMask = upperBodyMask;
+            // 1Z.1 QA fix #5 — AnimatorControllerLayer is a STRUCT (value type).
+            // controller.layers returns a COPY of the internal array; modifying an element
+            // of that copy and NOT writing it back means defaultWeight/blendingMode/avatarMask
+            // are silently lost on save. This is exactly why real Unity reloaded the Shoot
+            // Layer with weight=0, no mask, no override. Fix: get, modify, WRITE BACK.
+            AnimatorControllerLayer[] layers = controller.layers;
+            int shootIndex = layers.Length - 1;
 
-            // The state machine was created natively by AddLayer — no manual instantiation.
-            AnimatorStateMachine shootMachine = shootLayer.stateMachine;
+            layers[shootIndex].name = ShootLayerName;
+            layers[shootIndex].defaultWeight = 1f;
+            layers[shootIndex].blendingMode = AnimatorLayerBlendingMode.Override;
+            layers[shootIndex].avatarMask = upperBodyMask;
+
+            controller.layers = layers;
+
+            // The state machine was created natively by AddLayer — retrieve it from the
+            // written-back array (not from a stale copy).
+            AnimatorStateMachine shootMachine = layers[shootIndex].stateMachine;
 
             // Empty default state: under the mask, an empty state leaves the upper body
             // in the base-layer pose, so idle/run show normally when not firing.
@@ -219,6 +227,46 @@ namespace OperationOutbreak.EditorTools
 
             EditorUtility.SetDirty(controller);
             AssetDatabase.SaveAssets();
+
+            // 1Z.1 QA fix #5 — reload-after-save validation: force a fresh import, reload the
+            // controller from disk, and verify the Shoot Layer's weight/mask/stateMachine all
+            // survived serialization. This catches the struct-copy-persistence bug.
+            AssetDatabase.ImportAsset(ControllerPath, ImportAssetOptions.ForceUpdate);
+            AnimatorController reloaded = AssetDatabase.LoadAssetAtPath<AnimatorController>(ControllerPath);
+
+            if (reloaded != null && reloaded.layers.Length >= 2)
+            {
+                AnimatorControllerLayer[] reloadedLayers = reloaded.layers;
+                AnimatorControllerLayer reloadedShoot = reloadedLayers[1];
+
+                if (reloadedShoot.stateMachine == null)
+                    Debug.LogError("[1P.5] PERSISTENCE FAILURE: Shoot Layer stateMachine is null after reload.");
+
+                if (reloadedShoot.defaultWeight < 0.99f)
+                    Debug.LogError("[1P.5] PERSISTENCE FAILURE: Shoot Layer defaultWeight is " +
+                                   reloadedShoot.defaultWeight + " after reload (expected 1).");
+
+                if (reloadedShoot.blendingMode != AnimatorLayerBlendingMode.Override)
+                    Debug.LogError("[1P.5] PERSISTENCE FAILURE: Shoot Layer blendingMode changed after reload.");
+
+                if (reloadedShoot.avatarMask == null)
+                    Debug.LogError("[1P.5] PERSISTENCE FAILURE: Shoot Layer avatarMask is null after reload.");
+
+                if (reloadedShoot.stateMachine != null)
+                {
+                    bool foundEmpty = false, foundGunplay = false;
+                    foreach (ChildAnimatorState child in reloadedShoot.stateMachine.states)
+                    {
+                        if (child.state.name == EmptyStateName) foundEmpty = true;
+                        if (child.state.name == GunplayState) foundGunplay = true;
+                    }
+                    if (!foundEmpty)
+                        Debug.LogError("[1P.5] PERSISTENCE FAILURE: Shoot Layer Empty state missing after reload.");
+                    if (!foundGunplay)
+                        Debug.LogError("[1P.5] PERSISTENCE FAILURE: Shoot Layer Gunplay state missing after reload.");
+                }
+            }
+
             Debug.Log(
                 "[1P.5 QA fix #12] Toon Soldier controller rebuilt: base layer = idle/locomotion, " +
                 $"shoot layer = upper-body masked gunplay. idle='{idle.name}', run='{run.name}', " +
