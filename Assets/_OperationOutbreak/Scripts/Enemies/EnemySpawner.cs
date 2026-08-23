@@ -250,9 +250,9 @@ namespace OperationOutbreak.Enemies
         public ZombieController SpawnEnemyWithDefinition(
             EnemyArchetypeDefinition definition, Vector3 position)
         {
-            // 1X.5 QA fix #1 - refuse to spawn after the encounter has ended (success or death),
-            // so no reinforcement can appear after Mission Complete / Game Over.
-            if (_cancelled || _encounterComplete)
+            // 1X.5 QA fix #1 + 1Z QA fix #2 - refuse to spawn after the encounter has ended
+            // (success or death) or during a temporary cinematic spawn-pause.
+            if (_cancelled || _encounterComplete || _spawnPaused)
             {
                 return null;
             }
@@ -615,6 +615,57 @@ namespace OperationOutbreak.Enemies
                 if (zombie != null)
                 {
                     zombie.SuspendCombat();
+                }
+            }
+        }
+
+        // ------------------------------------------------------------------
+        // Milestone 1Z QA fix #2 - TEMPORARY cinematic combat suspend/resume.
+        // These are distinct from the permanent encounter-end suspension: they are reversible
+        // and do NOT cancel/complete the encounter. The GameplayLockAuthority calls these on
+        // cinematic lock/unlock so enemies freeze during a full cinematic and resume after.
+        // ------------------------------------------------------------------
+
+        /// <summary>Temporary spawn pause flag for cinematic locks.</summary>
+        private bool _spawnPaused;
+
+        /// <summary>True while a temporary cinematic spawn-pause is active.</summary>
+        public bool IsSpawnPaused => _spawnPaused;
+
+        /// <summary>
+        /// TEMPORARY cinematic suspend: freezes all active enemies (they stop chasing/attacking)
+        /// and pauses spawning, WITHOUT ending the encounter. Called by GameplayLockAuthority.
+        /// </summary>
+        public void SuspendActiveEnemiesForCinematic()
+        {
+            _spawnPaused = true;
+
+            foreach (ZombieController zombie in _activeEnemies)
+            {
+                if (zombie != null)
+                {
+                    zombie.SuspendCombat();
+                }
+            }
+        }
+
+        /// <summary>
+        /// TEMPORARY cinematic resume: resumes all active enemies and unpauses spawning, but
+        /// ONLY if the encounter has not permanently ended (success/death). After encounter end
+        /// enemies stay frozen. Called by GameplayLockAuthority.
+        /// </summary>
+        public void ResumeActiveEnemiesAfterCinematic()
+        {
+            _spawnPaused = false;
+
+            // Do NOT resume if the encounter has permanently ended — enemies stay frozen.
+            if (_cancelled || _encounterComplete) return;
+
+            foreach (ZombieController zombie in _activeEnemies)
+            {
+                if (zombie != null && zombie.IsAlive)
+                {
+                    zombie.ResumeCombat();
                 }
             }
         }

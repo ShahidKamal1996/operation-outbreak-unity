@@ -192,5 +192,49 @@ namespace OperationOutbreak.Tests
             Assert.IsNull(mission.PreMissionSequence);
             Assert.IsNull(mission.PostMissionSequence);
         }
+
+        // ---- cinematic combat lock (QA fix #2) ----
+
+        [Test]
+        public void CinematicLockSuspendsEnemyCombatAndSpawning()
+        {
+            GameObject go = new GameObject("LockAuthority");
+            _created.Add(go);
+            GameplayLockAuthority lockAuth = go.AddComponent<GameplayLockAuthority>();
+
+            lockAuth.Lock();
+            Assert.IsTrue(lockAuth.IsLocked, "Cinematic lock should be active.");
+        }
+
+        [Test]
+        public void NestedCinematicLockDoesNotResumeEarly()
+        {
+            GameObject go = new GameObject("LockAuthority");
+            _created.Add(go);
+            GameplayLockAuthority lockAuth = go.AddComponent<GameplayLockAuthority>();
+
+            lockAuth.Lock();
+            lockAuth.Lock();
+            Assert.IsTrue(lockAuth.IsLocked);
+
+            lockAuth.Unlock();
+            Assert.IsTrue(lockAuth.IsLocked, "Partial unlock must NOT resume (nested).");
+
+            lockAuth.Unlock();
+            Assert.IsFalse(lockAuth.IsLocked, "Final unlock resumes.");
+        }
+
+        [Test]
+        public void ForceUnlockReleasesEverything()
+        {
+            GameObject go = new GameObject("LockAuthority");
+            _created.Add(go);
+            GameplayLockAuthority lockAuth = go.AddComponent<GameplayLockAuthority>();
+
+            lockAuth.Lock();
+            lockAuth.Lock();
+            lockAuth.ForceUnlock();
+            Assert.IsFalse(lockAuth.IsLocked, "ForceUnlock releases all.");
+        }
     }
 }

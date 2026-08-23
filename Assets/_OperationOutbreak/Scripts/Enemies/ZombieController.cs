@@ -237,6 +237,16 @@ namespace OperationOutbreak.Enemies
             _combatSuspended = true;
         }
 
+        /// <summary>
+        /// Milestone 1Z QA fix #2 - resumes combat after a temporary cinematic lock. Counterpart
+        /// to SuspendCombat. The caller (GameplayLockAuthority via EnemySpawner) is responsible
+        /// for NOT calling this after the encounter has permanently ended.
+        /// </summary>
+        public void ResumeCombat()
+        {
+            _combatSuspended = false;
+        }
+
         private void Update()
         {
             // Milestone 1Q - presentation readout: zero unless the movement block below

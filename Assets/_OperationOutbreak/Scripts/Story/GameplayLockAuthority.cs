@@ -1,3 +1,4 @@
+using OperationOutbreak.Enemies;
 using OperationOutbreak.Player;
 using OperationOutbreak.Weapons;
 using UnityEngine;
@@ -10,9 +11,14 @@ namespace OperationOutbreak.Story
     /// the EXISTING suspend methods (PlayerController.SuspendMovement, WeaponController.
     /// SuspendFiring) and restores them on the final unlock.
     ///
+    /// 1Z QA fix #2 — a FULL CINEMATIC lock now ALSO temporarily suspends all active enemy
+    /// combat (via EnemySpawner.SuspendActiveEnemiesForCinematic) and pauses spawning. On the
+    /// final unlock, enemies resume and spawning unpauses — but ONLY if the encounter hasn't
+    /// permanently ended (the EnemySpawner guards against resuming after success/death).
+    /// This prevents enemies from attacking the locked player during a cinematic.
+    ///
     /// Lock state is instance-only (not static): a scene reload / Retry naturally clears it.
-    /// If the runner is destroyed mid-lock, OnDestroy releases the lock so no stale lock
-    /// survives.
+    /// If the runner is destroyed mid-lock, OnDestroy releases the lock so no stale lock survives.
     /// </summary>
     public sealed class GameplayLockAuthority : MonoBehaviour
     {
@@ -20,10 +26,11 @@ namespace OperationOutbreak.Story
 
         [SerializeField] private PlayerController playerController;
         [SerializeField] private WeaponController weaponController;
+        [SerializeField] private EnemySpawner enemySpawner;
 
         private int _lockCount;
 
-        /// <summary>True while at least one lock is active (gameplay suspended).</summary>
+        /// <summary>True while at least one lock is active (gameplay + combat suspended).</summary>
         public bool IsLocked => _lockCount > 0;
 
         private void Awake()
@@ -31,12 +38,12 @@ namespace OperationOutbreak.Story
             Instance = this;
             if (playerController == null) playerController = FindAnyObjectByType<PlayerController>();
             if (weaponController == null) weaponController = FindAnyObjectByType<WeaponController>();
+            if (enemySpawner == null) enemySpawner = FindAnyObjectByType<EnemySpawner>();
         }
 
         private void OnDestroy()
         {
             if (Instance == this) Instance = null;
-            // Safety: release any lingering lock so a destroyed runner can't strand the player.
             if (_lockCount > 0)
             {
                 _lockCount = 0;
@@ -79,14 +86,20 @@ namespace OperationOutbreak.Story
         {
             if (playerController != null) playerController.SuspendMovement();
             if (weaponController != null) weaponController.SuspendFiring();
+
+            // 1Z QA fix #2 - also freeze enemies + pause spawning so they can't attack during
+            // the cinematic. This is TEMPORARY (the encounter is NOT ended/cancelled).
+            if (enemySpawner != null) enemySpawner.SuspendActiveEnemiesForCinematic();
         }
 
         private void RestoreGameplay()
         {
-            // Re-enable movement and firing. The suspend methods set internal flags; re-enabling
-            // is simply setting enabled = true (the controllers' OnEnable re-seeds their state).
             if (playerController != null) playerController.enabled = true;
             if (weaponController != null) weaponController.enabled = true;
+
+            // 1Z QA fix #2 - resume enemies + unpause spawning, but ONLY if the encounter is
+            // still active. The EnemySpawner guards against resuming after encounter end.
+            if (enemySpawner != null) enemySpawner.ResumeActiveEnemiesAfterCinematic();
         }
     }
 }
