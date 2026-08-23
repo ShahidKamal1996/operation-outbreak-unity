@@ -77,9 +77,9 @@ namespace OperationOutbreak.Mission
             Refresh();
 
             // One concise diagnostic dump each time the panel is opened (never per-frame) so a
-            // human QA can confirm the pointer path end-to-end: EventSystem, input module,
-            // Point/LeftClick enabled, the debug canvas sortingOrder, and the topmost raycast
-            // hit under the pointer (which reveals whether a result overlay is intercepting).
+            // human QA can confirm the pointer path end-to-end: EventSystem count + current input
+            // module state, the debug canvas sortingOrder, and the topmost raycast hit under the
+            // pointer (which reveals whether a result overlay is intercepting).
             if (_shown)
             {
                 LogPointerDiagnostics();
@@ -245,28 +245,18 @@ namespace OperationOutbreak.Mission
             scaler.uiScaleMode = CanvasScaler.ScaleMode.ScaleWithScreenSize;
             scaler.referenceResolution = new Vector2(1080, 1920);
 
-            // The scene needs exactly one EventSystem with a CONFIGURED InputSystemUIInputModule
-            // to receive pointer/click input. A module created at runtime has NO UI actions by
-            // default, so without configuration NO button in any ScreenSpaceOverlay canvas
-            // responds to clicks in Play Mode - this was the QA #3 root cause (the READY mission
-            // buttons did nothing). Find-or-create the EventSystem (so a bare module another UI
-            // builder created first is repaired too) and wire real UI actions onto its module.
-            EventSystem eventSystem = FindAnyObjectByType<EventSystem>();
-            if (eventSystem == null)
+            // Exactly one EventSystem with an InputSystemUIInputModule for pointer/click input.
+            // IMPORTANT (Input System 1.20): InputSystemUIInputModule supplies its OWN default UI
+            // actions (Point/Click/etc.), and the older per-action pointAction/leftClickAction
+            // API plus InputActionProperty.FromAction were REMOVED in this version - so a freshly
+            // created module is clickable out of the box and must NOT be hand-configured with those
+            // removed members (the QA #3/#4 code did, which broke compilation).
+            if (FindAnyObjectByType<EventSystem>() == null)
             {
-                GameObject esGo = new GameObject("DebugEventSystem",
+                GameObject es = new GameObject("DebugEventSystem",
                     typeof(EventSystem), typeof(InputSystemUIInputModule));
-                esGo.transform.SetParent(transform, false);
-                eventSystem = esGo.GetComponent<EventSystem>();
+                es.transform.SetParent(transform, false);
             }
-
-            InputSystemUIInputModule inputModule = eventSystem.GetComponent<InputSystemUIInputModule>();
-            if (inputModule == null)
-            {
-                inputModule = eventSystem.gameObject.AddComponent<InputSystemUIInputModule>();
-            }
-
-            ConfigureInputModule(inputModule);
 
             _panel = new GameObject("DebugPanel",
                 typeof(RectTransform), typeof(Image), typeof(VerticalLayoutGroup));
@@ -298,104 +288,13 @@ namespace OperationOutbreak.Mission
         }
 
         /// <summary>
-        /// Builds a self-contained InputActionAsset with the UI actions an InputSystemUIInputModule
-        /// needs to generate pointer/click events (Point, LeftClick, RightClick, MiddleClick,
-        /// ScrollWheel, Submit, Cancel). Built in code so the debug UI needs no external asset
-        /// reference and works identically in the editor and in builds.
-        ///
-        /// Public/static so the editor tooling and the EditMode tests exercise the EXACT action
-        /// set the runtime uses (regression guard for QA fix #3).
-        /// </summary>
-        public static InputActionAsset BuildDebugUiActions()
-        {
-            InputActionAsset asset = ScriptableObject.CreateInstance<InputActionAsset>();
-            asset.name = "OO_DebugUI_Actions";
-
-            InputActionMap uiMap = asset.AddActionMap("UI");
-
-            InputAction point = uiMap.AddAction("Point", InputActionType.Value);
-            point.AddBinding("<Mouse>/position");
-            point.AddBinding("<Touchscreen>/touch*/position");
-            point.AddBinding("<Pen>/position");
-
-            InputAction leftClick = uiMap.AddAction("LeftClick", InputActionType.Button);
-            leftClick.AddBinding("<Mouse>/leftButton");
-            leftClick.AddBinding("<Touchscreen>/touch*/press");
-            leftClick.AddBinding("<Pen>/tip");
-
-            InputAction rightClick = uiMap.AddAction("RightClick", InputActionType.Button);
-            rightClick.AddBinding("<Mouse>/rightButton");
-
-            InputAction middleClick = uiMap.AddAction("MiddleClick", InputActionType.Button);
-            middleClick.AddBinding("<Mouse>/middleButton");
-
-            InputAction scroll = uiMap.AddAction("ScrollWheel", InputActionType.Value);
-            scroll.AddBinding("<Mouse>/scroll");
-
-            InputAction submit = uiMap.AddAction("Submit", InputActionType.Button);
-            submit.AddBinding("<Keyboard>/enter");
-            submit.AddBinding("<Gamepad>/buttonSouth");
-
-            InputAction cancel = uiMap.AddAction("Cancel", InputActionType.Button);
-            cancel.AddBinding("<Keyboard>/escape");
-            cancel.AddBinding("<Gamepad>/buttonEast");
-
-            return asset;
-        }
-
-        /// <summary>
-        /// Wires UI input actions onto <paramref name="module"/> so it actually produces
-        /// pointer/click events. Idempotent and safe on a fresh OR already-enabled module: it
-        /// disables the module while reconfiguring so OnEnable re-runs and (re)enables the newly
-        /// assigned actions (assigning actions to an already-enabled module alone would NOT enable
-        /// them). Public so editor tooling and tests share the exact runtime configuration.
-        /// </summary>
-        public static void ConfigureInputModule(InputSystemUIInputModule module)
-        {
-            if (module == null)
-            {
-                return;
-            }
-
-            InputActionAsset asset = BuildDebugUiActions();
-
-            // Disable first so a subsequent enable re-runs OnEnable, which (re)enables the
-            // actions bound below - whether the module was just created or already enabled.
-            module.enabled = false;
-            module.actionsAsset = asset;
-            module.pointAction = ToProperty(asset, "Point");
-            module.leftClickAction = ToProperty(asset, "LeftClick");
-            module.rightClickAction = ToProperty(asset, "RightClick");
-            module.middleClickAction = ToProperty(asset, "MiddleClick");
-            module.scrollWheelAction = ToProperty(asset, "ScrollWheel");
-            module.submitAction = ToProperty(asset, "Submit");
-            module.cancelAction = ToProperty(asset, "Cancel");
-            module.enabled = true;
-
-            // Explicitly enable the UI action map so Point/LeftClick are guaranteed to be
-            // processing input in Play Mode regardless of the module's own enable path
-            // (enabling an already-enabled action/map is a no-op, so this is always safe).
-            InputActionMap uiMap = asset.FindActionMap("UI");
-            if (uiMap != null)
-            {
-                uiMap.Enable();
-            }
-        }
-
-        private static InputActionProperty ToProperty(InputActionAsset asset, string actionName)
-        {
-            InputAction action = asset.FindAction("UI/" + actionName);
-            return action != null ? InputActionProperty.FromAction(action) : default;
-        }
-
-        /// <summary>
         /// Logs a concise, one-shot picture of the UI pointer path so manual Play Mode QA can
         /// be conclusive about WHY a button is or is not clickable. Called once when the panel
         /// is toggled open (never per-frame).
         /// </summary>
         private void LogPointerDiagnostics()
         {
-            EventSystem[] systems = FindObjectsByType<EventSystem>(FindObjectsSortMode.None);
+            EventSystem[] systems = FindObjectsByType<EventSystem>(FindObjectsInactive.Exclude, FindObjectsSortMode.None);
             Debug.Log("[1X] Active EventSystem count: " + systems.Length);
 
             EventSystem current = EventSystem.current;
@@ -411,8 +310,11 @@ namespace OperationOutbreak.Mission
 
             if (module is InputSystemUIInputModule uiModule)
             {
-                LogInputAction(uiModule.pointAction, "Point");
-                LogInputAction(uiModule.leftClickAction, "LeftClick");
+                // Input System 1.20: the module supplies its own default UI actions (the per-action
+                // pointAction/leftClickAction API was removed), so report the actionsAsset state
+                // (default when null) rather than individual removed action properties.
+                Debug.Log("[1X] Input module actionsAsset: " +
+                          (uiModule.actionsAsset != null ? uiModule.actionsAsset.name : "(module defaults)"));
             }
 
             Canvas debugCanvas = _canvas != null ? _canvas.GetComponent<Canvas>() : null;
@@ -428,13 +330,6 @@ namespace OperationOutbreak.Mission
                       (hits.Count > 0
                           ? hits[0].gameObject.name + " (canvas sortingOrder " + hits[0].sortingOrder + ")"
                           : "(nothing - pointer is over non-UI space)"));
-        }
-
-        private static void LogInputAction(InputActionProperty property, string label)
-        {
-            InputAction action = property.action;
-            Debug.Log("[1X] " + label + " action: " +
-                      (action != null ? "set, enabled=" + action.enabled : "MISSING"));
         }
 
         private static Vector2 ResolvePointerPosition()
