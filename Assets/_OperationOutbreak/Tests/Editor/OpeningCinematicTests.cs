@@ -215,7 +215,7 @@ namespace OperationOutbreak.Tests
                 System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
             field.SetValue(controller, null);
 
-            LogAssert.Expect(LogType.Error, "[OPENING CINEMATIC] Exterior camera not valid — aborting. Gameplay camera preserved.");
+            LogAssert.Expect(LogType.Error, "[OPENING CINEMATIC] Exterior camera is null or inactive.");
             controller.StartExteriorFlyover();
             Assert.AreEqual(OpeningCinematicController.Phase.Inactive, controller.CurrentPhase,
                 "Controller must abort (stay Inactive) when exterior camera is not valid.");
