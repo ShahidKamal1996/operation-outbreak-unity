@@ -27,6 +27,11 @@ namespace OperationOutbreak.Story
         [Range(-1f, 1f)] [SerializeField] private float footUpDown = 0.15f;
         [Range(-1f, 1f)] [SerializeField] private float spineFrontBack = 0.1f;
 
+        [Header("Seated pelvis (metres above the avatar root = floor)")]
+        [Tooltip("HumanPose.bodyPosition.y is the pelvis height in metres above the avatar root. " +
+                 "Set to the bench seat height so the pelvis rests ON the seat (QA fix #11).")]
+        [SerializeField] private float seatHeight = 0.5f;
+
         private Animator _animator;
         private HumanPoseHandler _handler;
         private HumanPose _pose;
@@ -72,6 +77,11 @@ namespace OperationOutbreak.Story
             try
             {
                 _handler.GetHumanPose(ref _pose);
+
+                // QA fix #11 — lower the pelvis onto the bench. bodyPosition.y is the pelvis height
+                // in metres above the avatar root (which the rig places on the floor), so setting it
+                // to the seat height drops the whole upper body until the pelvis rests on the bench.
+                _pose.bodyPosition = new Vector3(_pose.bodyPosition.x, seatHeight, _pose.bodyPosition.z);
 
                 // Override only the legs + slight torso lean. Everything else (arms, head, rifle)
                 // stays exactly as the production idle clip authored it.

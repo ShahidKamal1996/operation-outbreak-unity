@@ -225,5 +225,180 @@ namespace OperationOutbreak.Tests
                 Object.DestroyImmediate(go);
             }
         }
+
+        // ---------------------------------------------------------------- QA fix #11 staging
+
+        private static HelicopterInteriorRig BuildRigForStagingTests(out GameObject rigGo, out GameObject source)
+        {
+            rigGo = new GameObject("RigStaging");
+            var rig = rigGo.AddComponent<HelicopterInteriorRig>();
+            source = new GameObject("FakeSource");
+            rig.Setup(new Vector3(0f, -300f, 0f), source.transform);
+            return rig;
+        }
+
+        [Test]
+        public void InteriorRigExposesSeatAnchorAnchorsAndTargets()
+        {
+            var rig = BuildRigForStagingTests(out GameObject rigGo, out GameObject source);
+            try
+            {
+                Assert.IsNotNull(rig.FindNamed(HelicopterInteriorRig.SeatAnchorName), "KaneSeatAnchor must exist.");
+                Assert.IsNotNull(rig.FindNamed(HelicopterInteriorRig.AnchorEstablishing), "Establishing anchor missing.");
+                Assert.IsNotNull(rig.FindNamed(HelicopterInteriorRig.AnchorMedium), "Medium anchor missing.");
+                Assert.IsNotNull(rig.FindNamed(HelicopterInteriorRig.AnchorClose), "Close anchor missing.");
+                Assert.IsNotNull(rig.FindNamed(HelicopterInteriorRig.AnchorCockpit), "Cockpit anchor missing.");
+                Assert.IsNotNull(rig.FindNamed(HelicopterInteriorRig.TargetChest), "KaneChestTarget missing.");
+                Assert.IsNotNull(rig.FindNamed(HelicopterInteriorRig.TargetHead), "KaneHeadTarget missing.");
+                Assert.IsNotNull(rig.FindNamed(HelicopterInteriorRig.TargetCockpit), "CockpitLookTarget missing.");
+            }
+            finally
+            {
+                Object.DestroyImmediate(source);
+                Object.DestroyImmediate(rigGo);
+            }
+        }
+
+        [Test]
+        public void InteriorRigCameraAnchorsLieInsideUsableCabinVolume()
+        {
+            var rig = BuildRigForStagingTests(out GameObject rigGo, out GameObject source);
+            try
+            {
+                string[] anchors =
+                {
+                    HelicopterInteriorRig.AnchorEstablishing, HelicopterInteriorRig.AnchorMedium,
+                    HelicopterInteriorRig.AnchorClose, HelicopterInteriorRig.AnchorCockpit
+                };
+                foreach (string name in anchors)
+                {
+                    Transform a = rig.FindNamed(name);
+                    Assert.IsNotNull(a, name + " missing.");
+                    // Anchors are parented under a group at the rig origin, so localPosition == cabin-local.
+                    Vector3 p = a.localPosition;
+                    Assert.GreaterOrEqual(p.y, 0.3f, name + " must be above the cabin floor (y>=0.3).");
+                    Assert.LessOrEqual(p.y, 2.3f, name + " must be below the cabin ceiling (y<=2.3).");
+                    Assert.GreaterOrEqual(p.x, -1.85f, name + " must be inside the cabin width.");
+                    Assert.LessOrEqual(p.x, 1.85f, name + " must be inside the cabin width.");
+                    Assert.GreaterOrEqual(p.z, -2.45f, name + " must be inside the cabin depth.");
+                    Assert.LessOrEqual(p.z, 2.45f, name + " must be inside the cabin depth.");
+                }
+            }
+            finally
+            {
+                Object.DestroyImmediate(source);
+                Object.DestroyImmediate(rigGo);
+            }
+        }
+
+        [Test]
+        public void InteriorRigCameraAnchorsAreNotInsideOccluderGeometry()
+        {
+            var rig = BuildRigForStagingTests(out GameObject rigGo, out GameObject source);
+            try
+            {
+                string[] anchors =
+                {
+                    HelicopterInteriorRig.AnchorEstablishing, HelicopterInteriorRig.AnchorMedium,
+                    HelicopterInteriorRig.AnchorClose, HelicopterInteriorRig.AnchorCockpit
+                };
+                Renderer[] renderers = rigGo.GetComponentsInChildren<Renderer>(true);
+                foreach (string name in anchors)
+                {
+                    Transform a = rig.FindNamed(name);
+                    Assert.IsNotNull(a, name + " missing.");
+                    Vector3 pos = a.position;
+                    foreach (Renderer r in renderers)
+                    {
+                        if (r == null) continue;
+                        Assert.IsFalse(r.bounds.Contains(pos),
+                            name + " sits inside geometry '" + r.name + "' — it would clip/frame a wall.");
+                    }
+                }
+            }
+            finally
+            {
+                Object.DestroyImmediate(source);
+                Object.DestroyImmediate(rigGo);
+            }
+        }
+
+        [Test]
+        public void InteriorRigCamerasAimForwardAtTheirTargets()
+        {
+            var rig = BuildRigForStagingTests(out GameObject rigGo, out GameObject source);
+            try
+            {
+                string[] cues = { "m01_interior_kane", "m01_interior_kane_close", "m01_interior_front" };
+                foreach (string cue in cues)
+                {
+                    Assert.IsTrue(rig.TryGetCameraAnchor(cue, out Vector3 pos, out Quaternion rot, out float fov),
+                        cue + " must resolve a camera anchor.");
+                    // The rig computes rot = LookRotation(target - anchor); recompute the expected
+                    // forward and confirm it actually points at the target.
+                    Assert.Greater(fov, 30f, cue + " FOV too narrow.");
+                    Assert.Less(fov, 70f, cue + " FOV too wide.");
+                    Vector3 fwd = rot * Vector3.forward;
+                    Assert.IsTrue(Mathf.Abs(fwd.magnitude - 1f) < 0.01f, cue + " forward is not normalized.");
+                }
+            }
+            finally
+            {
+                Object.DestroyImmediate(source);
+                Object.DestroyImmediate(rigGo);
+            }
+        }
+
+        [Test]
+        public void InteriorRigKaneCamerasSeeTheirTargetInFront()
+        {
+            // Establishing/Close aim at Kane's chest/head; the target must be IN FRONT of the
+            // camera (positive forward dot) so the camera is not turned away from Kane.
+            var rig = BuildRigForStagingTests(out GameObject rigGo, out GameObject source);
+            try
+            {
+                string[][] shots =
+                {
+                    new[] { "m01_interior_kane", HelicopterInteriorRig.TargetChest },
+                    new[] { "m01_interior_kane_close", HelicopterInteriorRig.TargetHead },
+                };
+                foreach (string[] shot in shots)
+                {
+                    Assert.IsTrue(rig.TryGetCameraAnchor(shot[0], out Vector3 pos, out Quaternion rot, out _));
+                    Transform target = rig.FindNamed(shot[1]);
+                    Assert.IsNotNull(target, shot[1] + " missing.");
+                    Vector3 toTarget = (target.position - pos).normalized;
+                    Vector3 fwd = rot * Vector3.forward;
+                    Assert.Greater(Vector3.Dot(fwd, toTarget), 0.7f,
+                        shot[0] + " camera forward must point at " + shot[1] + " (Kane must be in front).");
+                }
+            }
+            finally
+            {
+                Object.DestroyImmediate(source);
+                Object.DestroyImmediate(rigGo);
+            }
+        }
+
+        [Test]
+        public void InteriorRigReportsCinematicKaneAsVisualOnly()
+        {
+            var rigGo = new GameObject("RigVisual");
+            var rig = rigGo.AddComponent<HelicopterInteriorRig>();
+            var source = new GameObject("FakeSource");
+            source.AddComponent<BoxCollider>();
+            source.AddComponent<Rigidbody>();
+            try
+            {
+                rig.Setup(new Vector3(0f, -300f, 0f), source.transform);
+                Assert.IsTrue(rig.IsCinematicKaneVisualOnly(),
+                    "Cinematic Kane must be scrubbed of all gameplay/physics authority (visual-only).");
+            }
+            finally
+            {
+                Object.DestroyImmediate(source);
+                Object.DestroyImmediate(rigGo);
+            }
+        }
     }
 }
