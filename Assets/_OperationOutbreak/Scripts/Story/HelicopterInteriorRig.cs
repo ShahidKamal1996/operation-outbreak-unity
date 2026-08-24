@@ -554,10 +554,10 @@ namespace OperationOutbreak.Story
             return null;
         }
 
-        private static GameObject AddCube(Transform parent, string name, Vector3 scale, Vector3 pos, Material mat) =>
+        private GameObject AddCube(Transform parent, string name, Vector3 scale, Vector3 pos, Material mat) =>
             AddPart(parent, PrimitiveType.Cube, name, scale, pos, Quaternion.identity, mat, occluder: false);
 
-        private static GameObject AddCylinder(Transform parent, string name, Vector3 scale, Vector3 pos, Quaternion rot, Material mat) =>
+        private GameObject AddCylinder(Transform parent, string name, Vector3 scale, Vector3 pos, Quaternion rot, Material mat) =>
             AddPart(parent, PrimitiveType.Cylinder, name, scale, pos, rot, mat, occluder: false);
 
         private GameObject AddOccluder(Transform parent, string name, Vector3 scale, Vector3 pos, Material mat) =>
