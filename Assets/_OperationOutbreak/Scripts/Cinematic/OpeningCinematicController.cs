@@ -19,10 +19,12 @@ namespace OperationOutbreak.Cinematic
 
         [Header("Camera")]
         [SerializeField] private Camera exteriorCamera;
-        [SerializeField] private Vector3 cameraOffset = new Vector3(0f, 5f, -14f);
+        [Tooltip("Local-space trailing offset from the helicopter. Behind = -Z, above = +Y, side = +/-X.")]
+        [SerializeField] private Vector3 cameraOffset = new Vector3(6f, 4f, -16f);
         [SerializeField] private float cameraFollowDamp = 3f;
-        [SerializeField] private float cameraFov = 45f;
-        [SerializeField] private Transform cameraLookTarget;
+        [SerializeField] private float cameraFov = 48f;
+        [Tooltip("Moving focus target that the camera looks at. Should be parented to the helicopter.")]
+        [SerializeField] private Transform cameraFocusTarget;
 
         [Header("Micro-motion")]
         [SerializeField] private Transform helicopterVisual;
@@ -162,7 +164,8 @@ namespace OperationOutbreak.Cinematic
 
         private Quaternion ComputeCameraLook(float t)
         {
-            Vector3 lookAt = cameraLookTarget != null ? cameraLookTarget.position : flightRoot.position;
+            // Look at the helicopter-relative moving focus target (not a fixed city-center point).
+            Vector3 lookAt = cameraFocusTarget != null ? cameraFocusTarget.position : flightRoot.position;
             return Quaternion.LookRotation(lookAt - _cameraPos, Vector3.up);
         }
 

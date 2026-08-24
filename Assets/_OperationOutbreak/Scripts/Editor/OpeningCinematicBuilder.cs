@@ -20,11 +20,11 @@ namespace OperationOutbreak.EditorTools
 
         private static readonly Vector3[] PathPositions =
         {
-            new Vector3(-30f, 45f, -50f),   // high, left, behind the city
-            new Vector3(-12f, 38f, -5f),     // descending, approaching
-            new Vector3(8f, 32f, 28f),       // over the near city
-            new Vector3(12f, 26f, 55f),      // over corridor, descending
-            new Vector3(0f, 20f, 78f),        // transition point (above far corridor end)
+            new Vector3(-35f, 65f, -55f),   // high, left, behind the city (establishing)
+            new Vector3(-20f, 60f, -10f),    // descending, approaching
+            new Vector3(0f, 55f, 30f),       // over the near city
+            new Vector3(12f, 50f, 60f),      // over corridor, descending
+            new Vector3(0f, 45f, 90f),        // high transition point (above far corridor end)
         };
 
         [MenuItem("Tools/Operation Outbreak/Build/Refresh Opening Cinematic")]
@@ -65,6 +65,9 @@ namespace OperationOutbreak.EditorTools
             heliVisual.transform.SetParent(flightRoot.transform, false);
 
             GameObject model = BuildHelicopterModel(heliVisual.transform);
+            // Copter_2's nose may not align with Unity +Z. Apply a yaw correction on the visual
+            // wrapper so the model flies nose-first without corrupting the flight root orientation.
+            heliVisual.transform.localRotation = Quaternion.Euler(0f, 180f, 0f);
             Transform mainRotor = BuildRotorOverlay(heliVisual.transform, model);
 
             // Rotor presentation.
@@ -96,10 +99,10 @@ namespace OperationOutbreak.EditorTools
             cam.depth = 10f;
             cam.clearFlags = CameraClearFlags.Skybox;
 
-            // --- Camera look target ---
-            var lookTarget = new GameObject("CameraLookTarget");
-            lookTarget.transform.SetParent(root.transform, false);
-            lookTarget.transform.position = new Vector3(0f, 8f, 40f);
+            // --- Camera focus target (helicopter-relative, moves with the helicopter) ---
+            var focusTarget = new GameObject("CameraFocusTarget");
+            focusTarget.transform.SetParent(flightRoot.transform, false);
+            focusTarget.transform.localPosition = new Vector3(0f, 1f, 4f); // slightly forward + above helicopter
 
             // --- Controller ---
             var controller = root.AddComponent<OpeningCinematicController>();
@@ -107,7 +110,7 @@ namespace OperationOutbreak.EditorTools
             so.FindProperty("flightRoot").objectReferenceValue = flightRoot.transform;
             so.FindProperty("helicopterVisual").objectReferenceValue = heliVisual.transform;
             so.FindProperty("exteriorCamera").objectReferenceValue = cam;
-            so.FindProperty("cameraLookTarget").objectReferenceValue = lookTarget.transform;
+            so.FindProperty("cameraFocusTarget").objectReferenceValue = focusTarget.transform;
 
             var pathProp = so.FindProperty("flightPathPoints");
             pathProp.arraySize = points.Length;
