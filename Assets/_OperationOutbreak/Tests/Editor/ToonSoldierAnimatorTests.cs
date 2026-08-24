@@ -419,6 +419,43 @@ namespace OperationOutbreak.Tests
                 "The Base Layer state machine must survive the reimport.");
         }
 
+        [Test]
+        public void CommittedShootLayerStateMachineUsesColdStableFileId()
+        {
+            // QA fix #11B recurrence guard. The Shoot Layer state machine must use a DETERMINISTIC,
+            // cold-stable fileID (small, like the Base Layer's 1107000001). A large hash fileID
+            // produced by AnimatorController.AddLayer cold-imports as an UNLINKED sub-asset, so on a
+            // fresh editor import layers[1].stateMachine is null — the exact recurring 1P.5
+            // regression. This pins the deterministic-fileID fix at the file level so a future
+            // rebuild that regresses to a hash fileID fails here with a precise message.
+            const string path = ToonSoldierAnimationSetup.ControllerPath;
+            string text = System.IO.File.ReadAllText(path);
+
+            var objects = new System.Collections.Generic.Dictionary<string, string>();
+            foreach (System.Text.RegularExpressions.Match m in System.Text.RegularExpressions.Regex.Matches(
+                text, @"^--- !u!(\d+) &(-?\d+)", System.Text.RegularExpressions.RegexOptions.Multiline))
+            {
+                objects[m.Groups[2].Value] = m.Groups[1].Value;
+            }
+
+            int layerIdx = text.IndexOf("m_Name: " + ToonSoldierAnimationSetup.ShootLayerName);
+            Assert.GreaterOrEqual(layerIdx, 0, "Shoot Layer not found in the committed controller.");
+            var smMatch = System.Text.RegularExpressions.Regex.Match(
+                text.Substring(layerIdx, 300), @"m_StateMachine: \{fileID: (-?\d+)\}");
+            Assert.IsTrue(smMatch.Success, "Shoot Layer m_StateMachine reference not found.");
+            string smFileId = smMatch.Groups[1].Value;
+
+            Assert.IsTrue(objects.ContainsKey(smFileId),
+                "Shoot Layer SM fileID " + smFileId + " must resolve to a serialized object.");
+            Assert.AreEqual("1107", objects[smFileId],
+                "Shoot Layer SM must reference an AnimatorStateMachine (class 1107).");
+
+            long id = long.Parse(smFileId);
+            Assert.Less(id, (long)1 << 31,
+                "Shoot Layer SM fileID must be a cold-stable DETERMINISTIC id (< 2^31), not an " +
+                "AddLayer hash. A hash fileID cold-imports as a missing state machine. Got: " + smFileId);
+        }
+
         /// <summary>
         /// QA fix #12A - resolves a mask transform path to its index (the index is the
         /// only addressing form Unity's AvatarMask transform APIs accept).

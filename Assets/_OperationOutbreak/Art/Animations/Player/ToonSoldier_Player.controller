@@ -134,7 +134,7 @@ AnimatorController:
     m_Controller: {fileID: 9100000}
   - serializedVersion: 5
     m_Name: Shoot Layer
-    m_StateMachine: {fileID: 7680573624224334492}
+    m_StateMachine: {fileID: 1107000002}
     m_Mask: {fileID: 31900000, guid: fb810ffb652e734418f7e8b4132caa44, type: 2}
     m_Motions: []
     m_Behaviours: []
@@ -328,7 +328,7 @@ AnimatorStateTransition:
   m_InterruptionSource: 0
   m_OrderedInterruption: 1
   m_CanTransitionToSelf: 1
---- !u!1107 &7680573624224334492
+--- !u!1107 &1107000002
 AnimatorStateMachine:
   serializedVersion: 7
   m_ObjectHideFlags: 1

@@ -228,6 +228,12 @@ namespace OperationOutbreak.EditorTools
             EditorUtility.SetDirty(controller);
             AssetDatabase.SaveAssets();
 
+            // 1Z.1 QA fix #11B — AnimatorController.AddLayer assigns the Shoot Layer state machine a
+            // large hash fileID that Unity 6 cold-imports as an UNLINKED sub-asset (layers[1].
+            // stateMachine null on a fresh import). Rewrite it to a cold-stable deterministic id so
+            // a rebuild can never reintroduce the cold-import regression.
+            NormalizeShootLayerStateMachineFileId();
+
             // 1Z.1 QA fix #5 — reload-after-save validation: force a fresh import, reload the
             // controller from disk, and verify the Shoot Layer's weight/mask/stateMachine all
             // survived serialization. This catches the struct-copy-persistence bug.
@@ -545,6 +551,48 @@ namespace OperationOutbreak.EditorTools
         }
 
         // ------------------------------------------------------------------ helpers
+
+        /// <summary>
+        /// 1Z.1 QA fix #11B — AnimatorController.AddLayer assigns a newly-added layer's state
+        /// machine a large hash fileID. Unity 6 cold-imports such a state machine as an UNLINKED
+        /// sub-asset, so on a fresh editor import the layer's stateMachine is null (the recurring
+        /// "Statemachine for layer 'Shoot Layer' is missing" regression). This rewrites the Shoot
+        /// Layer state machine's fileID to a cold-stable deterministic value (matching the Base
+        /// Layer's 1107000001 pattern) in the serialized controller, so a rebuild can never
+        /// reintroduce the defect. Idempotent, collision-guarded, wrapped so it can never break a rebuild.
+        /// </summary>
+        private static void NormalizeShootLayerStateMachineFileId()
+        {
+            try
+            {
+                const string target = "1107000002";
+                string text = System.IO.File.ReadAllText(ControllerPath);
+
+                // Collision guard: never rewrite onto an id that already exists in the file.
+                if (text.Contains("&" + target) || text.Contains("{fileID: " + target + "}")) return;
+
+                int idx = text.IndexOf("m_Name: " + ShootLayerName);
+                if (idx < 0) return;
+                var sm = System.Text.RegularExpressions.Regex.Match(
+                    text.Substring(idx, 300), @"m_StateMachine: \{fileID: (-?\d+)\}");
+                if (!sm.Success) return;
+
+                string oldId = sm.Groups[1].Value;
+                if (long.Parse(oldId) < (1L << 31)) return; // already a cold-stable deterministic id
+
+                string before = text;
+                text = text.Replace("m_StateMachine: {fileID: " + oldId + "}", "m_StateMachine: {fileID: " + target + "}");
+                text = text.Replace("--- !u!1107 &" + oldId, "--- !u!1107 &" + target);
+
+                if (text == before) return;
+                System.IO.File.WriteAllText(ControllerPath, text);
+                Debug.Log("[1P.5] Normalized Shoot Layer state machine fileID " + oldId + " -> " + target + " (cold-stable).");
+            }
+            catch (System.Exception e)
+            {
+                Debug.LogWarning("[1P.5] Shoot Layer state machine fileID normalization skipped: " + e.Message);
+            }
+        }
 
         private static void ClearController(AnimatorController controller)
         {
