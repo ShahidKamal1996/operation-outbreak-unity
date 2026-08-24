@@ -20,11 +20,11 @@ namespace OperationOutbreak.EditorTools
 
         private static readonly Vector3[] PathPositions =
         {
-            new Vector3(-35f, 65f, -55f),   // high, left, behind the city (establishing)
-            new Vector3(-20f, 60f, -10f),    // descending, approaching
-            new Vector3(0f, 55f, 30f),       // over the near city
-            new Vector3(12f, 50f, 60f),      // over corridor, descending
-            new Vector3(0f, 45f, 90f),        // high transition point (above far corridor end)
+            new Vector3(-35f, 75f, -55f),   // high, left, behind the city (establishing)
+            new Vector3(-20f, 70f, -10f),    // descending, approaching
+            new Vector3(0f, 65f, 30f),       // over the near city
+            new Vector3(12f, 60f, 60f),      // over corridor, descending
+            new Vector3(0f, 55f, 90f),        // high transition point
         };
 
         [MenuItem("Tools/Operation Outbreak/Build/Refresh Opening Cinematic")]
@@ -67,7 +67,8 @@ namespace OperationOutbreak.EditorTools
             GameObject model = BuildHelicopterModel(heliVisual.transform);
             // Copter_2's nose may not align with Unity +Z. Apply a yaw correction on the visual
             // wrapper so the model flies nose-first without corrupting the flight root orientation.
-            heliVisual.transform.localRotation = Quaternion.Euler(0f, 180f, 0f);
+            // The serialized modelYawOffset on the controller handles the final orientation;
+            // the builder just wires the reference and the controller's micro-motion applies the yaw.
             Transform mainRotor = BuildRotorOverlay(heliVisual.transform, model);
 
             // Rotor presentation.
@@ -128,22 +129,53 @@ namespace OperationOutbreak.EditorTools
             {
                 var inst = (GameObject)PrefabUtility.InstantiatePrefab(prefab, parent);
                 inst.name = "Copter_2";
-                // Scale to cinematic size (~7 m).
+
+                // Ensure the model's material is assigned (Copter_2 OBJ may import without material refs).
+                var mat = AssetDatabase.LoadAssetAtPath<Material>(
+                    "Assets/_OperationOutbreak/Resources/Helicopter/Materials/M_Helicopter.mat");
+                if (mat != null)
+                {
+                    foreach (var r in inst.GetComponentsInChildren<Renderer>(true))
+                        r.sharedMaterial = mat;
+                }
+
+                // Scale to cinematic size (~7 m) based on ACTUAL renderer bounds.
                 Bounds b = CombineBounds(inst);
                 float maxDim = Mathf.Max(b.size.x, b.size.y, b.size.z);
-                if (maxDim > 0.01f) inst.transform.localScale = Vector3.one * (7f / maxDim);
+                if (maxDim > 0.01f)
+                {
+                    float scale = 7f / maxDim;
+                    inst.transform.localScale = Vector3.one * scale;
+                }
+                else
+                {
+                    // Bounds were zero — likely no renderer or not yet imported. Default scale.
+                    Debug.LogWarning("[1Z.1B] Copter_2 has zero renderer bounds — using default scale 1.");
+                    inst.transform.localScale = Vector3.one;
+                }
+
+                // Re-center vertically so the model sits on HelicopterVisual origin.
                 b = CombineBounds(inst);
                 inst.transform.localPosition = new Vector3(0f, -b.min.y + 0.1f, 0f);
+
+                // Ensure all renderers are enabled and on the default layer (0) which ExteriorCamera sees.
+                foreach (var r in inst.GetComponentsInChildren<Renderer>(true))
+                {
+                    r.enabled = true;
+                    r.gameObject.layer = 0;
+                }
+
+                Debug.Log($"[1Z.1B] Copter_2 instantiated. Bounds={b.size}, scale={inst.transform.localScale}.");
                 return inst;
             }
 
-            // Fallback placeholder.
+            // Fallback placeholder — emit an ERROR, not just a warning.
             var fallback = GameObject.CreatePrimitive(PrimitiveType.Capsule);
-            fallback.name = "TEMPORARY_HelicopterPlaceholder";
+            fallback.name = "TEMPORARY_HelicopterPlaceholder_ERROR";
             fallback.transform.SetParent(parent, false);
             fallback.transform.localScale = new Vector3(1.2f, 3f, 1.2f);
             var col = fallback.GetComponent<Collider>(); if (col) col.enabled = false;
-            Debug.LogWarning("[1Z.1B] Copter_2 not found in Resources — using temporary placeholder.");
+            Debug.LogError("[1Z.1B] PRODUCTION ERROR: Copter_2 not found in Resources at '" + ModelPath + "' — using temporary placeholder. The cinematic helicopter will not look correct!");
             return fallback;
         }
 

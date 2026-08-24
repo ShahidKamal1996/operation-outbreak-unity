@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using UnityEngine;
 
 namespace OperationOutbreak.Cinematic
@@ -28,9 +29,15 @@ namespace OperationOutbreak.Cinematic
 
         [Header("Micro-motion")]
         [SerializeField] private Transform helicopterVisual;
+        [Tooltip("Yaw correction for the imported model (0 = model faces +Z, 180 = corrected).")]
+        [SerializeField] private float modelYawOffset = 180f;
         [SerializeField] private float bobAmplitude = 0.12f;
         [SerializeField] private float bobFrequency = 1.8f;
         [SerializeField] private float tiltDegrees = 1.5f;
+
+        [Header("Gameplay Visual Isolation")]
+        [Tooltip("Name(s) of gameplay visual roots to hide during the exterior cinematic.")]
+        [SerializeField] private string[] gameplayVisualNames = { "Player" };
 
         [Header("Auto")]
         [Tooltip("If true, the exterior flyover starts automatically when the scene enters Play mode.")]
@@ -46,6 +53,7 @@ namespace OperationOutbreak.Cinematic
         private Quaternion _cameraRot;
         private Camera _disabledMainCamera;
         private bool _mainCameraWasEnabled;
+        private readonly List<GameObject> _hiddenGameplayObjects = new List<GameObject>();
 
         /// <summary>True when the exterior camera component is enabled and rendering.</summary>
         public bool IsExteriorCameraEnabled => exteriorCamera != null && exteriorCamera.enabled;
@@ -62,9 +70,9 @@ namespace OperationOutbreak.Cinematic
             if (CurrentPhase != Phase.Inactive) return;
 
             // Fail-safe: validate the exterior camera BEFORE touching the gameplay camera.
-            if (exteriorCamera == null || !exteriorCamera.gameObject.activeInHierarchy)
+            if (!ValidateCinematicSetup())
             {
-                Debug.LogError("[OPENING CINEMATIC] Exterior camera not valid — aborting. Gameplay camera preserved.");
+                Debug.LogError("[OPENING CINEMATIC] Setup validation failed — aborting. Gameplay camera preserved.");
                 return;
             }
 
@@ -88,14 +96,85 @@ namespace OperationOutbreak.Cinematic
                 main.enabled = false;
             }
 
+            // Temporarily hide the gameplay player visual so it does not appear in the cinematic.
+            HideGameplayVisuals();
+
             Debug.Log("[OPENING CINEMATIC] Exterior flyover started.");
+        }
+
+        /// <summary>
+        /// Validates that the cinematic has all required elements before starting.
+        /// </summary>
+        public bool ValidateCinematicSetup()
+        {
+            if (exteriorCamera == null || !exteriorCamera.gameObject.activeInHierarchy)
+            {
+                Debug.LogError("[OPENING CINEMATIC] Exterior camera is null or inactive.");
+                return false;
+            }
+
+            if (helicopterVisual == null)
+            {
+                Debug.LogError("[OPENING CINEMATIC] Helicopter visual is null.");
+                return false;
+            }
+
+            // Verify the helicopter has at least one enabled renderer with non-zero bounds.
+            bool foundRenderer = false;
+            foreach (var r in helicopterVisual.GetComponentsInChildren<Renderer>(true))
+            {
+                if (r == null || !r.enabled) continue;
+                if (r.bounds.size.magnitude > 0.01f) { foundRenderer = true; break; }
+            }
+            if (!foundRenderer)
+            {
+                Debug.LogError("[OPENING CINEMATIC] No enabled helicopter renderer with non-zero bounds found.");
+                return false;
+            }
+
+            return true;
+        }
+
+        private void HideGameplayVisuals()
+        {
+            _hiddenGameplayObjects.Clear();
+            foreach (string name in gameplayVisualNames)
+            {
+                var go = GameObject.Find(name);
+                if (go == null) continue;
+
+                // Record and hide all renderers on this object hierarchy.
+                foreach (var r in go.GetComponentsInChildren<Renderer>(true))
+                {
+                    if (r.enabled)
+                    {
+                        r.enabled = false;
+                        _hiddenGameplayObjects.Add(go); // record the GO so we can restore
+                    }
+                }
+            }
+        }
+
+        private void RestoreGameplayVisuals()
+        {
+            // Re-enable all renderers we disabled. Track unique GOs we touched.
+            var restored = new HashSet<GameObject>();
+            foreach (var go in _hiddenGameplayObjects)
+            {
+                if (go == null || restored.Contains(go)) continue;
+                foreach (var r in go.GetComponentsInChildren<Renderer>(true))
+                    r.enabled = true;
+                restored.Add(go);
+            }
+            _hiddenGameplayObjects.Clear();
         }
 
         private void OnDestroy()
         {
-            // Safety: restore the gameplay Main Camera if the cinematic is destroyed mid-sequence.
+            // Safety: restore the gameplay Main Camera + visuals if destroyed mid-sequence.
             if (_disabledMainCamera != null && _mainCameraWasEnabled)
                 _disabledMainCamera.enabled = true;
+            RestoreGameplayVisuals();
         }
 
         private void Update()
@@ -122,14 +201,14 @@ namespace OperationOutbreak.Cinematic
                         Time.unscaledDeltaTime * 4f);
                 }
 
-                // Micro-motion on the visual child (bob + tilt).
+                // Micro-motion on the visual child (bob + tilt + model yaw).
                 if (helicopterVisual != null)
                 {
                     float t = Time.unscaledTime;
                     helicopterVisual.localPosition = new Vector3(0f, Mathf.Sin(t * bobFrequency) * bobAmplitude, 0f);
                     helicopterVisual.localRotation = Quaternion.Euler(
                         Mathf.Sin(t * bobFrequency * 0.7f) * tiltDegrees,
-                        0f,
+                        modelYawOffset,
                         Mathf.Sin(t * bobFrequency * 0.5f) * tiltDegrees);
                 }
             }

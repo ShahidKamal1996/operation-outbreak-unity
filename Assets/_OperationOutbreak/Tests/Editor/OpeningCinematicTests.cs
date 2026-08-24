@@ -220,5 +220,82 @@ namespace OperationOutbreak.Tests
             Assert.AreEqual(OpeningCinematicController.Phase.Inactive, controller.CurrentPhase,
                 "Controller must abort (stay Inactive) when exterior camera is not valid.");
         }
+
+        [Test]
+        public void HelicopterHasEnabledRenderersWithNonZeroBounds()
+        {
+            var root = Build();
+            var visual = root.transform.Find("HelicopterFlightRoot/HelicopterVisual");
+            Assert.IsNotNull(visual, "HelicopterVisual must exist.");
+            bool found = false;
+            foreach (var r in visual.GetComponentsInChildren<Renderer>(true))
+            {
+                if (r != null && r.enabled && r.bounds.size.magnitude > 0.01f)
+                { found = true; break; }
+            }
+            Assert.IsTrue(found, "At least one enabled renderer with non-zero bounds must exist on the helicopter.");
+        }
+
+        [Test]
+        public void HelicopterRenderersOnDefaultLayer()
+        {
+            var root = Build();
+            var visual = root.transform.Find("HelicopterFlightRoot/HelicopterVisual");
+            foreach (var r in visual.GetComponentsInChildren<Renderer>(true))
+            {
+                if (r == null || !r.enabled) continue;
+                Assert.AreEqual(0, r.gameObject.layer,
+                    "Helicopter renderer '" + r.name + "' must be on layer 0 (default) for ExteriorCamera culling.");
+            }
+        }
+
+        [Test]
+        public void GameplayVisualHidingIsReversible()
+        {
+            // Create a fake "Player" object with a renderer, simulate hide + restore.
+            var fakePlayer = new GameObject("Player");
+            var mr = fakePlayer.AddComponent<MeshRenderer>();
+            mr.enabled = true;
+            try
+            {
+                var root = Build();
+                var controller = root.GetComponent<OpeningCinematicController>();
+
+                // Set gameplayVisualNames to include "Player" (already default).
+                var namesField = typeof(OpeningCinematicController).GetField("gameplayVisualNames",
+                    System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+
+                // Hide
+                var hideMethod = typeof(OpeningCinematicController).GetMethod("HideGameplayVisuals",
+                    System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+                hideMethod.Invoke(controller, null);
+                Assert.IsFalse(mr.enabled, "Player renderer must be hidden during cinematic.");
+
+                // Restore
+                var restoreMethod = typeof(OpeningCinematicController).GetMethod("RestoreGameplayVisuals",
+                    System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+                restoreMethod.Invoke(controller, null);
+                Assert.IsTrue(mr.enabled, "Player renderer must be restored after cinematic.");
+            }
+            finally
+            {
+                Object.DestroyImmediate(fakePlayer);
+            }
+        }
+
+        [Test]
+        public void ValidationFailsWithNoHelicopterRenderers()
+        {
+            var root = Build();
+            var controller = root.GetComponent<OpeningCinematicController>();
+            // Remove all renderers from helicopter visual to trigger validation failure.
+            var visual = root.transform.Find("HelicopterFlightRoot/HelicopterVisual");
+            foreach (var r in visual.GetComponentsInChildren<Renderer>(true))
+                r.enabled = false;
+
+            LogAssert.Expect(LogType.Error, "[OPENING CINEMATIC] No enabled helicopter renderer with non-zero bounds found.");
+            bool result = controller.ValidateCinematicSetup();
+            Assert.IsFalse(result, "Validation must fail when no helicopter renderers are enabled.");
+        }
     }
 }
