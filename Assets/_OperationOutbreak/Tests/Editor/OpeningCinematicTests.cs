@@ -2,6 +2,7 @@ using NUnit.Framework;
 using OperationOutbreak.Cinematic;
 using OperationOutbreak.EditorTools;
 using UnityEngine;
+using UnityEngine.TestTools;
 
 namespace OperationOutbreak.Tests
 {
@@ -214,6 +215,7 @@ namespace OperationOutbreak.Tests
                 System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
             field.SetValue(controller, null);
 
+            LogAssert.Expect(LogType.Error, "[OPENING CINEMATIC] Exterior camera not valid — aborting. Gameplay camera preserved.");
             controller.StartExteriorFlyover();
             Assert.AreEqual(OpeningCinematicController.Phase.Inactive, controller.CurrentPhase,
                 "Controller must abort (stay Inactive) when exterior camera is not valid.");
