@@ -4,9 +4,9 @@ using UnityEngine.Rendering;
 namespace OperationOutbreak.Cinematic
 {
     /// <summary>
-    /// Milestone 1Z.1A Visual QA Fix #2 — REWORKED for aerial destruction readability at 50–80 m.
-    /// Larger fire masses, wider/taller smoke plumes, composite damaged buildings, darker stepped
-    /// skyline, bigger scorch fields, dramatic destruction landmarks, stronger haze.
+    /// Milestone 1Z.1A Visual QA Fix #3 — FINAL aerial art-direction pass.
+    /// Sphere-based irregular smoke blobs (no cylinders), patch-based atmosphere (no beams),
+    /// fire embedded in wreckage, distant destruction events, more composite buildings.
     /// </summary>
     public static class CinematicCityExtension
     {
@@ -111,13 +111,13 @@ namespace OperationOutbreak.Cinematic
                 AddBox(p, "B_" + id + "_" + b, c + new Vector3(ox, h * .5f, oz),
                     new Vector3(w, h, d), Q(r, NF(r) * 90f, col ? NF(r) * 12f : 0), mat, !col);
 
-                // Stepped/broken top — shorter offset box creating irregular silhouette.
-                if (!col && NF(r) < 0.5f)
+                // Stepped/broken top — ~70% of standing buildings.
+                if (!col && NF(r) < 0.7f)
                 {
-                    float sh = h * (0.25f + NF(r) * 0.25f);
+                    float sh = h * (0.2f + NF(r) * 0.3f);
                     AddBox(p, "B_" + id + "_" + b + "t",
                         c + new Vector3(ox + NF(r) * 2f - 1f, h + sh * .3f, oz + NF(r) * 2f - 1f),
-                        new Vector3(w * .7f, sh, d * .7f), Q(r, NF(r) * 60f), mat, true);
+                        new Vector3(w * .65f, sh, d * .65f), Q(r, NF(r) * 60f), mat, true);
                 }
             }
             if (NF(r) < 0.6f)
@@ -128,22 +128,21 @@ namespace OperationOutbreak.Cinematic
         // ===== Destruction landmarks =====
         private static void BuildDestructionLandmarks(Transform p, Materials m, System.Random r)
         {
-            // 1. Collapsed high-rise (tall + broken offset top + rubble).
             LandmarkTower(p, m, r, "L_HighRise", new Vector3(24f, 0, 22f), 8f, 24f, 8, m.MidConcrete, 0, 12f);
-            // 2. Burning industrial (dark block + fire zone at base).
             LandmarkTower(p, m, r, "L_Industrial", new Vector3(-28f, 0, 62f), 13f, 18f, -12, m.MidRust, 8f, 0);
-            // 3. Heavy rubble district (cluster of collapsed structures).
             for (int i = 0; i < 5; i++)
                 AddBox(p, "L_Rubble_" + i, new Vector3(32f + NF(r)*8f-4f, NF(r)*1.5f+.5f, 94f + NF(r)*8f-4f),
                     new Vector3(3f+NF(r)*2f, 2f+NF(r)*2f, 3f+NF(r)*2f), Q(r, NF(r)*360f, NF(r)*15f), m.MidRubble, false);
             AddBox(p, "L_Rubble_Base", new Vector3(32f, .3f, 94f), new Vector3(16f, .5f, 16f), Q(r, 20f), m.MidRubble, false);
-            // 4. Leaning tower.
             LandmarkTower(p, m, r, "L_Leaning", new Vector3(38f, 0, -8f), 7f, 32f, 15, m.MidConcreteDark, 14f, 0);
-            // 5. Damaged stepped block.
             LandmarkTower(p, m, r, "L_Stepped", new Vector3(-32f, 0, 105f), 10f, 16f, -5, m.MidConcrete, 6f, 0);
-            // 6. Destroyed checkpoint.
             AddBox(p, "L_Checkpoint", new Vector3(-26f, 2.5f, 8f), new Vector3(8f, 5f, 8f), Q(r, 0), m.MidSteel, true);
             AddBox(p, "L_Check_Rub", new Vector3(-26f, .6f, 8f), new Vector3(11f, 1.2f, 11f), Q(r, 10f), m.MidRubble, false);
+
+            // Distant destruction events (farther out — share the disaster story).
+            LandmarkTower(p, m, r, "L_FarCollapsed", new Vector3(65f, 0, 85f), 7f, 22f, 5, m.Silhouette, 8f, 8f);
+            LandmarkTower(p, m, r, "L_FarBurning", new Vector3(-60f, 0, 110f), 9f, 16f, -8, m.Silhouette, 0, 5f);
+            AddBox(p, "L_FarRubble", new Vector3(55f, .5f, 130f), new Vector3(14f, 1.5f, 14f), Q(r, 15), m.MidRubble, false);
         }
 
         private static void LandmarkTower(Transform p, Materials m, System.Random r, string name,
@@ -166,7 +165,6 @@ namespace OperationOutbreak.Cinematic
                 float w = 5f + NF(r) * 11f, d = 5f + NF(r) * 11f, h = 10f + NF(r) * 35f;
                 float lean = NF(r) < 0.2f ? NF(r) * 10f : 0;
                 AddBox(p, "F_" + i, new Vector3(x, h * .5f, z), new Vector3(w, h, d), Q(r, NF(r)*20, lean), m.Silhouette, false);
-                // Stepped/broken top
                 if (NF(r) < 0.65f)
                 {
                     float sh = h * (0.2f + NF(r) * 0.3f);
@@ -176,64 +174,84 @@ namespace OperationOutbreak.Cinematic
             }
         }
 
-        // ===== Fire zones (large flame masses) =====
+        // ===== Fire zones (large flame masses with wreckage sources) =====
         private static void BuildFireZones(Transform p, Materials m, System.Random r)
         {
-            // 4 PRIMARY zones — large flame masses (5-7 cubes each, 2-4m).
             for (int i = 0; i < 4 && i < DestructionZones.Length; i++)
             {
                 Vector3 z = DestructionZones[i];
+                // Wreckage source — collapsed structure the fire originates from.
+                AddBox(p, "FSrc_" + i, new Vector3(z.x, 1.5f, z.z),
+                    new Vector3(4f, 3f, 4f), Q(r, NF(r)*45f, NF(r)*10f), m.MidConcreteDark, false);
+                for (int d = 0; d < 3; d++)
+                    AddBox(p, "FDeb_" + i + "_" + d, new Vector3(z.x + (NF(r)-.5f)*5f, .5f + NF(r), z.z + (NF(r)-.5f)*5f),
+                        new Vector3(1f+NF(r), .8f+NF(r), 1f+NF(r)), Q(r, NF(r)*40f, NF(r)*360f, NF(r)*40f), m.MidRust, false);
+                // Fire flames (large, varied angles — read as a flame mass, not isolated cubes).
                 int flames = 5 + (int)(NF(r) * 3);
                 for (int f = 0; f < flames; f++)
                 {
                     float fx = z.x + (NF(r)-.5f) * 5f, fz = z.z + (NF(r)-.5f) * 5f;
                     float fh = 2f + NF(r) * 3f, fw = 1.5f + NF(r) * 2f;
-                    AddBox(p, "Fire_" + i + "_" + f, new Vector3(fx, fh*.5f, fz),
+                    AddBox(p, "Fire_" + i + "_" + f, new Vector3(fx, fh*.5f + .5f, fz),
                         new Vector3(fw, fh, fw), Q(r, NF(r)*360f, NF(r)*20f), m.Fire, false);
                 }
             }
-            // 3 SECONDARY smoldering points (smaller, 2-3 cubes each, 1-2m).
+            // 3 SECONDARY smoldering points.
             for (int i = 4; i < 7 && i < DestructionZones.Length; i++)
             {
                 Vector3 z = DestructionZones[i];
+                AddBox(p, "FSrc_" + i, new Vector3(z.x, 1f, z.z), new Vector3(3f, 2f, 3f), Q(r, NF(r)*30), m.MidRust, false);
                 for (int f = 0; f < 2 + (int)NF(r); f++)
                 {
                     float fx = z.x + (NF(r)-.5f)*3f, fz = z.z + (NF(r)-.5f)*3f;
-                    AddBox(p, "FireS_" + i + "_" + f, new Vector3(fx, .8f, fz),
+                    AddBox(p, "FireS_" + i + "_" + f, new Vector3(fx, 1f, fz),
                         new Vector3(1f + NF(r), 1.5f, 1f + NF(r)), Q(r, NF(r)*360f), m.Fire, false);
                 }
             }
+            // Distant fire behind skyline (far right).
+            AddBox(p, "Fire_FarR", new Vector3(65f, 2f, 85f), new Vector3(2.5f, 3f, 2.5f), Q(r, 0), m.Fire, false);
         }
 
-        // ===== Smoke plumes (wide, tall, multi-section tapered) =====
+        // ===== Smoke plumes (irregular sphere-based blobs — no cylinders) =====
         private static void BuildSmokePlumes(Transform p, Materials m, System.Random r)
         {
             for (int i = 0; i < DestructionZones.Length; i++)
             {
                 Vector3 z = DestructionZones[i];
-                float totalH = 25f + NF(r) * 20f; // 25-45m
-                int sections = 7;
-                for (int s = 0; s < sections; s++)
+                float totalH = 25f + NF(r) * 20f; // 25–45 m
+                int blobs = 7;
+                float leanDir = (NF(r) - .5f) * 2f; // plume lean direction
+                for (int s = 0; s < blobs; s++)
                 {
-                    float t = (float)s / sections;
-                    float secH = totalH / sections;
-                    float yC = secH * (s + .5f);
-                    float radius = 2.5f + t * 6f + NF(r) * 1.2f; // wider at top
-                    float drift = s * 0.6f;
-                    AddCylinder(p, "Sm_" + i + "_" + s,
-                        new Vector3(z.x + (NF(r)-.5f)*drift, yC, z.z + (NF(r)-.5f)*drift),
-                        new Vector3(radius, secH * 1.15f, radius), Q(r, NF(r)*25f), m.Smoke, false);
+                    float t = (float)s / blobs;
+                    float yC = totalH * t + NF(r) * 2.5f;
+                    float baseR = 2.5f + t * 5f;
+                    float rx = baseR * (.8f + NF(r) * .5f);
+                    float ry = baseR * (.6f + NF(r) * .4f);
+                    float rz = baseR * (.8f + NF(r) * .5f);
+                    float drift = t * 5f * leanDir + (NF(r) - .5f) * 2f;
+                    AddSphere(p, "Sm_" + i + "_" + s,
+                        new Vector3(z.x + drift, yC, z.z + NF(r) * 2f - 1f),
+                        new Vector3(rx, ry, rz), Q(r, NF(r)*360f, NF(r)*360f, NF(r)*360f),
+                        m.Smoke, false);
                 }
+            }
+            // Distant smoke behind skyline.
+            for (int i = 0; i < 3; i++)
+            {
+                float x = (i - 1) * 40f + 50f;
+                AddSphere(p, "SmFar_" + i, new Vector3(x, 12f + NF(r)*8f, 110f + NF(r)*20f),
+                    new Vector3(5f + NF(r)*3f, 8f, 5f + NF(r)*3f), Q(r, NF(r)*360, NF(r)*360, NF(r)*360),
+                    m.Smoke, false);
             }
         }
 
-        // ===== Scorch zones (large irregular dark patches + wreckage) =====
+        // ===== Scorch zones =====
         private static void BuildScorchZones(Transform p, Materials m, System.Random r)
         {
             for (int i = 0; i < DestructionZones.Length; i++)
             {
                 Vector3 z = DestructionZones[i];
-                // 4 overlapping rotated irregular scorch patches.
                 for (int s = 0; s < 4; s++)
                 {
                     float sz = 8f + NF(r) * 6f;
@@ -241,7 +259,6 @@ namespace OperationOutbreak.Cinematic
                         new Vector3(z.x + (NF(r)-.5f)*5f, .03f, z.z + (NF(r)-.5f)*5f),
                         new Vector3(sz, .06f, sz * (.6f + NF(r)*.5f)), Q(r, NF(r)*360f), m.Scorch, false);
                 }
-                // 5 wreckage debris cubes.
                 for (int d = 0; d < 5; d++)
                     AddBox(p, "Wk_" + i + "_" + d,
                         new Vector3(z.x + (NF(r)-.5f)*8f, .3f + NF(r)*.5f, z.z + (NF(r)-.5f)*8f),
@@ -250,23 +267,38 @@ namespace OperationOutbreak.Cinematic
             }
         }
 
-        // ===== Haze (stronger atmospheric depth) =====
+        // ===== Haze (patch-based atmosphere — NO beams) =====
         private static void BuildHaze(Transform p, Materials m, System.Random r)
         {
-            // Mid-distance depth haze (taller panels).
-            for (int i = 0; i < 6; i++)
+            // 5 LOW smoke/haze banks (3–10 m altitude) — irregular patches, not long beams.
+            for (int i = 0; i < 5; i++)
             {
                 int side = (i % 2 == 0) ? 1 : -1;
-                AddBox(p, "Hz_" + i, new Vector3(side * 46f, 12f + NF(r)*6f, -20f + i * 25f),
-                    new Vector3(5f, 24f + NF(r)*10f, 55f + NF(r)*25f), Q(r, NF(r)*15f), m.Haze, false);
+                AddBox(p, "HzLow_" + i,
+                    new Vector3(side * (15f + NF(r) * 30f), 4f + NF(r) * 4f, -10f + i * 22f + NF(r) * 5f),
+                    new Vector3(25f + NF(r)*15f, 3f + NF(r)*2f, 20f + NF(r)*10f),
+                    Q(r, NF(r) * 45f), m.Haze, false);
             }
-            // Large dirty atmosphere layer (horizontal thin panels at mid-altitude).
-            AddBox(p, "Hz_AtmoA", new Vector3(0f, 18f, 40f), new Vector3(160f, 8f, 6f), Q(r, 5f), m.Haze, false);
-            AddBox(p, "Hz_AtmoB", new Vector3(0f, 14f, 80f), new Vector3(140f, 6f, 5f), Q(r, -8f), m.Haze, false);
-            // Far boundary drifts (larger).
-            AddBox(p, "Hz_Far", new Vector3(0f, 4f, 190f), new Vector3(320f, 8f, 14f), Quaternion.identity, m.Haze, false);
-            AddBox(p, "Hz_R", new Vector3(155f, 4f, 70f), new Vector3(14f, 8f, 300f), Quaternion.identity, m.Haze, false);
-            AddBox(p, "Hz_L", new Vector3(-155f, 4f, 70f), new Vector3(14f, 8f, 300f), Quaternion.identity, m.Haze, false);
+            // 3 MID atmospheric layers (12–25 m altitude).
+            for (int i = 0; i < 3; i++)
+            {
+                int side = (i % 2 == 0) ? 1 : -1;
+                AddBox(p, "HzMid_" + i,
+                    new Vector3(side * (25f + NF(r) * 20f), 15f + NF(r) * 8f, 10f + i * 30f),
+                    new Vector3(30f + NF(r)*10f, 4f + NF(r)*3f, 25f + NF(r)*10f),
+                    Q(r, NF(r) * 30f), m.Haze, false);
+            }
+            // 6 FAR boundary haze patches (ring — not long beams). Conceals perimeter.
+            for (int i = 0; i < 6; i++)
+            {
+                float angle = (float)i / 6f * 360f;
+                float dist = 140f + NF(r) * 20f;
+                AddBox(p, "HzFar_" + i,
+                    new Vector3(Mathf.Sin(angle * Mathf.Deg2Rad) * dist, 3f + NF(r)*3f,
+                                Mathf.Cos(angle * Mathf.Deg2Rad) * dist + 40f),
+                    new Vector3(35f + NF(r)*15f, 6f + NF(r)*4f, 35f + NF(r)*15f),
+                    Q(r, NF(r) * 45f), m.Haze, false);
+            }
         }
 
         // ===== Helpers =====
@@ -282,6 +314,8 @@ namespace OperationOutbreak.Cinematic
             AddPart(p, PrimitiveType.Cube, n, pos, scl, rot, mat, shadows);
         private static GameObject AddCylinder(Transform p, string n, Vector3 pos, Vector3 scl, Quaternion rot, Material mat, bool shadows) =>
             AddPart(p, PrimitiveType.Cylinder, n, pos, scl, rot, mat, shadows);
+        private static GameObject AddSphere(Transform p, string n, Vector3 pos, Vector3 scl, Quaternion rot, Material mat, bool shadows) =>
+            AddPart(p, PrimitiveType.Sphere, n, pos, scl, rot, mat, shadows);
 
         private static GameObject AddPart(Transform p, PrimitiveType type, string name, Vector3 pos,
             Vector3 scale, Quaternion rot, Material mat, bool shadows)
