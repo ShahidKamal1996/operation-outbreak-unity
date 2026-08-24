@@ -400,5 +400,18 @@ namespace OperationOutbreak.Tests
                 Object.DestroyImmediate(rigGo);
             }
         }
+
+        // ---------------------------------------------------------------- QA fix #11 real helicopter
+
+        [Test]
+        public void RealCopter2ModelIsResourcesLoadable()
+        {
+            // The exterior helicopter must be the REAL imported Copter_2, loadable build-safe from
+            // Resources (HelicopterPlaceholder loads this exact path). A null here means the
+            // exterior would silently fall back to the primitive placeholder.
+            GameObject model = Resources.Load<GameObject>("Helicopter/Model/Copter_2");
+            Assert.IsNotNull(model,
+                "Real Copter_2 model must be Resources-loadable at 'Helicopter/Model/Copter_2'.");
+        }
     }
 }
