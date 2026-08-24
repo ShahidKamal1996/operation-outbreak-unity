@@ -173,5 +173,50 @@ namespace OperationOutbreak.Tests
             var rotor = visual.GetComponent<HelicopterRotorPresentation>();
             Assert.IsNotNull(rotor, "HelicopterRotorPresentation must be on HelicopterVisual.");
         }
+
+        [Test]
+        public void ExteriorCameraGameObjectActiveAfterBuild()
+        {
+            var root = Build();
+            var camGo = root.transform.Find("Cameras/ExteriorCamera");
+            Assert.IsNotNull(camGo);
+            Assert.IsTrue(camGo.gameObject.activeSelf,
+                "ExteriorCamera GameObject must be active after authoring (the Camera component is disabled, not the GO).");
+        }
+
+        [Test]
+        public void ExteriorCameraComponentStartsDisabled()
+        {
+            var root = Build();
+            var cam = root.transform.Find("Cameras/ExteriorCamera").GetComponent<Camera>();
+            Assert.IsFalse(cam.enabled,
+                "ExteriorCamera component must start disabled (enabled by the controller on cinematic start).");
+        }
+
+        [Test]
+        public void StartExteriorFlyoverEnablesCameraComponent()
+        {
+            var root = Build();
+            var controller = root.GetComponent<OpeningCinematicController>();
+            Assert.IsFalse(controller.IsExteriorCameraEnabled, "Camera must be disabled before start.");
+            controller.StartExteriorFlyover();
+            Assert.IsTrue(controller.IsExteriorCameraEnabled,
+                "StartExteriorFlyover must enable the ExteriorCamera component.");
+        }
+
+        [Test]
+        public void NullExteriorCameraAbortsSafely()
+        {
+            var root = Build();
+            var controller = root.GetComponent<OpeningCinematicController>();
+            // Null out the exterior camera reference via reflection (simulating misconfiguration).
+            var field = typeof(OpeningCinematicController).GetField("exteriorCamera",
+                System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+            field.SetValue(controller, null);
+
+            controller.StartExteriorFlyover();
+            Assert.AreEqual(OpeningCinematicController.Phase.Inactive, controller.CurrentPhase,
+                "Controller must abort (stay Inactive) when exterior camera is not valid.");
+        }
     }
 }

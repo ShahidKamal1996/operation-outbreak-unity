@@ -42,6 +42,11 @@ namespace OperationOutbreak.Cinematic
         private float _elapsed;
         private Vector3 _cameraPos;
         private Quaternion _cameraRot;
+        private Camera _disabledMainCamera;
+        private bool _mainCameraWasEnabled;
+
+        /// <summary>True when the exterior camera component is enabled and rendering.</summary>
+        public bool IsExteriorCameraEnabled => exteriorCamera != null && exteriorCamera.enabled;
 
         private void OnEnable()
         {
@@ -53,24 +58,42 @@ namespace OperationOutbreak.Cinematic
         public void StartExteriorFlyover()
         {
             if (CurrentPhase != Phase.Inactive) return;
+
+            // Fail-safe: validate the exterior camera BEFORE touching the gameplay camera.
+            if (exteriorCamera == null || !exteriorCamera.gameObject.activeInHierarchy)
+            {
+                Debug.LogError("[OPENING CINEMATIC] Exterior camera not valid — aborting. Gameplay camera preserved.");
+                return;
+            }
+
+            // Enable the exterior camera COMPONENT first (builder created it disabled).
+            exteriorCamera.enabled = true;
+            exteriorCamera.fieldOfView = cameraFov;
+            _cameraPos = ComputeCameraTarget(0f);
+            _cameraRot = ComputeCameraLook(0f);
+            exteriorCamera.transform.position = _cameraPos;
+            exteriorCamera.transform.rotation = _cameraRot;
+
             CurrentPhase = Phase.ExteriorFlyover;
             _elapsed = 0f;
 
-            if (exteriorCamera != null)
+            // Only now disable the gameplay Main Camera (exterior camera is confirmed rendering).
+            var main = Camera.main;
+            if (main != null && main != exteriorCamera)
             {
-                exteriorCamera.gameObject.SetActive(true);
-                exteriorCamera.fieldOfView = cameraFov;
-                _cameraPos = ComputeCameraTarget(0f);
-                _cameraRot = ComputeCameraLook(0f);
-                exteriorCamera.transform.position = _cameraPos;
-                exteriorCamera.transform.rotation = _cameraRot;
+                _disabledMainCamera = main;
+                _mainCameraWasEnabled = main.enabled;
+                main.enabled = false;
             }
 
-            // Temporarily disable the gameplay Main Camera so the exterior camera is the only view.
-            var main = Camera.main;
-            if (main != null && main != exteriorCamera) main.enabled = false;
-
             Debug.Log("[OPENING CINEMATIC] Exterior flyover started.");
+        }
+
+        private void OnDestroy()
+        {
+            // Safety: restore the gameplay Main Camera if the cinematic is destroyed mid-sequence.
+            if (_disabledMainCamera != null && _mainCameraWasEnabled)
+                _disabledMainCamera.enabled = true;
         }
 
         private void Update()
