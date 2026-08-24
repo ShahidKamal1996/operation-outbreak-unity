@@ -179,53 +179,64 @@ namespace OperationOutbreak.EditorTools
             ConfigureUpperBodyMask(upperBodyMask);
 
             // Shoot layer: weight 1, Override blending, masked to the upper body.
-            // 1Z.1 QA fix #4 — create the layer via controller.AddLayer(name) so Unity's
-            // NATIVE API creates and persists the layer's AnimatorStateMachine.
-            controller.AddLayer(ShootLayerName);
+            // QA fix #11D — EXPLICIT sub-asset persistence. controller.AddLayer creates the state
+            // machine via Unity's internal API, but in Unity 6 this sub-asset registration does NOT
+            // survive SaveAssets + reimport (layers[1].stateMachine loads null on cold import).
+            // Instead: create the state machine as a standalone Object, register it as a sub-asset
+            // via the PUBLIC AssetDatabase.AddObjectToAsset API (which persists reliably), construct
+            // the AnimatorControllerLayer struct referencing it, and write the layers array back.
+            AnimatorStateMachine shootMachine = new AnimatorStateMachine();
+            shootMachine.name = ShootLayerName;
+            shootMachine.hideFlags = HideFlags.HideInHierarchy;
+            AssetDatabase.AddObjectToAsset(shootMachine, controller);
 
-            // 1Z.1 QA fix #5 — AnimatorControllerLayer is a STRUCT (value type).
-            // controller.layers returns a COPY of the internal array; modifying an element
-            // of that copy and NOT writing it back means defaultWeight/blendingMode/avatarMask
-            // are silently lost on save. This is exactly why real Unity reloaded the Shoot
-            // Layer with weight=0, no mask, no override. Fix: get, modify, WRITE BACK.
-            AnimatorControllerLayer[] layers = controller.layers;
-            int shootIndex = layers.Length - 1;
+            // Empty default state + Gunplay (assault_combat_shoot) on the persisted state machine.
+            AnimatorState emptyState = shootMachine.AddState(EmptyStateName, new Vector3(290f, 60f, 0f));
+            shootMachine.defaultState = emptyState;
 
-            layers[shootIndex].name = ShootLayerName;
-            layers[shootIndex].defaultWeight = 1f;
-            layers[shootIndex].blendingMode = AnimatorLayerBlendingMode.Override;
-            layers[shootIndex].avatarMask = upperBodyMask;
+            AnimatorState gunplayState = shootMachine.AddState(GunplayState, new Vector3(610f, 60f, 0f));
+            gunplayState.motion = shoot;
 
-            controller.layers = layers;
-
-            // The state machine was created natively by AddLayer — retrieve it from the
-            // written-back array (not from a stale copy).
-            AnimatorStateMachine shootMachine = layers[shootIndex].stateMachine;
-
-            // Empty default state: under the mask, an empty state leaves the upper body
-            // in the base-layer pose, so idle/run show normally when not firing.
-            AnimatorState empty = shootMachine.AddState(EmptyStateName, new Vector3(290f, 60f, 0f));
-            shootMachine.defaultState = empty;
-
-            AnimatorState gunplay = shootMachine.AddState(GunplayState, new Vector3(610f, 60f, 0f));
-            gunplay.motion = shoot;
-
-            AnimatorStateTransition anyToGunplay = shootMachine.AddAnyStateTransition(gunplay);
+            // AnyState -> Gunplay (Gunplay && !Dead).
+            AnimatorStateTransition anyToGunplay = shootMachine.AddAnyStateTransition(gunplayState);
             anyToGunplay.hasExitTime = false;
             anyToGunplay.duration = 0.05f;
             anyToGunplay.canTransitionToSelf = true;
             anyToGunplay.AddCondition(AnimatorConditionMode.If, 0f, "Gunplay");
             anyToGunplay.AddCondition(AnimatorConditionMode.IfNot, 0f, "Dead");
 
-            // Smooth removal of the shooting influence when firing stops: exit at 90%
-            // of the clip and blend the upper body back over 0.15s. The legs were never
-            // touched, so locomotion continues uninterrupted throughout.
-            AnimatorStateTransition gunToEmpty = gunplay.AddTransition(empty);
+            // Gunplay -> Empty (exit-time blend back to the base-layer pose).
+            AnimatorStateTransition gunToEmpty = gunplayState.AddTransition(emptyState);
             gunToEmpty.hasExitTime = true;
             gunToEmpty.exitTime = 0.9f;
             gunToEmpty.duration = 0.15f;
 
+            // Ensure every created object is a genuine sub-asset of the controller.
+            EnsureSubAsset(emptyState, controller);
+            EnsureSubAsset(gunplayState, controller);
+            EnsureSubAsset(anyToGunplay, controller);
+            EnsureSubAsset(gunToEmpty, controller);
+
+            // Build the AnimatorControllerLayer struct referencing the EXPLICITLY persisted SM.
+            var shootLayer = new AnimatorControllerLayer
+            {
+                name = ShootLayerName,
+                stateMachine = shootMachine,
+                defaultWeight = 1f,
+                blendingMode = AnimatorLayerBlendingMode.Override,
+                avatarMask = upperBodyMask,
+                syncedLayerIndex = -1,
+                iKPass = false,
+                syncedLayerAffectsTiming = false
+            };
+
+            // Append to the layers array and write back.
+            var layerList = new System.Collections.Generic.List<AnimatorControllerLayer>(controller.layers);
+            layerList.Add(shootLayer);
+            controller.layers = layerList.ToArray();
+
             EditorUtility.SetDirty(controller);
+            EditorUtility.SetDirty(shootMachine);
             AssetDatabase.SaveAssets();
 
             // 1Z.1 QA fix #5 — reload-after-save validation: force a fresh import, reload the
@@ -244,6 +255,22 @@ namespace OperationOutbreak.EditorTools
 
                 if (reloadedShoot.stateMachine == null)
                     Debug.LogError("[1P.5] PERSISTENCE FAILURE: Shoot Layer stateMachine is null after reload.");
+
+                // QA fix #11D — verify the SM is a genuine persisted sub-asset (not in-memory only).
+                if (reloadedShoot.stateMachine != null)
+                {
+                    bool isListed = false;
+                    foreach (Object sub in AssetDatabase.LoadAllAssetsAtPath(ControllerPath))
+                    {
+                        if (sub is AnimatorStateMachine && sub == reloadedShoot.stateMachine)
+                        {
+                            isListed = true;
+                            break;
+                        }
+                    }
+                    if (!isListed)
+                        Debug.LogError("[1P.5] PERSISTENCE FAILURE: Shoot Layer SM is not a listed sub-asset after reload.");
+                }
 
                 if (reloadedShoot.defaultWeight < 0.99f)
                     Debug.LogError("[1P.5] PERSISTENCE FAILURE: Shoot Layer defaultWeight is " +
@@ -548,6 +575,21 @@ namespace OperationOutbreak.EditorTools
         }
 
         // ------------------------------------------------------------------ helpers
+
+        /// <summary>
+        /// QA fix #11D — ensures an object is a genuine sub-asset of the controller. If the object
+        /// was already registered (e.g., by AddState when the parent SM is a sub-asset), this is a
+        /// no-op; otherwise it explicitly registers it so it persists across SaveAssets + reimport.
+        /// </summary>
+        private static void EnsureSubAsset(Object obj, AnimatorController controller)
+        {
+            if (obj == null || controller == null) return;
+            if (!AssetDatabase.Contains(obj))
+            {
+                obj.hideFlags = HideFlags.HideInHierarchy;
+                AssetDatabase.AddObjectToAsset(obj, controller);
+            }
+        }
 
         private static void ClearController(AnimatorController controller)
         {
