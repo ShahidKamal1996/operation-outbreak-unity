@@ -593,6 +593,27 @@ namespace OperationOutbreak.EditorTools
             {
                 controller.RemoveParameter(i);
             }
+
+            // 1Z.1 QA fix #10 - the leak that re-corrupted the committed controller. RemoveLayer and
+            // RemoveState detach a layer/state from its parent but do NOT destroy the underlying
+            // AnimatorState / AnimatorStateTransition sub-assets, so every rebuild left the PREVIOUS
+            // Shoot Layer's states + transitions behind as duplicate sub-assets (3x "Gunplay",
+            // 3x "Empty", stray transitions). On a cold import Unity's controller deserializer then
+            // mis-resolved the Shoot Layer's child-state linkage against those duplicates and logged
+            // "Statemachine for layer 'Shoot Layer' is missing" with a null layer.stateMachine.
+            // Sweep every leftover state/transition sub-asset now (all are orphaned once the layers
+            // are gone and the root is cleared); the rebuild recreates the needed ones fresh.
+            Object[] leftover = AssetDatabase.LoadAllAssetsAtPath(ControllerPath);
+            if (leftover != null)
+            {
+                foreach (Object asset in leftover)
+                {
+                    if (asset is AnimatorState || asset is AnimatorStateTransition)
+                    {
+                        AssetDatabase.RemoveObjectFromAsset(asset);
+                    }
+                }
+            }
         }
 
         private static AnimatorState FindState(AnimatorStateMachine root, string stateName)
