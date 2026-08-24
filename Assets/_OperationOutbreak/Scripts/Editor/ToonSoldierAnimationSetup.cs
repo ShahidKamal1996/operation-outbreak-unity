@@ -88,7 +88,9 @@ namespace OperationOutbreak.EditorTools
         }
 
         [MenuItem("Tools/Operation Outbreak/Rebuild Toon Soldier Animator Controller")]
-        public static bool RebuildController()
+        public static bool RebuildController() => RebuildControllerAtPath(ControllerPath);
+
+        public static bool RebuildControllerAtPath(string path)
         {
             AnimationClip idle = ResolveClip(IdleFbxPath);
             AnimationClip run = ResolveClip(RunFbxPath);
@@ -107,10 +109,10 @@ namespace OperationOutbreak.EditorTools
 
             // Rebuild IN PLACE so the asset GUID stays stable (the scene wires the
             // controller by GUID through a prefab-instance override).
-            AnimatorController controller = AssetDatabase.LoadAssetAtPath<AnimatorController>(ControllerPath);
+            AnimatorController controller = AssetDatabase.LoadAssetAtPath<AnimatorController>(path);
             if (controller == null)
             {
-                controller = AnimatorController.CreateAnimatorControllerAtPath(ControllerPath);
+                controller = AnimatorController.CreateAnimatorControllerAtPath(path);
             }
             else
             {
@@ -245,8 +247,8 @@ namespace OperationOutbreak.EditorTools
             // (QA fix #11C removed the QA fix #11B NormalizeShootLayerStateMachineFileId text
             // rewrite here — hand-rewriting Animator local file IDs desynchronizes Unity's
             // in-memory PPtrs and corrupts the asset on reimport. Unity must own local IDs.)
-            AssetDatabase.ImportAsset(ControllerPath, ImportAssetOptions.ForceUpdate);
-            AnimatorController reloaded = AssetDatabase.LoadAssetAtPath<AnimatorController>(ControllerPath);
+            AssetDatabase.ImportAsset(path, ImportAssetOptions.ForceUpdate);
+            AnimatorController reloaded = AssetDatabase.LoadAssetAtPath<AnimatorController>(path);
 
             if (reloaded != null && reloaded.layers.Length >= 2)
             {
@@ -260,7 +262,7 @@ namespace OperationOutbreak.EditorTools
                 if (reloadedShoot.stateMachine != null)
                 {
                     bool isListed = false;
-                    foreach (Object sub in AssetDatabase.LoadAllAssetsAtPath(ControllerPath))
+                    foreach (Object sub in AssetDatabase.LoadAllAssetsAtPath(path))
                     {
                         if (sub is AnimatorStateMachine && sub == reloadedShoot.stateMachine)
                         {

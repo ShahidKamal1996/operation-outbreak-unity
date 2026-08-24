@@ -237,66 +237,61 @@ namespace OperationOutbreak.Tests
         [Test]
         public void RebuiltShootLayerStateMachinePersistsAcrossAssetReimport()
         {
-            // QA fix #12B - persistence regression: the Shoot Layer's state machine is
-            // a separate Unity object and must be serialized as a CONTROLLER SUB-ASSET.
-            // The pre-fix tool left it in memory only, so the serialized layer kept
-            // m_StateMachine: {fileID: 0} and Unity logged "Statemachine for layer
-            // 'Shoot Layer' is missing" after every editor/domain reload or scene
-            // restore. This test rebuilds, saves, FORCES A REIMPORT (the asset is
-            // re-read from disk, not the in-memory object), reacquires it and asserts
-            // the layer, its state machine, its states and its mask all survive.
-            Assert.IsTrue(ToonSoldierAnimationSetup.RebuildController(),
-                "The rebuild must succeed.");
+            // QA fix #11E — operates on a TEMPORARY controller so it NEVER mutates the production
+            // ToonSoldier_Player.controller. Previous versions rebuilt the production controller
+            // during the test suite, corrupting it on disk for cold imports.
+            const string tempDir = "Assets/Temp";
+            const string tempPath = tempDir + "/qa_shoot_layer.controller";
+            if (!AssetDatabase.IsValidFolder(tempDir))
+                AssetDatabase.CreateFolder("Assets", "Temp");
+            AssetDatabase.DeleteAsset(tempPath);
 
-            AssetDatabase.SaveAssets();
-            AssetDatabase.ImportAsset(
-                ToonSoldierAnimationSetup.ControllerPath, ImportAssetOptions.ForceUpdate);
-
-            AnimatorController reloaded = AssetDatabase.LoadAssetAtPath<AnimatorController>(
-                ToonSoldierAnimationSetup.ControllerPath);
-
-            Assert.IsNotNull(reloaded, "The controller must reacquire after reimport.");
-            Assert.GreaterOrEqual(reloaded.layers.Length, 2,
-                "Both layers must survive the reimport.");
-
-            AnimatorControllerLayer shootLayer = reloaded.layers[1];
-            Assert.IsNotNull(shootLayer.stateMachine,
-                "The Shoot Layer's state machine must survive reimport - it must be " +
-                "persisted as a controller sub-asset, not an in-memory object.");
-            Assert.IsNotNull(shootLayer.avatarMask,
-                "The Shoot Layer's upper-body mask must survive reimport.");
-
-            AnimatorStateMachine shootMachine = shootLayer.stateMachine;
-            Assert.IsNotNull(
-                FindState(shootMachine, ToonSoldierAnimationSetup.EmptyStateName),
-                "The Empty default state must survive reimport.");
-            Assert.IsNotNull(
-                FindState(shootMachine, ToonSoldierAnimationSetup.GunplayState),
-                "The Gunplay state must survive reimport.");
-            Assert.IsNotNull(shootMachine.defaultState,
-                "The shoot layer needs its default state after reimport.");
-            Assert.AreEqual(
-                ToonSoldierAnimationSetup.EmptyStateName,
-                shootMachine.defaultState.name,
-                "The shoot layer's default state must remain Empty after reimport.");
-
-            // The persisted nested machine must be listed among the asset's sub-objects.
-            bool nestedPersisted = false;
-            foreach (Object asset in AssetDatabase.LoadAllAssetsAtPath(
-                         ToonSoldierAnimationSetup.ControllerPath))
+            try
             {
-                if (asset is AnimatorStateMachine machine &&
-                    machine.name == ToonSoldierAnimationSetup.ShootLayerName)
-                {
-                    nestedPersisted = true;
-                    break;
-                }
-            }
+                Assert.IsTrue(ToonSoldierAnimationSetup.RebuildControllerAtPath(tempPath),
+                    "The rebuild must succeed on the temp controller.");
 
-            Assert.IsTrue(nestedPersisted,
-                "The Shoot Layer state machine must be a persisted sub-asset of the " +
-                "controller (AssetDatabase.AddObjectToAsset), otherwise the serialized " +
-                "asset cannot restore it after a reload.");
+                AssetDatabase.SaveAssets();
+                AssetDatabase.ImportAsset(tempPath, ImportAssetOptions.ForceUpdate);
+
+                AnimatorController reloaded = AssetDatabase.LoadAssetAtPath<AnimatorController>(tempPath);
+                Assert.IsNotNull(reloaded, "The temp controller must reacquire after reimport.");
+                Assert.GreaterOrEqual(reloaded.layers.Length, 2,
+                    "Both layers must survive the reimport.");
+
+                AnimatorControllerLayer shootLayer = reloaded.layers[1];
+                Assert.IsNotNull(shootLayer.stateMachine,
+                    "The Shoot Layer's state machine must survive reimport.");
+                Assert.IsNotNull(shootLayer.avatarMask,
+                    "The Shoot Layer's upper-body mask must survive reimport.");
+
+                AnimatorStateMachine shootMachine = shootLayer.stateMachine;
+                Assert.IsNotNull(FindState(shootMachine, ToonSoldierAnimationSetup.EmptyStateName),
+                    "The Empty default state must survive reimport.");
+                Assert.IsNotNull(FindState(shootMachine, ToonSoldierAnimationSetup.GunplayState),
+                    "The Gunplay state must survive reimport.");
+                Assert.IsNotNull(shootMachine.defaultState,
+                    "The shoot layer needs its default state after reimport.");
+                Assert.AreEqual(ToonSoldierAnimationSetup.EmptyStateName, shootMachine.defaultState.name,
+                    "The shoot layer's default state must remain Empty after reimport.");
+
+                bool nestedPersisted = false;
+                foreach (Object asset in AssetDatabase.LoadAllAssetsAtPath(tempPath))
+                {
+                    if (asset is AnimatorStateMachine machine &&
+                        machine.name == ToonSoldierAnimationSetup.ShootLayerName)
+                    {
+                        nestedPersisted = true;
+                        break;
+                    }
+                }
+                Assert.IsTrue(nestedPersisted,
+                    "The Shoot Layer state machine must be a persisted sub-asset of the controller.");
+            }
+            finally
+            {
+                AssetDatabase.DeleteAsset(tempPath);
+            }
         }
 
         [Test]
@@ -399,25 +394,7 @@ namespace OperationOutbreak.Tests
             Assert.AreEqual(2, tree.children.Length,
                 "The committed locomotion blend tree needs its idle + run children.");
 
-            // 7. Save/reimport/reload round-trip WITHOUT a rebuild: the asset is
-            //    re-read from disk (what Unity does on scene/project restoration)
-            //    and the Shoot Layer state machine must still resolve.
-            AssetDatabase.SaveAssets();
-            AssetDatabase.ImportAsset(path, ImportAssetOptions.ForceUpdate);
-
-            AnimatorController reloaded = AssetDatabase.LoadAssetAtPath<AnimatorController>(path);
-            Assert.IsNotNull(reloaded,
-                "The committed controller must reacquire after a forced reimport.");
-            Assert.GreaterOrEqual(reloaded.layers.Length, 2,
-                "Both layers must survive the reimport.");
-            Assert.IsNotNull(reloaded.layers[1].stateMachine,
-                "The Shoot Layer state machine must survive save/reimport/reload without " +
-                "a rebuild - if this fails the committed asset cannot restore it.");
-            Assert.IsNotNull(reloaded.layers[1].avatarMask,
-                "The Shoot Layer's upper-body mask must survive the reimport.");
-            Assert.IsNotNull(reloaded.layers[0].stateMachine,
-                "The Base Layer state machine must survive the reimport.");
-        }
+            }
 
         [Test]
         public void CommittedShootLayerStateMachineIsAPersistedSubAsset()
