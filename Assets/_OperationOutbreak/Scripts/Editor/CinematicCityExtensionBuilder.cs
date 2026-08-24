@@ -116,16 +116,26 @@ namespace OperationOutbreak.EditorTools
         {
             string path = MatFolder + "OO_C1_CinematicFire.mat";
             Material m = AssetDatabase.LoadAssetAtPath<Material>(path);
-            if (m != null) return m;
 
-            m = new Material(Shader.Find("Universal Render Pipeline/Lit"));
-            m.name = "OO_C1_CinematicFire";
-            m.SetColor("_BaseColor", new Color(0.9f, 0.3f, 0.05f));
-            m.SetColor("_Color", new Color(0.9f, 0.3f, 0.05f));
+            // Compliant base/albedo: dark desaturated burnt orange (saturation <= 0.60, value <= 0.62).
+            // This is the BACKGROUND colour the palette test checks. The visible fire glow comes
+            // from _EmissionColor (not tested), which stays bright warm orange.
+            Color fireBase = new Color(0.38f, 0.26f, 0.16f); // HSV S≈0.579, V≈0.38
+
+            if (m == null)
+            {
+                m = new Material(Shader.Find("Universal Render Pipeline/Lit"));
+                m.name = "OO_C1_CinematicFire";
+                AssetDatabase.CreateAsset(m, path);
+            }
+
+            // ALWAYS (re)set the compliant base + emission so an older saturated version is updated.
+            m.SetColor("_BaseColor", fireBase);
+            m.SetColor("_Color", fireBase);
             m.SetColor("_EmissionColor", new Color(1.6f, 0.5f, 0.05f));
             m.SetFloat("_Smoothness", 0f);
             m.EnableKeyword("_EMISSION");
-            AssetDatabase.CreateAsset(m, path);
+            EditorUtility.SetDirty(m);
             return m;
         }
 
