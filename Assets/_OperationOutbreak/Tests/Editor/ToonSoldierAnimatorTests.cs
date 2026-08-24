@@ -439,7 +439,7 @@ namespace OperationOutbreak.Tests
             bool found = false;
             foreach (Object asset in AssetDatabase.LoadAllAssetsAtPath(path))
             {
-                if (asset is AnimatorStateMachine sm && sm.GetInstanceID() == shootSM.GetInstanceID())
+                if (asset is AnimatorStateMachine sm && sm == shootSM)
                 {
                     found = true;
                     break;
