@@ -4,22 +4,10 @@ using UnityEngine.Rendering;
 namespace OperationOutbreak.Cinematic
 {
     /// <summary>
-    /// Milestone 1Z.1A — a CINEMATIC-ONLY visual city extension built around the Chapter 1
-    /// playable corridor, so a future high-oblique helicopter flyover can show a large damaged
-    /// city without exposing the small playable level, empty Unity space, or map edges.
-    ///
-    /// This is the testable, runtime-agnostic core. The editor tool
-    /// (<see cref="OperationOutbreak.EditorTools.CinematicCityExtensionBuilder"/>) loads the real
-    /// Chapter 1 materials and calls <see cref="Build"/> to author the hierarchy into the scene.
-    ///
-    /// Three visual distance layers:
-    ///   A. the existing playable corridor (untouched — everything here is placed OUTSIDE it);
-    ///   B. Midground — mid-distance ruined structures reusing the Chapter 1 material vocabulary;
-    ///   C. FarCity — lightweight low-poly silhouettes for skyline/depth (no colliders, no shadows).
-    /// Plus Landmarks, Smoke columns, a BoundaryFill ground skirt, and Haze drifts that hide edges.
-    ///
-    /// Every generated object is VISUAL ONLY: no gameplay scripts, no colliders, no physics.
-    /// Placement is deterministic (seeded) so the layout is stable across builds.
+    /// Milestone 1Z.1A Visual QA Fix #1 — REWORKED aerial city composition + recent-deestruction
+    /// atmosphere. The extension now builds coherent urban blocks (not scattered cubes), visible
+    /// fire zones, tapered translucent smoke plumes, scorch/wreckage zones, and denser atmospheric
+    /// haze — so a future high-oblique helicopter flyover reads as a RECENTLY DEVASTATED city.
     /// </summary>
     public static class CinematicCityExtension
     {
@@ -28,25 +16,33 @@ namespace OperationOutbreak.Cinematic
         public const string GroupFarCity = "FarCity";
         public const string GroupLandmarks = "Landmarks";
         public const string GroupSmoke = "Smoke";
+        public const string GroupFire = "Fire";
+        public const string GroupScorch = "Scorch";
         public const string GroupBoundaryFill = "BoundaryFill";
         public const string GroupHaze = "Haze";
 
-        /// <summary>
-        /// Groups whose contents are vertical STRUCTURES and therefore must never be placed inside
-        /// the playable corridor (the ground skirt / haze legitimately span the corridor area).
-        /// </summary>
         public static readonly string[] StructureGroups =
-            { GroupMidground, GroupFarCity, GroupLandmarks, GroupSmoke };
+            { GroupMidground, GroupFarCity, GroupLandmarks, GroupSmoke, GroupFire, GroupScorch };
 
-        // Playable corridor keep-out band (Chapter 1 lane + roadsides). Structures avoid this.
         public const float CorridorMinX = -7f;
         public const float CorridorMaxX = 7f;
         public const float CorridorMinZ = -12f;
         public const float CorridorMaxZ = 92f;
 
-        private const int DeterministicSeed = 91020;
+        private const int Seed = 91020;
 
-        /// <summary>Material slots consumed by <see cref="Build"/>. Null-safe (tests pass nulls).</summary>
+        // Fire / smoke / scorch zone centres (all outside the playable corridor).
+        private static readonly Vector3[] DestructionZones =
+        {
+            new Vector3(22f, 0f, 30f),    // right intersection
+            new Vector3(-25f, 0f, 65f),   // left industrial
+            new Vector3(30f, 0f, -5f),    // right collapsed
+            new Vector3(-20f, 0f, 100f),  // left far
+            new Vector3(38f, 0f, 55f),    // right wrecks
+            new Vector3(-35f, 0f, 20f),   // left checkpoint
+            new Vector3(28f, 0f, 120f),   // right far
+        };
+
         public sealed class Materials
         {
             public Material MidConcrete;
@@ -54,39 +50,33 @@ namespace OperationOutbreak.Cinematic
             public Material MidRubble;
             public Material MidRust;
             public Material MidSteel;
-            public Material Ground;      // boundary ground skirt
-            public Material Road;        // scenery roads
-            public Material Silhouette;  // far-city silhouettes (hazy)
-            public Material Smoke;       // smoke columns
-            public Material Haze;        // far haze drifts
+            public Material Ground;
+            public Material Road;
+            public Material Silhouette;
+            public Material Smoke;
+            public Material Fire;
+            public Material Scorch;
+            public Material Haze;
         }
 
-        /// <summary>True when an XZ point lies inside the playable corridor keep-out band.</summary>
         public static bool IsInsideCorridor(float x, float z) =>
             x > CorridorMinX && x < CorridorMaxX && z > CorridorMinZ && z < CorridorMaxZ;
 
-        /// <summary>Builds the full extension hierarchy under <paramref name="parent"/>.</summary>
         public static GameObject Build(Transform parent, Materials mats)
         {
             var root = new GameObject(RootName);
             root.transform.SetParent(parent, false);
             root.transform.localPosition = Vector3.zero;
+            var rng = new System.Random(Seed);
 
-            var rng = new System.Random(DeterministicSeed);
-
-            Transform midground = MakeGroup(root.transform, GroupMidground);
-            Transform farCity = MakeGroup(root.transform, GroupFarCity);
-            Transform landmarks = MakeGroup(root.transform, GroupLandmarks);
-            Transform smoke = MakeGroup(root.transform, GroupSmoke);
-            Transform boundary = MakeGroup(root.transform, GroupBoundaryFill);
-            Transform haze = MakeGroup(root.transform, GroupHaze);
-
-            BuildBoundaryFill(boundary, mats);
-            BuildMidground(midground, mats, rng);
-            BuildLandmarks(landmarks, mats, rng);
-            BuildFarCity(farCity, mats, rng);
-            BuildSmoke(smoke, mats, rng);
-            BuildHaze(haze, mats);
+            BuildBoundaryFill(MakeGroup(root.transform, GroupBoundaryFill), mats, rng);
+            BuildUrbanBlocks(MakeGroup(root.transform, GroupMidground), mats, rng);
+            BuildLandmarks(MakeGroup(root.transform, GroupLandmarks), mats, rng);
+            BuildFarCity(MakeGroup(root.transform, GroupFarCity), mats, rng);
+            BuildFireZones(MakeGroup(root.transform, GroupFire), mats, rng);
+            BuildSmokePlumes(MakeGroup(root.transform, GroupSmoke), mats, rng);
+            BuildScorchZones(MakeGroup(root.transform, GroupScorch), mats, rng);
+            BuildHaze(MakeGroup(root.transform, GroupHaze), mats, rng);
             return root;
         }
 
@@ -97,134 +87,218 @@ namespace OperationOutbreak.Cinematic
             return go.transform;
         }
 
-        // --------------------------------------------------------------- layers
+        // ===================================================================== boundary
 
-        private static void BuildBoundaryFill(Transform parent, Materials mats)
+        private static void BuildBoundaryFill(Transform parent, Materials mats, System.Random rng)
         {
-            // One large dark ground skirt covering the whole cinematic area so no empty Unity space
-            // or map edge is visible from a high camera. Sits just below the playable road (y=0).
-            AddBox(parent, "Ground_Skirt", new Vector3(0f, -0.35f, 40f),
-                new Vector3(340f, 0.4f, 420f), Quaternion.identity, mats.Ground, castShadows: false);
-            // Large low terrain slabs for ground-color variation (rubble flats / concrete aprons).
-            AddBox(parent, "Terrain_Slab_Rubble", new Vector3(55f, -0.22f, 70f),
-                new Vector3(90f, 0.22f, 150f), Quaternion.identity, mats.MidRubble, castShadows: false);
-            AddBox(parent, "Terrain_Slab_Concrete", new Vector3(-58f, -0.22f, 30f),
-                new Vector3(100f, 0.22f, 170f), Quaternion.identity, mats.MidConcreteDark, castShadows: false);
-            AddBox(parent, "Terrain_Slab_Steel", new Vector3(0f, -0.2f, 150f),
-                new Vector3(200f, 0.2f, 80f), Quaternion.identity, mats.MidRust, castShadows: false);
+            // Overlapping irregular slabs (not a single rectangle) to avoid a visible perimeter.
+            AddBox(parent, "Ground_A", new Vector3(20f, -0.35f, 30f),
+                new Vector3(200f, 0.4f, 240f), Q(rng, 4f), mats.Ground, false);
+            AddBox(parent, "Ground_B", new Vector3(-30f, -0.37f, 50f),
+                new Vector3(180f, 0.4f, 220f), Q(rng, -3f), mats.Ground, false);
+            AddBox(parent, "Ground_C", new Vector3(0f, -0.33f, 120f),
+                new Vector3(260f, 0.4f, 180f), Q(rng, 6f), mats.Ground, false);
+            // Terrain colour variation slabs.
+            AddBox(parent, "Terrain_Rubble", new Vector3(50f, -0.22f, 60f),
+                new Vector3(100f, 0.22f, 160f), Q(rng, 2f), mats.MidRubble, false);
+            AddBox(parent, "Terrain_Concrete", new Vector3(-55f, -0.22f, 40f),
+                new Vector3(110f, 0.22f, 180f), Q(rng, -5f), mats.MidConcreteDark, false);
+            AddBox(parent, "Terrain_Rust", new Vector3(0f, -0.2f, 140f),
+                new Vector3(200f, 0.2f, 90f), Q(rng, 1f), mats.MidRust, false);
         }
 
-        private static void BuildMidground(Transform parent, Materials mats, System.Random rng)
-        {
-            const int structures = 42;
-            for (int i = 0; i < structures; i++)
-            {
-                int side = (i % 2 == 0) ? 1 : -1;
-                float x = side * (11f + NextFloat(rng) * 35f);     // |x| in [11,46] -> outside corridor
-                float z = -30f + NextFloat(rng) * 165f;            // [-30,135]
-                float w = 3f + NextFloat(rng) * 5f;
-                float d = 3f + NextFloat(rng) * 5f;
-                bool rubble = NextFloat(rng) < 0.25f;
-                float h = rubble ? 1f + NextFloat(rng) * 2.5f : 4f + NextFloat(rng) * 15f;
-                Material m = rubble ? mats.MidRubble : PickMidMaterial(mats, rng);
-                AddBox(parent, "Mid_" + i, new Vector3(x, h * 0.5f, z),
-                    new Vector3(w, h, d), Quaternion.Euler(0f, NextFloat(rng) * 360f, 0f), m, castShadows: true);
-            }
+        // ===================================================================== urban blocks
 
-            // A few scenery-only intersecting roads (no gameplay use) — thin asphalt strips.
-            for (int i = 0; i < 5; i++)
+        private static void BuildUrbanBlocks(Transform parent, Materials mats, System.Random rng)
+        {
+            // Coherent city BLOCKS (clusters of adjacent buildings + rubble), not scattered cubes.
+            int id = 0;
+            for (int side = -1; side <= 1; side += 2)
+            {
+                for (int row = 0; row < 4; row++)
+                {
+                    for (int col = 0; col < 3; col++)
+                    {
+                        float cx = side * (13f + col * 11f + NF(rng) * 2.5f);
+                        float cz = -22f + row * 28f + NF(rng) * 4f;
+                        BuildBlock(parent, mats, rng, id++, new Vector3(cx, 0, cz));
+                    }
+                }
+            }
+            // Scenery streets between blocks.
+            for (int i = 0; i < 7; i++)
             {
                 int side = (i % 2 == 0) ? 1 : -1;
-                float x = side * (16f + NextFloat(rng) * 24f);
-                float z = -25f + NextFloat(rng) * 150f;
-                float len = 22f + NextFloat(rng) * 34f;
-                AddBox(parent, "SceneryRoad_" + i, new Vector3(x, 0.06f, z),
-                    new Vector3(3.2f, 0.06f, len), Quaternion.Euler(0f, NextFloat(rng) * 90f, 0f),
-                    mats.Road, castShadows: false);
+                float x = side * (18f + NF(rng) * 18f);
+                float z = -20f + i * 18f;
+                AddBox(parent, "Street_" + i, new Vector3(x, 0.04f, z),
+                    new Vector3(4.5f, 0.04f, 30f + NF(rng) * 18f), Q(rng, NF(rng) * 20f - 10f),
+                    mats.Road, false);
             }
         }
+
+        private static void BuildBlock(Transform parent, Materials mats, System.Random rng, int id, Vector3 center)
+        {
+            int buildings = 4 + (int)(NF(rng) * 3); // 4-6
+            for (int b = 0; b < buildings; b++)
+            {
+                float ox = (NF(rng) - 0.5f) * 7f;
+                float oz = (NF(rng) - 0.5f) * 7f;
+                float w = 2.5f + NF(rng) * 3f;
+                float d = 2.5f + NF(rng) * 3f;
+                bool collapsed = NF(rng) < 0.3f;
+                float h = collapsed ? 1.5f + NF(rng) * 2f : 5f + NF(rng) * 13f;
+                float lean = collapsed ? NF(rng) * 12f : 0f;
+                AddBox(parent, "B_" + id + "_" + b,
+                    center + new Vector3(ox, h * 0.5f, oz),
+                    new Vector3(w, h, d), Q(rng, NF(rng) * 90f, lean),
+                    collapsed ? mats.MidRubble : PickMid(mats, rng), !collapsed);
+            }
+            // Rubble between buildings.
+            if (NF(rng) < 0.6f)
+                AddBox(parent, "B_" + id + "_Rub", center + new Vector3(NF(rng)*3f-1.5f, 0.4f, NF(rng)*3f-1.5f),
+                    new Vector3(3.5f, 0.8f, 3.5f), Q(rng, NF(rng)*360f), mats.MidRubble, false);
+        }
+
+        // ===================================================================== landmarks
 
         private static void BuildLandmarks(Transform parent, Materials mats, System.Random rng)
         {
-            // A handful of larger, visually interesting ruined landmarks (all outside the corridor).
-            Landmark(parent, "Landmark_CollapsedTower", new Vector3(24f, 0f, 22f),
-                new Vector3(8f, 24f, 8f), 8f, mats.MidConcrete, mats.MidRubble, rng);
-            Landmark(parent, "Landmark_IndustrialBlock", new Vector3(-28f, 0f, 62f),
-                new Vector3(12f, 16f, 10f), -12f, mats.MidRust, mats.MidRubble, rng);
-            Landmark(parent, "Landmark_RubbleZone", new Vector3(32f, 0f, 94f),
-                new Vector3(15f, 3f, 15f), 20f, mats.MidRubble, mats.MidRubble, rng);
-            Landmark(parent, "Landmark_AbandonedCheckpoint", new Vector3(-26f, 0f, 8f),
-                new Vector3(8f, 4.5f, 8f), 0f, mats.MidSteel, mats.MidRubble, rng);
-            Landmark(parent, "Landmark_RuinedTower", new Vector3(36f, 0f, -12f),
-                new Vector3(7f, 30f, 7f), 15f, mats.MidConcreteDark, mats.MidRubble, rng);
+            Landmark(parent, mats, rng, "L_CollapsedTower", new Vector3(24f, 0f, 22f),
+                new Vector3(8f, 26f, 8f), 8f, mats.MidConcrete, 15f);
+            Landmark(parent, mats, rng, "L_IndustrialFire", new Vector3(-28f, 0f, 62f),
+                new Vector3(13f, 18f, 11f), -12f, mats.MidRust, 8f);
+            Landmark(parent, mats, rng, "L_RubbleZone", new Vector3(32f, 0f, 94f),
+                new Vector3(16f, 4f, 16f), 20f, mats.MidRubble, 0f);
+            Landmark(parent, mats, rng, "L_Checkpoint", new Vector3(-26f, 0f, 8f),
+                new Vector3(8f, 5f, 8f), 0f, mats.MidSteel, 0f);
+            Landmark(parent, mats, rng, "L_LeaningTower", new Vector3(38f, 0f, -8f),
+                new Vector3(7f, 34f, 7f), 15f, mats.MidConcreteDark, 18f);
+            Landmark(parent, mats, rng, "L_BurningBlock", new Vector3(-32f, 0f, 105f),
+                new Vector3(10f, 12f, 10f), -5f, mats.MidConcreteDark, 10f);
         }
 
-        private static void Landmark(Transform parent, string name, Vector3 basePos, Vector3 size,
-            float yaw, Material structureMat, Material rubbleMat, System.Random rng)
+        private static void Landmark(Transform parent, Materials mats, System.Random rng,
+            string name, Vector3 pos, Vector3 size, float yaw, Material mat, float lean)
         {
-            AddBox(parent, name, new Vector3(basePos.x, size.y * 0.5f, basePos.z), size,
-                Quaternion.Euler(0f, yaw, 0f), structureMat, castShadows: true);
-            // A rubble collar around the base for destruction density.
-            AddBox(parent, name + "_Rubble", new Vector3(basePos.x, 0.6f, basePos.z),
-                new Vector3(size.x + 3f, 1.2f, size.z + 3f),
-                Quaternion.Euler(0f, yaw + NextFloat(rng) * 30f, 0f), rubbleMat, castShadows: false);
+            AddBox(parent, name, new Vector3(pos.x, size.y * 0.5f, pos.z), size,
+                Q(rng, yaw, lean), mat, true);
+            AddBox(parent, name + "_Rubble", new Vector3(pos.x, 0.6f, pos.z),
+                new Vector3(size.x + 3f, 1.2f, size.z + 3f), Q(rng, yaw + NF(rng) * 30f),
+                mats.MidRubble, false);
         }
+
+        // ===================================================================== far city
 
         private static void BuildFarCity(Transform parent, Materials mats, System.Random rng)
         {
-            const int silhouettes = 34;
-            for (int i = 0; i < silhouettes; i++)
+            const int count = 44;
+            for (int i = 0; i < count; i++)
             {
                 int side = (i % 2 == 0) ? 1 : -1;
-                float x = side * (55f + NextFloat(rng) * 75f);     // |x| in [55,130]
-                float z = -65f + NextFloat(rng) * 260f;            // [-65,195]
-                float w = 6f + NextFloat(rng) * 11f;
-                float d = 6f + NextFloat(rng) * 11f;
-                float h = 15f + NextFloat(rng) * 32f;
+                float x = side * (52f + NF(rng) * 78f);
+                float z = -60f + NF(rng) * 260f;
+                float w = 5f + NF(rng) * 12f;
+                float d = 5f + NF(rng) * 12f;
+                float h = 12f + NF(rng) * 38f;
                 AddBox(parent, "Far_" + i, new Vector3(x, h * 0.5f, z),
-                    new Vector3(w, h, d), Quaternion.identity, mats.Silhouette, castShadows: false);
+                    new Vector3(w, h, d), Q(rng, NF(rng) * 45f), mats.Silhouette, false);
             }
         }
 
-        private static void BuildSmoke(Transform parent, Materials mats, System.Random rng)
+        // ===================================================================== fire zones
+
+        private static void BuildFireZones(Transform parent, Materials mats, System.Random rng)
         {
-            Vector3[] spots =
+            for (int i = 0; i < 4 && i < DestructionZones.Length; i++)
             {
-                new Vector3(21f, 0f, 30f),
-                new Vector3(-23f, 0f, 72f),
-                new Vector3(29f, 0f, 102f),
-                new Vector3(-31f, 0f, 2f),
-                new Vector3(41f, 0f, 52f),
-                new Vector3(-18f, 0f, 112f),
-                new Vector3(46f, 0f, -18f),
-            };
-            for (int i = 0; i < spots.Length; i++)
-            {
-                Vector3 s = spots[i];
-                float h = 18f + NextFloat(rng) * 16f;
-                float r = 2f + h * 0.06f;
-                AddCylinder(parent, "Smoke_" + i, new Vector3(s.x, h * 0.5f, s.z),
-                    new Vector3(r, h, r), Quaternion.identity, mats.Smoke, castShadows: false);
+                Vector3 z = DestructionZones[i];
+                int flames = 3 + (int)(NF(rng) * 2);
+                for (int f = 0; f < flames; f++)
+                {
+                    float fx = z.x + (NF(rng) - 0.5f) * 3.5f;
+                    float fz = z.z + (NF(rng) - 0.5f) * 3.5f;
+                    float fh = 0.8f + NF(rng) * 1.6f;
+                    float fw = 0.5f + NF(rng) * 0.4f;
+                    AddBox(parent, "Fire_" + i + "_" + f, new Vector3(fx, fh * 0.5f, fz),
+                        new Vector3(fw, fh, fw), Q(rng, NF(rng) * 360f), mats.Fire, false);
+                }
             }
         }
 
-        private static void BuildHaze(Transform parent, Materials mats)
+        // ===================================================================== smoke plumes
+
+        private static void BuildSmokePlumes(Transform parent, Materials mats, System.Random rng)
         {
-            // Large, thin, dark drifts at the far boundary — read as distant haze / fog banks that
-            // help conceal where the city ends. Ground-hugging so they never read as walls up close.
-            AddBox(parent, "Haze_Drift_Far", new Vector3(0f, 2.5f, 185f),
-                new Vector3(300f, 5f, 10f), Quaternion.identity, mats.Haze, castShadows: false);
-            AddBox(parent, "Haze_Drift_Right", new Vector3(150f, 2.5f, 70f),
-                new Vector3(10f, 5f, 280f), Quaternion.identity, mats.Haze, castShadows: false);
-            AddBox(parent, "Haze_Drift_Left", new Vector3(-150f, 2.5f, 70f),
-                new Vector3(10f, 5f, 280f), Quaternion.identity, mats.Haze, castShadows: false);
+            for (int i = 0; i < DestructionZones.Length; i++)
+            {
+                Vector3 z = DestructionZones[i];
+                float totalH = 16f + NF(rng) * 14f;
+                int sections = 4;
+                for (int s = 0; s < sections; s++)
+                {
+                    float t = (float)s / sections;
+                    float secH = totalH / sections;
+                    float yC = secH * (s + 0.5f);
+                    float radius = 1.5f + t * 4.5f + NF(rng) * 0.8f;
+                    float drift = s * 0.4f;
+                    AddCylinder(parent, "Smoke_" + i + "_" + s,
+                        new Vector3(z.x + (NF(rng) - 0.5f) * drift, yC, z.z + (NF(rng) - 0.5f) * drift),
+                        new Vector3(radius, secH * 1.15f, radius), Q(rng, NF(rng) * 20f),
+                        mats.Smoke, false);
+                }
+            }
         }
 
-        // --------------------------------------------------------------- helpers
+        // ===================================================================== scorch zones
 
-        private static Material PickMidMaterial(Materials mats, System.Random rng)
+        private static void BuildScorchZones(Transform parent, Materials mats, System.Random rng)
         {
-            float r = NextFloat(rng);
+            for (int i = 0; i < DestructionZones.Length; i++)
+            {
+                Vector3 z = DestructionZones[i];
+                AddBox(parent, "Scorch_" + i, new Vector3(z.x, 0.03f, z.z),
+                    new Vector3(6f + NF(rng) * 3f, 0.06f, 6f + NF(rng) * 3f),
+                    Q(rng, NF(rng) * 360f), mats.Scorch, false);
+                // Wreckage debris.
+                for (int d = 0; d < 3; d++)
+                {
+                    AddBox(parent, "Wreck_" + i + "_" + d,
+                        new Vector3(z.x + (NF(rng) - 0.5f) * 6f, 0.3f, z.z + (NF(rng) - 0.5f) * 6f),
+                        new Vector3(0.4f + NF(rng), 0.4f + NF(rng), 0.4f + NF(rng)),
+                        Q(rng, NF(rng) * 30f, NF(rng) * 360f, NF(rng) * 30f),
+                        mats.MidRust, false);
+                }
+            }
+        }
+
+        // ===================================================================== haze
+
+        private static void BuildHaze(Transform parent, Materials mats, System.Random rng)
+        {
+            // Mid-distance depth haze (thin panels between midground and far city).
+            for (int i = 0; i < 4; i++)
+            {
+                int side = (i % 2 == 0) ? 1 : -1;
+                AddBox(parent, "HazeMid_" + i,
+                    new Vector3(side * 48f, 8f + NF(rng) * 4f, -20f + i * 35f),
+                    new Vector3(4f, 16f + NF(rng) * 8f, 60f + NF(rng) * 30f),
+                    Q(rng, NF(rng) * 15f), mats.Haze, false);
+            }
+            // Far boundary drifts.
+            AddBox(parent, "Haze_Far", new Vector3(0f, 3f, 185f),
+                new Vector3(300f, 6f, 12f), Quaternion.identity, mats.Haze, false);
+            AddBox(parent, "Haze_R", new Vector3(150f, 3f, 70f),
+                new Vector3(12f, 6f, 280f), Quaternion.identity, mats.Haze, false);
+            AddBox(parent, "Haze_L", new Vector3(-150f, 3f, 70f),
+                new Vector3(12f, 6f, 280f), Quaternion.identity, mats.Haze, false);
+        }
+
+        // ===================================================================== helpers
+
+        private static Material PickMid(Materials mats, System.Random rng)
+        {
+            float r = NF(rng);
             if (r < 0.30f) return mats.MidConcrete;
             if (r < 0.55f) return mats.MidConcreteDark;
             if (r < 0.75f) return mats.MidRust;
@@ -232,15 +306,19 @@ namespace OperationOutbreak.Cinematic
             return mats.MidRubble;
         }
 
-        private static float NextFloat(System.Random rng) => (float)rng.NextDouble();
+        private static float NF(System.Random rng) => (float)rng.NextDouble();
+        private static Quaternion Q(System.Random rng, float yaw) => Quaternion.Euler(0f, yaw, 0f);
+        private static Quaternion Q(System.Random rng, float yaw, float lean) =>
+            Quaternion.Euler(NF(rng) * lean * 0.3f, yaw, NF(rng) * lean * 0.5f);
+        private static Quaternion Q(System.Random rng, float x, float y, float z) => Quaternion.Euler(x, y, z);
 
         private static GameObject AddBox(Transform parent, string name, Vector3 localPos,
-            Vector3 scale, Quaternion rot, Material mat, bool castShadows) =>
-            AddPart(parent, PrimitiveType.Cube, name, localPos, scale, rot, mat, castShadows);
+            Vector3 scale, Quaternion rot, Material mat, bool shadows) =>
+            AddPart(parent, PrimitiveType.Cube, name, localPos, scale, rot, mat, shadows);
 
         private static GameObject AddCylinder(Transform parent, string name, Vector3 localPos,
-            Vector3 scale, Quaternion rot, Material mat, bool castShadows) =>
-            AddPart(parent, PrimitiveType.Cylinder, name, localPos, scale, rot, mat, castShadows);
+            Vector3 scale, Quaternion rot, Material mat, bool shadows) =>
+            AddPart(parent, PrimitiveType.Cylinder, name, localPos, scale, rot, mat, shadows);
 
         private static GameObject AddPart(Transform parent, PrimitiveType type, string name,
             Vector3 localPos, Vector3 scale, Quaternion rot, Material mat, bool castShadows)
@@ -255,19 +333,13 @@ namespace OperationOutbreak.Cinematic
             if (mat != null) mr.sharedMaterial = mat;
             mr.shadowCastingMode = castShadows ? ShadowCastingMode.On : ShadowCastingMode.Off;
             mr.receiveShadows = castShadows;
-            // Visual-only: strip the collider CreatePrimitive adds.
-            RemoveCollider(go);
-            return go;
-        }
-
-        private static void RemoveCollider(GameObject go)
-        {
             var col = go.GetComponent<Collider>();
             if (col != null)
             {
                 if (Application.isPlaying) Object.Destroy(col);
                 else Object.DestroyImmediate(col);
             }
+            return go;
         }
     }
 }

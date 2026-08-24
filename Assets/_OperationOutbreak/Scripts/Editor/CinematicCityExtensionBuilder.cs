@@ -77,9 +77,71 @@ namespace OperationOutbreak.EditorTools
                 Ground          = LoadMat("OO_C1_Roadside"),
                 Road            = LoadMat("OO_C1_Asphalt"),
                 Silhouette      = LoadMat("OO_C1_CinematicHaze"),
-                Smoke           = LoadMat("OO_C1_Shadow"),
+                Smoke           = GetOrCreateSmokeMaterial(),
+                Fire            = GetOrCreateFireMaterial(),
+                Scorch          = GetOrCreateScorchMaterial(),
                 Haze            = LoadMat("OO_C1_CinematicHaze"),
             };
+        }
+
+        // ---- dynamic material creation (transparent / emissive) ----
+
+        private static Material GetOrCreateSmokeMaterial()
+        {
+            string path = MatFolder + "OO_C1_CinematicSmoke.mat";
+            Material m = AssetDatabase.LoadAssetAtPath<Material>(path);
+            if (m != null) return m;
+
+            m = new Material(Shader.Find("Universal Render Pipeline/Lit"));
+            m.name = "OO_C1_CinematicSmoke";
+            var c = new Color(0.10f, 0.10f, 0.12f, 0.50f);
+            m.SetColor("_BaseColor", c);
+            m.SetColor("_Color", c);
+            m.SetFloat("_Surface", 1);                                            // transparent
+            m.SetFloat("_Blend", 0);                                              // alpha
+            m.SetFloat("_SrcBlend", (float)UnityEngine.Rendering.BlendMode.SrcAlpha);
+            m.SetFloat("_DstBlend", (float)UnityEngine.Rendering.BlendMode.OneMinusSrcAlpha);
+            m.SetFloat("_SrcBlendAlpha", 1);
+            m.SetFloat("_DstBlendAlpha", 1);
+            m.SetFloat("_ZWrite", 0);
+            m.SetFloat("_Cull", 0);                                               // double-sided
+            m.SetFloat("_Smoothness", 0f);
+            m.EnableKeyword("_SURFACE_TYPE_TRANSPARENT");
+            m.renderQueue = (int)UnityEngine.Rendering.RenderQueue.Transparent;
+            AssetDatabase.CreateAsset(m, path);
+            return m;
+        }
+
+        private static Material GetOrCreateFireMaterial()
+        {
+            string path = MatFolder + "OO_C1_CinematicFire.mat";
+            Material m = AssetDatabase.LoadAssetAtPath<Material>(path);
+            if (m != null) return m;
+
+            m = new Material(Shader.Find("Universal Render Pipeline/Lit"));
+            m.name = "OO_C1_CinematicFire";
+            m.SetColor("_BaseColor", new Color(0.9f, 0.3f, 0.05f));
+            m.SetColor("_Color", new Color(0.9f, 0.3f, 0.05f));
+            m.SetColor("_EmissionColor", new Color(1.6f, 0.5f, 0.05f));
+            m.SetFloat("_Smoothness", 0f);
+            m.EnableKeyword("_EMISSION");
+            AssetDatabase.CreateAsset(m, path);
+            return m;
+        }
+
+        private static Material GetOrCreateScorchMaterial()
+        {
+            string path = MatFolder + "OO_C1_CinematicScorch.mat";
+            Material m = AssetDatabase.LoadAssetAtPath<Material>(path);
+            if (m != null) return m;
+
+            m = new Material(Shader.Find("Universal Render Pipeline/Lit"));
+            m.name = "OO_C1_CinematicScorch";
+            m.SetColor("_BaseColor", new Color(0.04f, 0.03f, 0.03f));
+            m.SetColor("_Color", new Color(0.04f, 0.03f, 0.03f));
+            m.SetFloat("_Smoothness", 0f);
+            AssetDatabase.CreateAsset(m, path);
+            return m;
         }
 
         private static Material LoadMat(string name) =>

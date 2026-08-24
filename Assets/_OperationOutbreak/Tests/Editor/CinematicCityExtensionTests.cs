@@ -36,6 +36,7 @@ namespace OperationOutbreak.Tests
             {
                 CinematicCityExtension.GroupMidground, CinematicCityExtension.GroupFarCity,
                 CinematicCityExtension.GroupLandmarks, CinematicCityExtension.GroupSmoke,
+                CinematicCityExtension.GroupFire, CinematicCityExtension.GroupScorch,
                 CinematicCityExtension.GroupBoundaryFill, CinematicCityExtension.GroupHaze,
             })
             {
@@ -62,9 +63,12 @@ namespace OperationOutbreak.Tests
         [Test]
         public void FarCityAndDistantLayersDoNotCastShadows()
         {
-            // Mobile-conscious: far silhouettes, smoke and boundary/haze never cast realtime shadows.
+            // Mobile-conscious: far silhouettes, smoke, fire, scorch, boundary and haze never cast
+            // realtime shadows.
             CheckNoShadows(CinematicCityExtension.GroupFarCity);
             CheckNoShadows(CinematicCityExtension.GroupSmoke);
+            CheckNoShadows(CinematicCityExtension.GroupFire);
+            CheckNoShadows(CinematicCityExtension.GroupScorch);
             CheckNoShadows(CinematicCityExtension.GroupBoundaryFill);
             CheckNoShadows(CinematicCityExtension.GroupHaze);
         }
@@ -92,13 +96,17 @@ namespace OperationOutbreak.Tests
         [Test]
         public void ExtensionHasVariedCityContent()
         {
-            Assert.GreaterOrEqual(CountRenderers(CinematicCityExtension.GroupMidground), 30,
-                "Midground must contain a varied set of ruined structures.");
-            Assert.GreaterOrEqual(CountRenderers(CinematicCityExtension.GroupFarCity), 25,
+            Assert.GreaterOrEqual(CountRenderers(CinematicCityExtension.GroupMidground), 40,
+                "Midground must contain dense urban blocks.");
+            Assert.GreaterOrEqual(CountRenderers(CinematicCityExtension.GroupFarCity), 35,
                 "FarCity must contain many distant silhouettes.");
-            Assert.GreaterOrEqual(CountRenderers(CinematicCityExtension.GroupSmoke), 5,
-                "Smoke must contain several columns.");
-            Assert.GreaterOrEqual(CountRenderers(CinematicCityExtension.GroupLandmarks), 5,
+            Assert.GreaterOrEqual(CountRenderers(CinematicCityExtension.GroupSmoke), 20,
+                "Smoke must contain multi-section plumes.");
+            Assert.GreaterOrEqual(CountRenderers(CinematicCityExtension.GroupFire), 8,
+                "Fire must contain multiple fire zones with flame elements.");
+            Assert.GreaterOrEqual(CountRenderers(CinematicCityExtension.GroupScorch), 10,
+                "Scorch must contain damage patches and wreckage.");
+            Assert.GreaterOrEqual(CountRenderers(CinematicCityExtension.GroupLandmarks), 8,
                 "Landmarks must contain several large structures.");
         }
 
