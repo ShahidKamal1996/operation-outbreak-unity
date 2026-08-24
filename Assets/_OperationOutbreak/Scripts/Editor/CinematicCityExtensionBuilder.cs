@@ -76,7 +76,7 @@ namespace OperationOutbreak.EditorTools
                 MidSteel        = LoadMat("OO_C1_Steel"),
                 Ground          = LoadMat("OO_C1_Roadside"),
                 Road            = LoadMat("OO_C1_Asphalt"),
-                Silhouette      = LoadMat("OO_C1_CinematicHaze"),
+                Silhouette      = LoadMat("OO_C1_ConcreteDark"),
                 Smoke           = GetOrCreateSmokeMaterial(),
                 Fire            = GetOrCreateFireMaterial(),
                 Scorch          = GetOrCreateScorchMaterial(),

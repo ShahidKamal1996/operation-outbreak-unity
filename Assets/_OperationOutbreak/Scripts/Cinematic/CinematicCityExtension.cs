@@ -4,10 +4,9 @@ using UnityEngine.Rendering;
 namespace OperationOutbreak.Cinematic
 {
     /// <summary>
-    /// Milestone 1Z.1A Visual QA Fix #1 — REWORKED aerial city composition + recent-deestruction
-    /// atmosphere. The extension now builds coherent urban blocks (not scattered cubes), visible
-    /// fire zones, tapered translucent smoke plumes, scorch/wreckage zones, and denser atmospheric
-    /// haze — so a future high-oblique helicopter flyover reads as a RECENTLY DEVASTATED city.
+    /// Milestone 1Z.1A Visual QA Fix #2 — REWORKED for aerial destruction readability at 50–80 m.
+    /// Larger fire masses, wider/taller smoke plumes, composite damaged buildings, darker stepped
+    /// skyline, bigger scorch fields, dramatic destruction landmarks, stronger haze.
     /// </summary>
     public static class CinematicCityExtension
     {
@@ -28,34 +27,21 @@ namespace OperationOutbreak.Cinematic
         public const float CorridorMaxX = 7f;
         public const float CorridorMinZ = -12f;
         public const float CorridorMaxZ = 92f;
-
         private const int Seed = 91020;
 
-        // Fire / smoke / scorch zone centres (all outside the playable corridor).
         private static readonly Vector3[] DestructionZones =
         {
-            new Vector3(22f, 0f, 30f),    // right intersection
-            new Vector3(-25f, 0f, 65f),   // left industrial
-            new Vector3(30f, 0f, -5f),    // right collapsed
-            new Vector3(-20f, 0f, 100f),  // left far
-            new Vector3(38f, 0f, 55f),    // right wrecks
-            new Vector3(-35f, 0f, 20f),   // left checkpoint
-            new Vector3(28f, 0f, 120f),   // right far
+            new Vector3(22f, 0f, 30f), new Vector3(-25f, 0f, 65f),
+            new Vector3(30f, 0f, -5f), new Vector3(-20f, 0f, 100f),
+            new Vector3(38f, 0f, 55f), new Vector3(-35f, 0f, 20f),
+            new Vector3(28f, 0f, 120f),
         };
 
         public sealed class Materials
         {
-            public Material MidConcrete;
-            public Material MidConcreteDark;
-            public Material MidRubble;
-            public Material MidRust;
-            public Material MidSteel;
-            public Material Ground;
-            public Material Road;
-            public Material Silhouette;
-            public Material Smoke;
-            public Material Fire;
-            public Material Scorch;
+            public Material MidConcrete; public Material MidConcreteDark; public Material MidRubble;
+            public Material MidRust; public Material MidSteel; public Material Ground; public Material Road;
+            public Material Silhouette; public Material Smoke; public Material Fire; public Material Scorch;
             public Material Haze;
         }
 
@@ -66,12 +52,10 @@ namespace OperationOutbreak.Cinematic
         {
             var root = new GameObject(RootName);
             root.transform.SetParent(parent, false);
-            root.transform.localPosition = Vector3.zero;
             var rng = new System.Random(Seed);
-
             BuildBoundaryFill(MakeGroup(root.transform, GroupBoundaryFill), mats, rng);
             BuildUrbanBlocks(MakeGroup(root.transform, GroupMidground), mats, rng);
-            BuildLandmarks(MakeGroup(root.transform, GroupLandmarks), mats, rng);
+            BuildDestructionLandmarks(MakeGroup(root.transform, GroupLandmarks), mats, rng);
             BuildFarCity(MakeGroup(root.transform, GroupFarCity), mats, rng);
             BuildFireZones(MakeGroup(root.transform, GroupFire), mats, rng);
             BuildSmokePlumes(MakeGroup(root.transform, GroupSmoke), mats, rng);
@@ -80,265 +64,237 @@ namespace OperationOutbreak.Cinematic
             return root;
         }
 
-        private static Transform MakeGroup(Transform parent, string name)
+        private static Transform MakeGroup(Transform p, string n)
+        { var go = new GameObject(n); go.transform.SetParent(p, false); return go.transform; }
+
+        // ===== Boundary =====
+        private static void BuildBoundaryFill(Transform p, Materials m, System.Random r)
         {
-            var go = new GameObject(name);
-            go.transform.SetParent(parent, false);
-            return go.transform;
+            AddBox(p, "G_A", new Vector3(20f, -.35f, 30f), new Vector3(200f, .4f, 240f), Q(r, 4f), m.Ground, false);
+            AddBox(p, "G_B", new Vector3(-30f, -.37f, 50f), new Vector3(180f, .4f, 220f), Q(r, -3f), m.Ground, false);
+            AddBox(p, "G_C", new Vector3(0f, -.33f, 120f), new Vector3(260f, .4f, 180f), Q(r, 6f), m.Ground, false);
+            AddBox(p, "T_Rub", new Vector3(50f, -.22f, 60f), new Vector3(100f, .22f, 160f), Q(r, 2f), m.MidRubble, false);
+            AddBox(p, "T_Con", new Vector3(-55f, -.22f, 40f), new Vector3(110f, .22f, 180f), Q(r, -5f), m.MidConcreteDark, false);
+            AddBox(p, "T_Rust", new Vector3(0f, -.2f, 140f), new Vector3(200f, .2f, 90f), Q(r, 1f), m.MidRust, false);
         }
 
-        // ===================================================================== boundary
-
-        private static void BuildBoundaryFill(Transform parent, Materials mats, System.Random rng)
+        // ===== Urban blocks (composite damaged buildings) =====
+        private static void BuildUrbanBlocks(Transform p, Materials m, System.Random r)
         {
-            // Overlapping irregular slabs (not a single rectangle) to avoid a visible perimeter.
-            AddBox(parent, "Ground_A", new Vector3(20f, -0.35f, 30f),
-                new Vector3(200f, 0.4f, 240f), Q(rng, 4f), mats.Ground, false);
-            AddBox(parent, "Ground_B", new Vector3(-30f, -0.37f, 50f),
-                new Vector3(180f, 0.4f, 220f), Q(rng, -3f), mats.Ground, false);
-            AddBox(parent, "Ground_C", new Vector3(0f, -0.33f, 120f),
-                new Vector3(260f, 0.4f, 180f), Q(rng, 6f), mats.Ground, false);
-            // Terrain colour variation slabs.
-            AddBox(parent, "Terrain_Rubble", new Vector3(50f, -0.22f, 60f),
-                new Vector3(100f, 0.22f, 160f), Q(rng, 2f), mats.MidRubble, false);
-            AddBox(parent, "Terrain_Concrete", new Vector3(-55f, -0.22f, 40f),
-                new Vector3(110f, 0.22f, 180f), Q(rng, -5f), mats.MidConcreteDark, false);
-            AddBox(parent, "Terrain_Rust", new Vector3(0f, -0.2f, 140f),
-                new Vector3(200f, 0.2f, 90f), Q(rng, 1f), mats.MidRust, false);
-        }
-
-        // ===================================================================== urban blocks
-
-        private static void BuildUrbanBlocks(Transform parent, Materials mats, System.Random rng)
-        {
-            // Coherent city BLOCKS (clusters of adjacent buildings + rubble), not scattered cubes.
             int id = 0;
             for (int side = -1; side <= 1; side += 2)
-            {
                 for (int row = 0; row < 4; row++)
-                {
                     for (int col = 0; col < 3; col++)
                     {
-                        float cx = side * (13f + col * 11f + NF(rng) * 2.5f);
-                        float cz = -22f + row * 28f + NF(rng) * 4f;
-                        BuildBlock(parent, mats, rng, id++, new Vector3(cx, 0, cz));
+                        float cx = side * (13f + col * 11f + NF(r) * 2.5f);
+                        float cz = -22f + row * 28f + NF(r) * 4f;
+                        BuildDamagedBlock(p, m, r, id++, new Vector3(cx, 0, cz));
                     }
-                }
-            }
-            // Scenery streets between blocks.
             for (int i = 0; i < 7; i++)
             {
                 int side = (i % 2 == 0) ? 1 : -1;
-                float x = side * (18f + NF(rng) * 18f);
-                float z = -20f + i * 18f;
-                AddBox(parent, "Street_" + i, new Vector3(x, 0.04f, z),
-                    new Vector3(4.5f, 0.04f, 30f + NF(rng) * 18f), Q(rng, NF(rng) * 20f - 10f),
-                    mats.Road, false);
+                AddBox(p, "St_" + i, new Vector3(side * (18f + NF(r) * 18f), .04f, -20f + i * 18f),
+                    new Vector3(4.5f, .04f, 30f + NF(r) * 18f), Q(r, NF(r) * 20f - 10f), m.Road, false);
             }
         }
 
-        private static void BuildBlock(Transform parent, Materials mats, System.Random rng, int id, Vector3 center)
+        private static void BuildDamagedBlock(Transform p, Materials m, System.Random r, int id, Vector3 c)
         {
-            int buildings = 4 + (int)(NF(rng) * 3); // 4-6
-            for (int b = 0; b < buildings; b++)
+            int bldg = 4 + (int)(NF(r) * 3);
+            for (int b = 0; b < bldg; b++)
             {
-                float ox = (NF(rng) - 0.5f) * 7f;
-                float oz = (NF(rng) - 0.5f) * 7f;
-                float w = 2.5f + NF(rng) * 3f;
-                float d = 2.5f + NF(rng) * 3f;
-                bool collapsed = NF(rng) < 0.3f;
-                float h = collapsed ? 1.5f + NF(rng) * 2f : 5f + NF(rng) * 13f;
-                float lean = collapsed ? NF(rng) * 12f : 0f;
-                AddBox(parent, "B_" + id + "_" + b,
-                    center + new Vector3(ox, h * 0.5f, oz),
-                    new Vector3(w, h, d), Q(rng, NF(rng) * 90f, lean),
-                    collapsed ? mats.MidRubble : PickMid(mats, rng), !collapsed);
+                float ox = (NF(r) - .5f) * 7f, oz = (NF(r) - .5f) * 7f;
+                float w = 2.5f + NF(r) * 3f, d = 2.5f + NF(r) * 3f;
+                bool col = NF(r) < 0.3f;
+                float h = col ? 1.5f + NF(r) * 2f : 5f + NF(r) * 13f;
+                Material mat = col ? m.MidRubble : PickMid(m, r);
+                AddBox(p, "B_" + id + "_" + b, c + new Vector3(ox, h * .5f, oz),
+                    new Vector3(w, h, d), Q(r, NF(r) * 90f, col ? NF(r) * 12f : 0), mat, !col);
+
+                // Stepped/broken top — shorter offset box creating irregular silhouette.
+                if (!col && NF(r) < 0.5f)
+                {
+                    float sh = h * (0.25f + NF(r) * 0.25f);
+                    AddBox(p, "B_" + id + "_" + b + "t",
+                        c + new Vector3(ox + NF(r) * 2f - 1f, h + sh * .3f, oz + NF(r) * 2f - 1f),
+                        new Vector3(w * .7f, sh, d * .7f), Q(r, NF(r) * 60f), mat, true);
+                }
             }
-            // Rubble between buildings.
-            if (NF(rng) < 0.6f)
-                AddBox(parent, "B_" + id + "_Rub", center + new Vector3(NF(rng)*3f-1.5f, 0.4f, NF(rng)*3f-1.5f),
-                    new Vector3(3.5f, 0.8f, 3.5f), Q(rng, NF(rng)*360f), mats.MidRubble, false);
+            if (NF(r) < 0.6f)
+                AddBox(p, "B_" + id + "_R", c + new Vector3(NF(r) * 3f - 1.5f, .4f, NF(r) * 3f - 1.5f),
+                    new Vector3(3.5f, .8f, 3.5f), Q(r, NF(r) * 360f), m.MidRubble, false);
         }
 
-        // ===================================================================== landmarks
-
-        private static void BuildLandmarks(Transform parent, Materials mats, System.Random rng)
+        // ===== Destruction landmarks =====
+        private static void BuildDestructionLandmarks(Transform p, Materials m, System.Random r)
         {
-            Landmark(parent, mats, rng, "L_CollapsedTower", new Vector3(24f, 0f, 22f),
-                new Vector3(8f, 26f, 8f), 8f, mats.MidConcrete, 15f);
-            Landmark(parent, mats, rng, "L_IndustrialFire", new Vector3(-28f, 0f, 62f),
-                new Vector3(13f, 18f, 11f), -12f, mats.MidRust, 8f);
-            Landmark(parent, mats, rng, "L_RubbleZone", new Vector3(32f, 0f, 94f),
-                new Vector3(16f, 4f, 16f), 20f, mats.MidRubble, 0f);
-            Landmark(parent, mats, rng, "L_Checkpoint", new Vector3(-26f, 0f, 8f),
-                new Vector3(8f, 5f, 8f), 0f, mats.MidSteel, 0f);
-            Landmark(parent, mats, rng, "L_LeaningTower", new Vector3(38f, 0f, -8f),
-                new Vector3(7f, 34f, 7f), 15f, mats.MidConcreteDark, 18f);
-            Landmark(parent, mats, rng, "L_BurningBlock", new Vector3(-32f, 0f, 105f),
-                new Vector3(10f, 12f, 10f), -5f, mats.MidConcreteDark, 10f);
+            // 1. Collapsed high-rise (tall + broken offset top + rubble).
+            LandmarkTower(p, m, r, "L_HighRise", new Vector3(24f, 0, 22f), 8f, 24f, 8, m.MidConcrete, 0, 12f);
+            // 2. Burning industrial (dark block + fire zone at base).
+            LandmarkTower(p, m, r, "L_Industrial", new Vector3(-28f, 0, 62f), 13f, 18f, -12, m.MidRust, 8f, 0);
+            // 3. Heavy rubble district (cluster of collapsed structures).
+            for (int i = 0; i < 5; i++)
+                AddBox(p, "L_Rubble_" + i, new Vector3(32f + NF(r)*8f-4f, NF(r)*1.5f+.5f, 94f + NF(r)*8f-4f),
+                    new Vector3(3f+NF(r)*2f, 2f+NF(r)*2f, 3f+NF(r)*2f), Q(r, NF(r)*360f, NF(r)*15f), m.MidRubble, false);
+            AddBox(p, "L_Rubble_Base", new Vector3(32f, .3f, 94f), new Vector3(16f, .5f, 16f), Q(r, 20f), m.MidRubble, false);
+            // 4. Leaning tower.
+            LandmarkTower(p, m, r, "L_Leaning", new Vector3(38f, 0, -8f), 7f, 32f, 15, m.MidConcreteDark, 14f, 0);
+            // 5. Damaged stepped block.
+            LandmarkTower(p, m, r, "L_Stepped", new Vector3(-32f, 0, 105f), 10f, 16f, -5, m.MidConcrete, 6f, 0);
+            // 6. Destroyed checkpoint.
+            AddBox(p, "L_Checkpoint", new Vector3(-26f, 2.5f, 8f), new Vector3(8f, 5f, 8f), Q(r, 0), m.MidSteel, true);
+            AddBox(p, "L_Check_Rub", new Vector3(-26f, .6f, 8f), new Vector3(11f, 1.2f, 11f), Q(r, 10f), m.MidRubble, false);
         }
 
-        private static void Landmark(Transform parent, Materials mats, System.Random rng,
-            string name, Vector3 pos, Vector3 size, float yaw, Material mat, float lean)
+        private static void LandmarkTower(Transform p, Materials m, System.Random r, string name,
+            Vector3 pos, float w, float h, float yaw, Material mat, float lean, float stepH)
         {
-            AddBox(parent, name, new Vector3(pos.x, size.y * 0.5f, pos.z), size,
-                Q(rng, yaw, lean), mat, true);
-            AddBox(parent, name + "_Rubble", new Vector3(pos.x, 0.6f, pos.z),
-                new Vector3(size.x + 3f, 1.2f, size.z + 3f), Q(rng, yaw + NF(rng) * 30f),
-                mats.MidRubble, false);
+            AddBox(p, name, new Vector3(pos.x, h * .5f, pos.z), new Vector3(w, h, w), Q(r, yaw, lean), mat, true);
+            if (stepH > 0)
+                AddBox(p, name + "_Step", new Vector3(pos.x + NF(r)*2-1, h + stepH*.3f, pos.z + NF(r)*2-1),
+                    new Vector3(w*.65f, stepH, w*.65f), Q(r, yaw + NF(r)*30, lean*.5f), mat, true);
+            AddBox(p, name + "_Rub", new Vector3(pos.x, .6f, pos.z), new Vector3(w + 4f, 1.2f, w + 4f), Q(r, yaw + NF(r)*30), m.MidRubble, false);
         }
 
-        // ===================================================================== far city
-
-        private static void BuildFarCity(Transform parent, Materials mats, System.Random rng)
+        // ===== Far city (stepped/broken dark silhouettes) =====
+        private static void BuildFarCity(Transform p, Materials m, System.Random r)
         {
-            const int count = 44;
-            for (int i = 0; i < count; i++)
+            for (int i = 0; i < 44; i++)
             {
                 int side = (i % 2 == 0) ? 1 : -1;
-                float x = side * (52f + NF(rng) * 78f);
-                float z = -60f + NF(rng) * 260f;
-                float w = 5f + NF(rng) * 12f;
-                float d = 5f + NF(rng) * 12f;
-                float h = 12f + NF(rng) * 38f;
-                AddBox(parent, "Far_" + i, new Vector3(x, h * 0.5f, z),
-                    new Vector3(w, h, d), Q(rng, NF(rng) * 45f), mats.Silhouette, false);
-            }
-        }
-
-        // ===================================================================== fire zones
-
-        private static void BuildFireZones(Transform parent, Materials mats, System.Random rng)
-        {
-            for (int i = 0; i < 4 && i < DestructionZones.Length; i++)
-            {
-                Vector3 z = DestructionZones[i];
-                int flames = 3 + (int)(NF(rng) * 2);
-                for (int f = 0; f < flames; f++)
+                float x = side * (52f + NF(r) * 78f), z = -60f + NF(r) * 260f;
+                float w = 5f + NF(r) * 11f, d = 5f + NF(r) * 11f, h = 10f + NF(r) * 35f;
+                float lean = NF(r) < 0.2f ? NF(r) * 10f : 0;
+                AddBox(p, "F_" + i, new Vector3(x, h * .5f, z), new Vector3(w, h, d), Q(r, NF(r)*20, lean), m.Silhouette, false);
+                // Stepped/broken top
+                if (NF(r) < 0.65f)
                 {
-                    float fx = z.x + (NF(rng) - 0.5f) * 3.5f;
-                    float fz = z.z + (NF(rng) - 0.5f) * 3.5f;
-                    float fh = 0.8f + NF(rng) * 1.6f;
-                    float fw = 0.5f + NF(rng) * 0.4f;
-                    AddBox(parent, "Fire_" + i + "_" + f, new Vector3(fx, fh * 0.5f, fz),
-                        new Vector3(fw, fh, fw), Q(rng, NF(rng) * 360f), mats.Fire, false);
+                    float sh = h * (0.2f + NF(r) * 0.3f);
+                    AddBox(p, "F_" + i + "t", new Vector3(x + NF(r)*3-1.5f, h + sh*.2f, z + NF(r)*3-1.5f),
+                        new Vector3(w*.65f, sh, d*.65f), Q(r, NF(r)*40, lean*.5f), m.Silhouette, false);
                 }
             }
         }
 
-        // ===================================================================== smoke plumes
+        // ===== Fire zones (large flame masses) =====
+        private static void BuildFireZones(Transform p, Materials m, System.Random r)
+        {
+            // 4 PRIMARY zones — large flame masses (5-7 cubes each, 2-4m).
+            for (int i = 0; i < 4 && i < DestructionZones.Length; i++)
+            {
+                Vector3 z = DestructionZones[i];
+                int flames = 5 + (int)(NF(r) * 3);
+                for (int f = 0; f < flames; f++)
+                {
+                    float fx = z.x + (NF(r)-.5f) * 5f, fz = z.z + (NF(r)-.5f) * 5f;
+                    float fh = 2f + NF(r) * 3f, fw = 1.5f + NF(r) * 2f;
+                    AddBox(p, "Fire_" + i + "_" + f, new Vector3(fx, fh*.5f, fz),
+                        new Vector3(fw, fh, fw), Q(r, NF(r)*360f, NF(r)*20f), m.Fire, false);
+                }
+            }
+            // 3 SECONDARY smoldering points (smaller, 2-3 cubes each, 1-2m).
+            for (int i = 4; i < 7 && i < DestructionZones.Length; i++)
+            {
+                Vector3 z = DestructionZones[i];
+                for (int f = 0; f < 2 + (int)NF(r); f++)
+                {
+                    float fx = z.x + (NF(r)-.5f)*3f, fz = z.z + (NF(r)-.5f)*3f;
+                    AddBox(p, "FireS_" + i + "_" + f, new Vector3(fx, .8f, fz),
+                        new Vector3(1f + NF(r), 1.5f, 1f + NF(r)), Q(r, NF(r)*360f), m.Fire, false);
+                }
+            }
+        }
 
-        private static void BuildSmokePlumes(Transform parent, Materials mats, System.Random rng)
+        // ===== Smoke plumes (wide, tall, multi-section tapered) =====
+        private static void BuildSmokePlumes(Transform p, Materials m, System.Random r)
         {
             for (int i = 0; i < DestructionZones.Length; i++)
             {
                 Vector3 z = DestructionZones[i];
-                float totalH = 16f + NF(rng) * 14f;
-                int sections = 4;
+                float totalH = 25f + NF(r) * 20f; // 25-45m
+                int sections = 7;
                 for (int s = 0; s < sections; s++)
                 {
                     float t = (float)s / sections;
                     float secH = totalH / sections;
-                    float yC = secH * (s + 0.5f);
-                    float radius = 1.5f + t * 4.5f + NF(rng) * 0.8f;
-                    float drift = s * 0.4f;
-                    AddCylinder(parent, "Smoke_" + i + "_" + s,
-                        new Vector3(z.x + (NF(rng) - 0.5f) * drift, yC, z.z + (NF(rng) - 0.5f) * drift),
-                        new Vector3(radius, secH * 1.15f, radius), Q(rng, NF(rng) * 20f),
-                        mats.Smoke, false);
+                    float yC = secH * (s + .5f);
+                    float radius = 2.5f + t * 6f + NF(r) * 1.2f; // wider at top
+                    float drift = s * 0.6f;
+                    AddCylinder(p, "Sm_" + i + "_" + s,
+                        new Vector3(z.x + (NF(r)-.5f)*drift, yC, z.z + (NF(r)-.5f)*drift),
+                        new Vector3(radius, secH * 1.15f, radius), Q(r, NF(r)*25f), m.Smoke, false);
                 }
             }
         }
 
-        // ===================================================================== scorch zones
-
-        private static void BuildScorchZones(Transform parent, Materials mats, System.Random rng)
+        // ===== Scorch zones (large irregular dark patches + wreckage) =====
+        private static void BuildScorchZones(Transform p, Materials m, System.Random r)
         {
             for (int i = 0; i < DestructionZones.Length; i++)
             {
                 Vector3 z = DestructionZones[i];
-                AddBox(parent, "Scorch_" + i, new Vector3(z.x, 0.03f, z.z),
-                    new Vector3(6f + NF(rng) * 3f, 0.06f, 6f + NF(rng) * 3f),
-                    Q(rng, NF(rng) * 360f), mats.Scorch, false);
-                // Wreckage debris.
-                for (int d = 0; d < 3; d++)
+                // 4 overlapping rotated irregular scorch patches.
+                for (int s = 0; s < 4; s++)
                 {
-                    AddBox(parent, "Wreck_" + i + "_" + d,
-                        new Vector3(z.x + (NF(rng) - 0.5f) * 6f, 0.3f, z.z + (NF(rng) - 0.5f) * 6f),
-                        new Vector3(0.4f + NF(rng), 0.4f + NF(rng), 0.4f + NF(rng)),
-                        Q(rng, NF(rng) * 30f, NF(rng) * 360f, NF(rng) * 30f),
-                        mats.MidRust, false);
+                    float sz = 8f + NF(r) * 6f;
+                    AddBox(p, "Sc_" + i + "_" + s,
+                        new Vector3(z.x + (NF(r)-.5f)*5f, .03f, z.z + (NF(r)-.5f)*5f),
+                        new Vector3(sz, .06f, sz * (.6f + NF(r)*.5f)), Q(r, NF(r)*360f), m.Scorch, false);
                 }
+                // 5 wreckage debris cubes.
+                for (int d = 0; d < 5; d++)
+                    AddBox(p, "Wk_" + i + "_" + d,
+                        new Vector3(z.x + (NF(r)-.5f)*8f, .3f + NF(r)*.5f, z.z + (NF(r)-.5f)*8f),
+                        new Vector3(.5f + NF(r)*1.2f, .5f + NF(r), .5f + NF(r)*1.2f),
+                        Q(r, NF(r)*40f, NF(r)*360f, NF(r)*40f), m.MidRust, false);
             }
         }
 
-        // ===================================================================== haze
-
-        private static void BuildHaze(Transform parent, Materials mats, System.Random rng)
+        // ===== Haze (stronger atmospheric depth) =====
+        private static void BuildHaze(Transform p, Materials m, System.Random r)
         {
-            // Mid-distance depth haze (thin panels between midground and far city).
-            for (int i = 0; i < 4; i++)
+            // Mid-distance depth haze (taller panels).
+            for (int i = 0; i < 6; i++)
             {
                 int side = (i % 2 == 0) ? 1 : -1;
-                AddBox(parent, "HazeMid_" + i,
-                    new Vector3(side * 48f, 8f + NF(rng) * 4f, -20f + i * 35f),
-                    new Vector3(4f, 16f + NF(rng) * 8f, 60f + NF(rng) * 30f),
-                    Q(rng, NF(rng) * 15f), mats.Haze, false);
+                AddBox(p, "Hz_" + i, new Vector3(side * 46f, 12f + NF(r)*6f, -20f + i * 25f),
+                    new Vector3(5f, 24f + NF(r)*10f, 55f + NF(r)*25f), Q(r, NF(r)*15f), m.Haze, false);
             }
-            // Far boundary drifts.
-            AddBox(parent, "Haze_Far", new Vector3(0f, 3f, 185f),
-                new Vector3(300f, 6f, 12f), Quaternion.identity, mats.Haze, false);
-            AddBox(parent, "Haze_R", new Vector3(150f, 3f, 70f),
-                new Vector3(12f, 6f, 280f), Quaternion.identity, mats.Haze, false);
-            AddBox(parent, "Haze_L", new Vector3(-150f, 3f, 70f),
-                new Vector3(12f, 6f, 280f), Quaternion.identity, mats.Haze, false);
+            // Large dirty atmosphere layer (horizontal thin panels at mid-altitude).
+            AddBox(p, "Hz_AtmoA", new Vector3(0f, 18f, 40f), new Vector3(160f, 8f, 6f), Q(r, 5f), m.Haze, false);
+            AddBox(p, "Hz_AtmoB", new Vector3(0f, 14f, 80f), new Vector3(140f, 6f, 5f), Q(r, -8f), m.Haze, false);
+            // Far boundary drifts (larger).
+            AddBox(p, "Hz_Far", new Vector3(0f, 4f, 190f), new Vector3(320f, 8f, 14f), Quaternion.identity, m.Haze, false);
+            AddBox(p, "Hz_R", new Vector3(155f, 4f, 70f), new Vector3(14f, 8f, 300f), Quaternion.identity, m.Haze, false);
+            AddBox(p, "Hz_L", new Vector3(-155f, 4f, 70f), new Vector3(14f, 8f, 300f), Quaternion.identity, m.Haze, false);
         }
 
-        // ===================================================================== helpers
+        // ===== Helpers =====
+        private static Material PickMid(Materials m, System.Random r)
+        { float v = NF(r); return v < .3f ? m.MidConcrete : v < .55f ? m.MidConcreteDark : v < .75f ? m.MidRust : v < .9f ? m.MidSteel : m.MidRubble; }
 
-        private static Material PickMid(Materials mats, System.Random rng)
-        {
-            float r = NF(rng);
-            if (r < 0.30f) return mats.MidConcrete;
-            if (r < 0.55f) return mats.MidConcreteDark;
-            if (r < 0.75f) return mats.MidRust;
-            if (r < 0.90f) return mats.MidSteel;
-            return mats.MidRubble;
-        }
+        private static float NF(System.Random r) => (float)r.NextDouble();
+        private static Quaternion Q(System.Random r, float yaw) => Quaternion.Euler(0f, yaw, 0f);
+        private static Quaternion Q(System.Random r, float yaw, float lean) => Quaternion.Euler(NF(r)*lean*.3f, yaw, NF(r)*lean*.5f);
+        private static Quaternion Q(System.Random r, float x, float y, float z) => Quaternion.Euler(x, y, z);
 
-        private static float NF(System.Random rng) => (float)rng.NextDouble();
-        private static Quaternion Q(System.Random rng, float yaw) => Quaternion.Euler(0f, yaw, 0f);
-        private static Quaternion Q(System.Random rng, float yaw, float lean) =>
-            Quaternion.Euler(NF(rng) * lean * 0.3f, yaw, NF(rng) * lean * 0.5f);
-        private static Quaternion Q(System.Random rng, float x, float y, float z) => Quaternion.Euler(x, y, z);
+        private static GameObject AddBox(Transform p, string n, Vector3 pos, Vector3 scl, Quaternion rot, Material mat, bool shadows) =>
+            AddPart(p, PrimitiveType.Cube, n, pos, scl, rot, mat, shadows);
+        private static GameObject AddCylinder(Transform p, string n, Vector3 pos, Vector3 scl, Quaternion rot, Material mat, bool shadows) =>
+            AddPart(p, PrimitiveType.Cylinder, n, pos, scl, rot, mat, shadows);
 
-        private static GameObject AddBox(Transform parent, string name, Vector3 localPos,
-            Vector3 scale, Quaternion rot, Material mat, bool shadows) =>
-            AddPart(parent, PrimitiveType.Cube, name, localPos, scale, rot, mat, shadows);
-
-        private static GameObject AddCylinder(Transform parent, string name, Vector3 localPos,
-            Vector3 scale, Quaternion rot, Material mat, bool shadows) =>
-            AddPart(parent, PrimitiveType.Cylinder, name, localPos, scale, rot, mat, shadows);
-
-        private static GameObject AddPart(Transform parent, PrimitiveType type, string name,
-            Vector3 localPos, Vector3 scale, Quaternion rot, Material mat, bool castShadows)
+        private static GameObject AddPart(Transform p, PrimitiveType type, string name, Vector3 pos,
+            Vector3 scale, Quaternion rot, Material mat, bool shadows)
         {
             var go = GameObject.CreatePrimitive(type);
-            go.name = name;
-            go.transform.SetParent(parent, false);
-            go.transform.localScale = scale;
-            go.transform.localPosition = localPos;
-            go.transform.localRotation = rot;
+            go.name = name; go.transform.SetParent(p, false);
+            go.transform.localScale = scale; go.transform.localPosition = pos; go.transform.localRotation = rot;
             var mr = go.GetComponent<MeshRenderer>();
             if (mat != null) mr.sharedMaterial = mat;
-            mr.shadowCastingMode = castShadows ? ShadowCastingMode.On : ShadowCastingMode.Off;
-            mr.receiveShadows = castShadows;
+            mr.shadowCastingMode = shadows ? ShadowCastingMode.On : ShadowCastingMode.Off;
+            mr.receiveShadows = shadows;
             var col = go.GetComponent<Collider>();
-            if (col != null)
-            {
-                if (Application.isPlaying) Object.Destroy(col);
-                else Object.DestroyImmediate(col);
-            }
+            if (col != null) { if (Application.isPlaying) Object.Destroy(col); else Object.DestroyImmediate(col); }
             return go;
         }
     }
