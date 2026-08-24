@@ -1,5 +1,6 @@
 using NUnit.Framework;
 using OperationOutbreak.Cinematic;
+using OperationOutbreak.EditorTools;
 using UnityEngine;
 
 namespace OperationOutbreak.Tests
