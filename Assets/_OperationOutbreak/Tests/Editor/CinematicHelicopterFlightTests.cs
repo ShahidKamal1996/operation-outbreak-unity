@@ -255,9 +255,9 @@ namespace OperationOutbreak.Tests
                 follow.UpdateFollow(1f / 60f);
 
                 Vector3 p = camGo.transform.position;
-                Assert.Less(p.z, 0f, "Camera must sit BEHIND the helicopter (default -Z).");
+                Assert.Less(p.x, 0f, "Camera must sit BEHIND the helicopter (verified forward +X, so behind is -X).");
                 Assert.Greater(p.y, 0f, "Camera must sit ABOVE the helicopter.");
-                Assert.AreNotEqual(0f, p.x, "Camera must be offset to one SIDE.");
+                Assert.AreNotEqual(0f, p.z, "Camera must be offset to one SIDE.");
             }
             finally { Object.DestroyImmediate(camGo); }
         }
@@ -268,6 +268,7 @@ namespace OperationOutbreak.Tests
             // QA point 10: the helicopter stays clearly visible (in front of the camera).
             _root.transform.position = Vector3.zero;
             var flight = _root.AddComponent<CinematicHelicopterFlight>();
+            SetPrivate(flight, "localForwardAxis", new Vector3(1f, 0f, 0f));
 
             var camGo = new GameObject("CinematicCamera");
             try
@@ -295,6 +296,7 @@ namespace OperationOutbreak.Tests
             // QA point 8: continuous following — distance must stay bounded, not grow forever.
             _root.transform.position = Vector3.zero;
             var flight = _root.AddComponent<CinematicHelicopterFlight>();
+            SetPrivate(flight, "localForwardAxis", new Vector3(1f, 0f, 0f));
 
             var camGo = new GameObject("CinematicCamera");
             try
@@ -402,13 +404,14 @@ namespace OperationOutbreak.Tests
             {
                 var follow = camGo.AddComponent<CinematicHelicopterCameraFollow>();
                 var ct = typeof(CinematicHelicopterCameraFollow);
-                Assert.AreEqual(14f, (float)ct.GetField("followDistance", F).GetValue(follow), 1e-4f);
-                Assert.AreEqual(5f, (float)ct.GetField("heightOffset", F).GetValue(follow), 1e-4f);
-                Assert.AreEqual(4f, (float)ct.GetField("sideOffset", F).GetValue(follow), 1e-4f);
-                Assert.AreEqual(3f, (float)ct.GetField("positionDamping", F).GetValue(follow), 1e-4f);
-                Assert.AreEqual(3f, (float)ct.GetField("rotationDamping", F).GetValue(follow), 1e-4f);
-                Assert.AreEqual(4f, (float)ct.GetField("lookAheadDistance", F).GetValue(follow), 1e-4f);
+                Assert.AreEqual(11f, (float)ct.GetField("followDistance", F).GetValue(follow), 1e-4f);
+                Assert.AreEqual(3.5f, (float)ct.GetField("heightOffset", F).GetValue(follow), 1e-4f);
+                Assert.AreEqual(3.5f, (float)ct.GetField("sideOffset", F).GetValue(follow), 1e-4f);
+                Assert.AreEqual(5f, (float)ct.GetField("positionDamping", F).GetValue(follow), 1e-4f);
+                Assert.AreEqual(5f, (float)ct.GetField("rotationDamping", F).GetValue(follow), 1e-4f);
+                Assert.AreEqual(2f, (float)ct.GetField("lookAheadDistance", F).GetValue(follow), 1e-4f);
                 Assert.AreEqual(1f, (float)ct.GetField("lookHeight", F).GetValue(follow), 1e-4f);
+                Assert.AreEqual(new Vector3(1f, 0f, 0f), (Vector3)ct.GetField("targetForwardAxis", F).GetValue(follow));
             }
             finally { Object.DestroyImmediate(camGo); }
         }
