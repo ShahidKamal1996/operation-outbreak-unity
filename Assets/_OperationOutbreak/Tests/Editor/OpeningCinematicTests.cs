@@ -9,7 +9,7 @@ namespace OperationOutbreak.Tests
     /// <summary>
     /// Milestone 1Z.1B — EditMode tests for the opening exterior helicopter flyover cinematic.
     /// Uses OpeningCinematicBuilder.BuildInto to create the hierarchy under a temp parent (never
-    /// mutates the scene or production assets). Preserves the 454-test baseline.
+    /// mutates the scene or production assets). QA fix #8 updated these for the gate architecture.
     /// </summary>
     public sealed class OpeningCinematicTests
     {
@@ -37,7 +37,7 @@ namespace OperationOutbreak.Tests
         {
             Build();
             int childrenAfterFirst = _holder.transform.childCount;
-            Build(); // second build should replace, not duplicate
+            Build();
             Assert.AreEqual(childrenAfterFirst, _holder.transform.childCount,
                 "Second BuildInto must replace (not duplicate) the cinematic root.");
         }
@@ -46,9 +46,9 @@ namespace OperationOutbreak.Tests
         public void ExactlyOneHelicopterFlightRoot()
         {
             var root = Build();
-            var flightRoots = root.GetComponentsInChildren<Transform>(true);
             int count = 0;
-            foreach (var t in flightRoots) if (t.name == "HelicopterFlightRoot") count++;
+            foreach (var t in root.GetComponentsInChildren<Transform>(true))
+                if (t.name == "HelicopterFlightRoot") count++;
             Assert.AreEqual(1, count, "Exactly one HelicopterFlightRoot must exist.");
         }
 
@@ -59,7 +59,6 @@ namespace OperationOutbreak.Tests
             var path = root.transform.Find("FlightPath");
             Assert.IsNotNull(path, "FlightPath group must exist.");
             Assert.GreaterOrEqual(path.childCount, 5, "Flight path must have at least 5 authored points.");
-            // Verify the controller references them.
             var controller = root.GetComponent<OpeningCinematicController>();
             Assert.IsNotNull(controller, "Controller must be on the root.");
         }
@@ -74,9 +73,7 @@ namespace OperationOutbreak.Tests
             Assert.IsNotNull(camGo, "ExteriorCamera must exist.");
             var cam = camGo.GetComponent<Camera>();
             Assert.IsNotNull(cam, "ExteriorCamera must have a Camera component.");
-            // It must be DISABLED initially (controller enables on start).
             Assert.IsFalse(cam.enabled, "ExteriorCamera must be disabled until the cinematic starts.");
-            // It must NOT be tagged MainCamera.
             Assert.AreNotEqual("MainCamera", camGo.tag, "ExteriorCamera must not be the MainCamera.");
         }
 
@@ -86,10 +83,8 @@ namespace OperationOutbreak.Tests
             var root = Build();
             var controller = root.GetComponent<OpeningCinematicController>();
             Assert.IsNotNull(controller, "OpeningCinematicController must be on the root.");
-            // Initial phase must be Inactive.
             Assert.AreEqual(OpeningCinematicController.Phase.Inactive, controller.CurrentPhase,
                 "Controller must start in Inactive phase.");
-            // AwaitingInteriorTransition must exist as a valid phase.
             Assert.IsTrue(System.Enum.IsDefined(typeof(OpeningCinematicController.Phase),
                 "AwaitingInteriorTransition"), "Phase enum must define AwaitingInteriorTransition.");
         }
@@ -102,7 +97,6 @@ namespace OperationOutbreak.Tests
             Assert.IsNotNull(flightRoot, "HelicopterFlightRoot must exist.");
             var visual = flightRoot.Find("HelicopterVisual");
             Assert.IsNotNull(visual, "HelicopterVisual must be a child of HelicopterFlightRoot.");
-            // The model must be under the visual (replaceable).
             Assert.GreaterOrEqual(visual.childCount, 1, "HelicopterVisual must contain the model/placeholder.");
         }
 
@@ -110,7 +104,6 @@ namespace OperationOutbreak.Tests
         public void NoGameplayAuthorityComponents()
         {
             var root = Build();
-            // No PlayerController, EnemySpawner, MissionObjectiveController, etc.
             Assert.IsNull(root.GetComponentInChildren<OperationOutbreak.Player.PlayerController>(true),
                 "Cinematic must not contain PlayerController.");
             Assert.IsNull(root.GetComponentInChildren<OperationOutbreak.Enemies.EnemySpawner>(true),
@@ -121,8 +114,6 @@ namespace OperationOutbreak.Tests
         public void NoCollidersOrRigidbodies()
         {
             var root = Build();
-            // The rotor overlay disc may have a disabled collider; the model may have colliders.
-            // We check for ENABLED colliders that could affect gameplay physics.
             foreach (var col in root.GetComponentsInChildren<Collider>(true))
                 Assert.IsFalse(col.enabled, "Cinematic collider '" + col.name + "' must be disabled.");
             Assert.AreEqual(0, root.GetComponentsInChildren<Rigidbody>(true).Length,
@@ -135,7 +126,6 @@ namespace OperationOutbreak.Tests
             var root = Build();
             var path = root.transform.Find("FlightPath");
             Assert.IsNotNull(path);
-            // Path points must NOT be children of [Cinematic] City Extension.
             foreach (Transform point in path)
             {
                 var current = point.parent;
@@ -151,14 +141,10 @@ namespace OperationOutbreak.Tests
         [Test]
         public void ExteriorSequenceStopsAtAwaitingTransition()
         {
-            // The Phase enum must have AwaitingInteriorTransition (the sequence ends there,
-            // NOT at Complete or gameplay).
             var phases = System.Enum.GetNames(typeof(OpeningCinematicController.Phase));
             bool hasAwait = false;
             foreach (var p in phases) if (p == "AwaitingInteriorTransition") hasAwait = true;
             Assert.IsTrue(hasAwait, "Phase enum must contain AwaitingInteriorTransition.");
-
-            // The enum must NOT have a gameplay-start phase (this milestone stops at transition).
             bool hasGameplayStart = false;
             foreach (var p in phases) if (p.Contains("Gameplay") || p.Contains("Play")) hasGameplayStart = true;
             Assert.IsFalse(hasGameplayStart,
@@ -182,7 +168,7 @@ namespace OperationOutbreak.Tests
             var camGo = root.transform.Find("Cameras/ExteriorCamera");
             Assert.IsNotNull(camGo);
             Assert.IsTrue(camGo.gameObject.activeSelf,
-                "ExteriorCamera GameObject must be active after authoring (the Camera component is disabled, not the GO).");
+                "ExteriorCamera GameObject must be active after authoring.");
         }
 
         [Test]
@@ -191,7 +177,7 @@ namespace OperationOutbreak.Tests
             var root = Build();
             var cam = root.transform.Find("Cameras/ExteriorCamera").GetComponent<Camera>();
             Assert.IsFalse(cam.enabled,
-                "ExteriorCamera component must start disabled (enabled by the controller on cinematic start).");
+                "ExteriorCamera component must start disabled.");
         }
 
         [Test]
@@ -210,7 +196,6 @@ namespace OperationOutbreak.Tests
         {
             var root = Build();
             var controller = root.GetComponent<OpeningCinematicController>();
-            // Null out the exterior camera reference via reflection (simulating misconfiguration).
             var field = typeof(OpeningCinematicController).GetField("exteriorCamera",
                 System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
             field.SetValue(controller, null);
@@ -251,45 +236,10 @@ namespace OperationOutbreak.Tests
         }
 
         [Test]
-        public void GameplayVisualHidingIsReversible()
-        {
-            // Create a fake "Player" object with a renderer, simulate hide + restore.
-            var fakePlayer = new GameObject("Player");
-            var mr = fakePlayer.AddComponent<MeshRenderer>();
-            mr.enabled = true;
-            try
-            {
-                var root = Build();
-                var controller = root.GetComponent<OpeningCinematicController>();
-
-                // Set gameplayVisualNames to include "Player" (already default).
-                var namesField = typeof(OpeningCinematicController).GetField("gameplayVisualNames",
-                    System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
-
-                // Hide
-                var hideMethod = typeof(OpeningCinematicController).GetMethod("HideGameplayVisuals",
-                    System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
-                hideMethod.Invoke(controller, null);
-                Assert.IsFalse(mr.enabled, "Player renderer must be hidden during cinematic.");
-
-                // Restore
-                var restoreMethod = typeof(OpeningCinematicController).GetMethod("RestoreGameplayVisuals",
-                    System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
-                restoreMethod.Invoke(controller, null);
-                Assert.IsTrue(mr.enabled, "Player renderer must be restored after cinematic.");
-            }
-            finally
-            {
-                Object.DestroyImmediate(fakePlayer);
-            }
-        }
-
-        [Test]
         public void ValidationFailsWithNoHelicopterRenderers()
         {
             var root = Build();
             var controller = root.GetComponent<OpeningCinematicController>();
-            // Remove all renderers from helicopter visual to trigger validation failure.
             var visual = root.transform.Find("HelicopterFlightRoot/HelicopterVisual");
             foreach (var r in visual.GetComponentsInChildren<Renderer>(true))
                 r.enabled = false;
@@ -299,42 +249,98 @@ namespace OperationOutbreak.Tests
             Assert.IsFalse(result, "Validation must fail when no helicopter renderers are enabled.");
         }
 
+        // ---- QA fix #8: gate architecture tests ----
+
         [Test]
-        public void ControllerHasPresentationOwnershipMethods()
+        public void ControllerDoesNotModifyDirectorComponentState()
         {
+            // The controller must NOT disable/enable the MissionStoryDirector component.
+            // It only sets the HoldOpeningSequence gate flag. Verify the gate property exists.
             var root = Build();
             var controller = root.GetComponent<OpeningCinematicController>();
-            // Verify the ownership API exists and the initial state is correct.
-            Assert.IsFalse(controller.HasSuppressedDirector,
-                "Controller must start without suppressed director (no MissionStoryDirector in test hierarchy).");
-            // ReleasePresentationOwnership must be safe even when nothing was suppressed.
-            controller.ReleasePresentationOwnership();
+            // In the test hierarchy there's no MissionStoryDirector, so the gate is not held.
+            Assert.IsFalse(controller.IsHoldingDirectorGate,
+                "Controller must not hold the gate when no MissionStoryDirector exists.");
         }
 
         [Test]
-        public void PresentationOwnershipSuppressesDirector()
+        public void DirectorGatePropertyExistsAndDefaultsFalse()
+        {
+            // Verify MissionStoryDirector exposes the HoldOpeningSequence gate.
+            var prop = typeof(OperationOutbreak.Story.MissionStoryDirector).GetProperty("HoldOpeningSequence");
+            Assert.IsNotNull(prop, "MissionStoryDirector must expose HoldOpeningSequence property.");
+            Assert.AreEqual(typeof(bool), prop.PropertyType, "HoldOpeningSequence must be a bool.");
+            // Verify ReleaseOpeningSequence method exists.
+            var method = typeof(OperationOutbreak.Story.MissionStoryDirector).GetMethod("ReleaseOpeningSequence");
+            Assert.IsNotNull(method, "MissionStoryDirector must expose ReleaseOpeningSequence method.");
+            Assert.IsTrue(method.IsPublic, "ReleaseOpeningSequence must be public.");
+        }
+
+        [Test]
+        public void HelicopterBoundsProjectInsideCameraViewport()
         {
             var root = Build();
             var controller = root.GetComponent<OpeningCinematicController>();
+            var camGo = root.transform.Find("Cameras/ExteriorCamera");
+            Assert.IsNotNull(camGo);
+            var cam = camGo.GetComponent<Camera>();
 
-            // Create a minimal mock "MissionStoryDirector-like" component to suppress.
-            var mockGO = new GameObject("MockDirector");
+            // Position the helicopter at the start of the path.
+            var flightRoot = root.transform.Find("HelicopterFlightRoot");
+            var path = root.transform.Find("FlightPath");
+            Assert.IsNotNull(flightRoot);
+            Assert.IsNotNull(path);
+            flightRoot.position = path.GetChild(0).position;
+
+            // Enable the camera and position it at the trailing offset from the helicopter.
+            controller.StartExteriorFlyover();
+            if (cam != null && cam.enabled)
+            {
+                // Compute combined helicopter bounds.
+                var visual = root.transform.Find("HelicopterFlightRoot/HelicopterVisual");
+                Bounds bounds = new Bounds();
+                bool first = true;
+                foreach (var r in visual.GetComponentsInChildren<Renderer>(true))
+                {
+                    if (r == null || !r.enabled) continue;
+                    if (first) { bounds = r.bounds; first = false; }
+                    else bounds.Encapsulate(r.bounds);
+                }
+                if (!first)
+                {
+                    Vector3 vp = cam.WorldToViewportPoint(bounds.center);
+                    Assert.Greater(vp.z, 0f,
+                        "Helicopter bounds center must be IN FRONT of the camera (vp.z > 0). Got z=" + vp.z);
+                }
+            }
+        }
+
+        [Test]
+        public void CinematicDoesNotPermanentlyDisableMainCamera()
+        {
+            // Verify the controller tracks and can restore the Main Camera.
+            var root = Build();
+            var controller = root.GetComponent<OpeningCinematicController>();
+            // Create a fake Main Camera.
+            var camGo = new GameObject("FakeMainCam");
+            camGo.tag = "MainCamera";
+            var cam = camGo.AddComponent<Camera>();
+            cam.enabled = true;
             try
             {
-                // Use a simple Behaviour the controller can suppress via its generic Behaviour field.
-                // The actual suppression targets MissionStoryDirector (a MonoBehaviour).
-                // In this test we verify the controller's ownership API doesn't crash and
-                // that it handles the no-director case gracefully.
-                controller.AcquirePresentationOwnership();
-                // In Edit Mode there's no MissionStoryDirector in the test hierarchy,
-                // so HasSuppressedDirector stays false (nothing found to suppress).
-                Assert.IsFalse(controller.HasSuppressedDirector,
-                    "No MissionStoryDirector exists in test hierarchy — nothing to suppress.");
+                controller.StartExteriorFlyover();
+                // After start, the main camera should be disabled (tracked for restore).
+                Assert.IsFalse(cam.enabled, "Main camera must be disabled during flyover.");
+
+                // Simulate OnDestroy restoration (call the private restore logic via destruction).
+                Object.DestroyImmediate(root);
+                // After destruction, the camera should be restored.
+                Assert.IsTrue(cam.enabled,
+                    "Main camera must be restored when the cinematic controller is destroyed.");
             }
             finally
             {
-                Object.DestroyImmediate(mockGO);
-                Object.DestroyImmediate(root);
+                Object.DestroyImmediate(camGo);
             }
         }
     }

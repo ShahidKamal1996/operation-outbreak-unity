@@ -49,6 +49,22 @@ namespace OperationOutbreak.Story
         private StorySequenceDefinition _outroSeq;
         private bool _beat1Fired, _beat2Fired;
 
+        /// <summary>
+        /// QA fix #8 — when true, the director defers auto-starting the opening sequence.
+        /// The exterior cinematic sets this in Awake() (before any OnEnable fires) so the
+        /// director initializes normally (Awake, subscriptions, references) but does NOT
+        /// auto-load the Mission 01 opening until the gate is released. This preserves the
+        /// component's full lifecycle for the future interior handoff (1Z.1C).
+        /// </summary>
+        public bool HoldOpeningSequence { get; set; }
+
+        /// <summary>Releases the opening gate and starts the sequence (public API for cinematic handoff).</summary>
+        public void ReleaseOpeningSequence()
+        {
+            HoldOpeningSequence = false;
+            TryStartOpening();
+        }
+
         // Interior rig world position — far from gameplay lane, invisible from gameplay camera.
         private static readonly Vector3 InteriorWorldPos = new Vector3(0f, -300f, 0f);
 
@@ -93,6 +109,17 @@ namespace OperationOutbreak.Story
                 _runner.SequenceCompleted += OnSeqCompleted;
             }
             if (_spawner != null) _spawner.EncounterCompleted += OnEncounterCompleted;
+
+            TryStartOpening();
+        }
+
+        /// <summary>
+        /// QA fix #8 — extracted from OnEnable so the gate can defer the auto-start without
+        /// preventing the director's normal initialization (event subscriptions, references).
+        /// </summary>
+        private void TryStartOpening()
+        {
+            if (HoldOpeningSequence) return; // exterior cinematic holds the gate
 
             if (mission01 != null && mission01.MissionId == "mission_01"
                 && _openingSeq != null && _runner != null)
