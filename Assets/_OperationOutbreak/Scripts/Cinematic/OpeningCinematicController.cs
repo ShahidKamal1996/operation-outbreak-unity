@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using OperationOutbreak.Story;
 using UnityEngine;
 
 namespace OperationOutbreak.Cinematic
@@ -7,6 +8,11 @@ namespace OperationOutbreak.Cinematic
     /// Milestone 1Z.1B — the opening exterior helicopter flyover cinematic controller.
     /// Owns ONLY cinematic sequence state, flight progression, camera activation, and a clean
     /// transition hook. Does NOT own gameplay, enemies, objectives, or environment construction.
+    ///
+    /// QA Fix #5: Acquires EXCLUSIVE presentation ownership at Awake() by disabling the
+    /// MissionStoryDirector (which auto-starts the Mission 01 interior sequence in its OnEnable).
+    /// This guarantees the exterior flyover is the ONLY visible presentation during its ~10 s.
+    /// The director is restored on OnDestroy for the future interior milestone.
     /// </summary>
     [DisallowMultipleComponent]
     public sealed class OpeningCinematicController : MonoBehaviour
@@ -55,8 +61,76 @@ namespace OperationOutbreak.Cinematic
         private bool _mainCameraWasEnabled;
         private readonly List<GameObject> _hiddenGameplayObjects = new List<GameObject>();
 
+        // Presentation ownership tracking.
+        private Behaviour _suppressedDirector;
+        private bool _directorWasEnabled;
+
         /// <summary>True when the exterior camera component is enabled and rendering.</summary>
         public bool IsExteriorCameraEnabled => exteriorCamera != null && exteriorCamera.enabled;
+
+        /// <summary>True when the MissionStoryDirector has been suppressed by this controller.</summary>
+        public bool HasSuppressedDirector => _suppressedDirector != null;
+
+        private void Awake()
+        {
+            // Acquire exclusive presentation ownership BEFORE any OnEnable can fire.
+            // MissionStoryDirector.OnEnable auto-starts the Mission 01 interior sequence
+            // (fade overlay, interior camera, subtitles) which would cover the exterior flyover.
+            AcquirePresentationOwnership();
+        }
+
+        /// <summary>
+        /// Disables competing story/interior presentation systems so the exterior flyover
+        /// has exclusive visual ownership. Safe and reversible.
+        /// </summary>
+        public void AcquirePresentationOwnership()
+        {
+            // 1. Suppress MissionStoryDirector so it cannot auto-start the interior sequence.
+            var director = Object.FindAnyObjectByType<MissionStoryDirector>();
+            if (director != null && director.enabled)
+            {
+                _suppressedDirector = director;
+                _directorWasEnabled = director.enabled;
+                director.enabled = false;
+                Debug.Log("[OPENING CINEMATIC] Suppressed MissionStoryDirector (prevented interior auto-start).");
+            }
+
+            // 2. Stop any already-running story sequence (in case OnEnable fired first).
+            var runner = Object.FindAnyObjectByType<StorySequenceRunner>();
+            if (runner != null && runner.IsRunning)
+            {
+                runner.Skip();
+                Debug.Log("[OPENING CINEMATIC] Stopped running story sequence runner.");
+            }
+
+            // 3. Clear any fade overlay that may have been created.
+            var fade = Object.FindAnyObjectByType<StoryFadeController>();
+            if (fade != null)
+            {
+                fade.ClearInstant();
+                Debug.Log("[OPENING CINEMATIC] Cleared story fade overlay.");
+            }
+
+            // 4. Hide any active subtitle.
+            var subtitle = Object.FindAnyObjectByType<SubtitleController>();
+            if (subtitle != null)
+            {
+                subtitle.Hide();
+            }
+
+            Debug.Log("[OPENING CINEMATIC] Exterior presentation ownership acquired.");
+        }
+
+        /// <summary>Restores any suppressed story systems (for the future interior milestone).</summary>
+        public void ReleasePresentationOwnership()
+        {
+            if (_suppressedDirector != null && _directorWasEnabled)
+            {
+                _suppressedDirector.enabled = true;
+                Debug.Log("[OPENING CINEMATIC] Restored MissionStoryDirector for interior transition.");
+            }
+            _suppressedDirector = null;
+        }
 
         private void OnEnable()
         {
@@ -68,6 +142,8 @@ namespace OperationOutbreak.Cinematic
         public void StartExteriorFlyover()
         {
             if (CurrentPhase != Phase.Inactive) return;
+
+            Debug.Log("[OPENING CINEMATIC] Exterior flyover requested.");
 
             // Fail-safe: validate the exterior camera BEFORE touching the gameplay camera.
             if (!ValidateCinematicSetup())
@@ -94,12 +170,30 @@ namespace OperationOutbreak.Cinematic
                 _disabledMainCamera = main;
                 _mainCameraWasEnabled = main.enabled;
                 main.enabled = false;
+                Debug.Log("[OPENING CINEMATIC] Disabled gameplay Main Camera: " + main.name);
             }
 
             // Temporarily hide the gameplay player visual so it does not appear in the cinematic.
             HideGameplayVisuals();
 
-            Debug.Log("[OPENING CINEMATIC] Exterior flyover started.");
+            // Diagnostics: report helicopter renderer state.
+            if (helicopterVisual != null)
+            {
+                int count = 0;
+                Bounds bounds = new Bounds();
+                bool first = true;
+                foreach (var r in helicopterVisual.GetComponentsInChildren<Renderer>(true))
+                {
+                    if (r == null || !r.enabled) continue;
+                    count++;
+                    if (first) { bounds = r.bounds; first = false; }
+                    else bounds.Encapsulate(r.bounds);
+                }
+                Debug.Log($"[OPENING CINEMATIC] Copter_2 renderers: {count}, bounds size: {bounds.size}");
+            }
+
+            Debug.Log("[OPENING CINEMATIC] Exterior flyover started. ExteriorCamera enabled="
+                      + exteriorCamera.enabled + ", activeInHierarchy=" + exteriorCamera.gameObject.activeInHierarchy);
         }
 
         /// <summary>
@@ -149,7 +243,7 @@ namespace OperationOutbreak.Cinematic
                     if (r.enabled)
                     {
                         r.enabled = false;
-                        _hiddenGameplayObjects.Add(go); // record the GO so we can restore
+                        _hiddenGameplayObjects.Add(go);
                     }
                 }
             }
@@ -157,7 +251,6 @@ namespace OperationOutbreak.Cinematic
 
         private void RestoreGameplayVisuals()
         {
-            // Re-enable all renderers we disabled. Track unique GOs we touched.
             var restored = new HashSet<GameObject>();
             foreach (var go in _hiddenGameplayObjects)
             {
@@ -171,10 +264,11 @@ namespace OperationOutbreak.Cinematic
 
         private void OnDestroy()
         {
-            // Safety: restore the gameplay Main Camera + visuals if destroyed mid-sequence.
+            // Safety: restore the gameplay Main Camera + visuals + story director.
             if (_disabledMainCamera != null && _mainCameraWasEnabled)
                 _disabledMainCamera.enabled = true;
             RestoreGameplayVisuals();
+            ReleasePresentationOwnership();
         }
 
         private void Update()
@@ -191,7 +285,6 @@ namespace OperationOutbreak.Cinematic
                 Vector3 pos = SamplePath(eased);
                 flightRoot.position = pos;
 
-                // Face travel direction (damped).
                 Vector3 aheadPos = SamplePath(Mathf.Min(1f, eased + 0.015f));
                 Vector3 dir = aheadPos - pos;
                 if (dir.sqrMagnitude > 0.001f)
@@ -201,7 +294,6 @@ namespace OperationOutbreak.Cinematic
                         Time.unscaledDeltaTime * 4f);
                 }
 
-                // Micro-motion on the visual child (bob + tilt + model yaw).
                 if (helicopterVisual != null)
                 {
                     float t = Time.unscaledTime;
@@ -243,7 +335,6 @@ namespace OperationOutbreak.Cinematic
 
         private Quaternion ComputeCameraLook(float t)
         {
-            // Look at the helicopter-relative moving focus target (not a fixed city-center point).
             Vector3 lookAt = cameraFocusTarget != null ? cameraFocusTarget.position : flightRoot.position;
             return Quaternion.LookRotation(lookAt - _cameraPos, Vector3.up);
         }

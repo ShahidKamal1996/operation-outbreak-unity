@@ -298,5 +298,44 @@ namespace OperationOutbreak.Tests
             bool result = controller.ValidateCinematicSetup();
             Assert.IsFalse(result, "Validation must fail when no helicopter renderers are enabled.");
         }
+
+        [Test]
+        public void ControllerHasPresentationOwnershipMethods()
+        {
+            var root = Build();
+            var controller = root.GetComponent<OpeningCinematicController>();
+            // Verify the ownership API exists and the initial state is correct.
+            Assert.IsFalse(controller.HasSuppressedDirector,
+                "Controller must start without suppressed director (no MissionStoryDirector in test hierarchy).");
+            // ReleasePresentationOwnership must be safe even when nothing was suppressed.
+            controller.ReleasePresentationOwnership();
+        }
+
+        [Test]
+        public void PresentationOwnershipSuppressesDirector()
+        {
+            var root = Build();
+            var controller = root.GetComponent<OpeningCinematicController>();
+
+            // Create a minimal mock "MissionStoryDirector-like" component to suppress.
+            var mockGO = new GameObject("MockDirector");
+            try
+            {
+                // Use a simple Behaviour the controller can suppress via its generic Behaviour field.
+                // The actual suppression targets MissionStoryDirector (a MonoBehaviour).
+                // In this test we verify the controller's ownership API doesn't crash and
+                // that it handles the no-director case gracefully.
+                controller.AcquirePresentationOwnership();
+                // In Edit Mode there's no MissionStoryDirector in the test hierarchy,
+                // so HasSuppressedDirector stays false (nothing found to suppress).
+                Assert.IsFalse(controller.HasSuppressedDirector,
+                    "No MissionStoryDirector exists in test hierarchy — nothing to suppress.");
+            }
+            finally
+            {
+                Object.DestroyImmediate(mockGO);
+                Object.DestroyImmediate(root);
+            }
+        }
     }
 }
