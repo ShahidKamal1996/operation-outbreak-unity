@@ -62,8 +62,20 @@ namespace OperationOutbreak.Story
     ///           by reading serialized intent straight off the scene. This is what actually
     ///           removes the ordering race - see <see cref="AnyActiveHoldSourceRequestsHold"/>.
     ///
-    /// DEFAULT STATE IS ALLOWED. With no cinematic present (or with Auto Start On Play OFF) nothing
-    /// ever holds, and the original Mission 01 flow is byte-for-byte unchanged.
+    /// DEFAULT STATE IS ALLOWED, and a hold means "a global opening cinematic owns game startup".
+    ///
+    /// STEP 2A OWNERSHIP CORRECTION
+    /// ----------------------------
+    /// This permission no longer gates an AUTO-start, because MissionStoryDirector no longer
+    /// auto-starts the opening story at all. The RAVEN/Kane interior sequence belongs to the
+    /// GLOBAL OPENING CINEMATIC pipeline, so its meaning is now:
+    ///
+    ///   held    -> a global opening cinematic owns startup. MissionStoryDirector stands down and
+    ///              waits to be asked (StartOpeningStorySequence) during the 1Z.1C handoff.
+    ///   allowed -> nothing owns startup. MissionStoryDirector enters Mission 01 gameplay DIRECTLY,
+    ///              without playing the opening story (the development bypass).
+    ///
+    /// So "allowed" no longer means "play the RAVEN scene" — it means "no cinematic owns startup".
     /// </summary>
     public static class OpeningStoryStartPermission
     {

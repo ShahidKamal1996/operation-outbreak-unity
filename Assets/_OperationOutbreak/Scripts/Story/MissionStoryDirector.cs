@@ -9,12 +9,24 @@ using UnityEngine;
 namespace OperationOutbreak.Story
 {
     /// <summary>
-    /// Milestone 1Z.1 QA fix #8 / #10 — director for Mission 01's helicopter interior opening.
+    /// Milestone 1Z.1 QA fix #10 Step 2A — Mission 01 story director.
     ///
-    /// QA fix #10: this director is now AUTHORITATIVE over whether the opening may start. Rather
-    /// than waiting for another component to push a flag onto it (which was order-dependent), it
-    /// asks OpeningStoryStartPermission — including a scan of serialized scene intent — every time
-    /// it considers starting. See <see cref="IsOpeningStartAllowed"/>.
+    /// OWNERSHIP BOUNDARY (corrected by manual QA):
+    ///
+    /// The RAVEN/Kane helicopter-interior sequence is part of the GLOBAL GAME-OPENING CINEMATIC.
+    /// It is NOT a Mission 01 cinematic that plays merely because Mission 01 started. This
+    /// director therefore NEVER auto-starts it. OnEnable only resolves WHO owns startup:
+    ///
+    ///   global opening cinematic present -> stand down, wait for StartOpeningStorySequence()
+    ///   no opening cinematic owns startup -> EnterGameplayWithoutOpening() (dev bypass)
+    ///
+    /// What this director still owns:
+    ///   - EXECUTING the opening story when the global pipeline explicitly asks it to (it owns the
+    ///     interior rig, fades, HUD and Kane swap that the sequence's cues drive),
+    ///   - Mission 01 runtime story events: gameplay radio beats, encounter beats, mission outro,
+    ///   - the ONE authoritative Mission 01 gameplay-start transition.
+    ///
+    /// What it does NOT own: the decision of when the global opening cinematic runs.
     ///
     /// Owns the interior rig lifecycle, the cinematic fade (so the camera never visibly travels
     /// between the gameplay world and the y=-300 interior), HUD visibility, and the real/cinematic
@@ -23,6 +35,7 @@ namespace OperationOutbreak.Story
     /// gameplay Player is simply hidden during the briefing and re-shown at insertion.
     ///
     /// Cue flow (see Chapter01_Mission01_Opening.asset):
+    /// Cue flow below applies ONLY once the global opening cinematic hands off.
     ///   m01_interior_setup (black + build + clone Kane + hide player)
     ///   -> m01_interior_kane (camera snap + fade IN, revealing seated Kane)
     ///   -> interior dialogue + reframes
@@ -62,17 +75,21 @@ namespace OperationOutbreak.Story
         public bool HoldOpeningSequence { get; set; }
 
         /// <summary>
-        /// QA fix #10 — THE authoritative answer to "may the Mission 01 opening start now?".
+        /// QA fix #10 — is the opening STORY SEQUENCE permitted to run right now?
         ///
-        /// The opening starts only when ALL THREE agree:
+        /// Step 2A note: this is no longer an auto-start decision. The director never auto-starts
+        /// the opening story any more (see <see cref="OnEnable"/>). This is now the guard on the
+        /// EXPLICIT entry point <see cref="StartOpeningStorySequence"/>, so the global opening
+        /// cinematic pipeline stays the only thing that can run that sequence.
+        ///
+        /// Permitted only when ALL THREE agree:
         ///   1. no local legacy hold,
-        ///   2. the process-wide permission is allowed (a holder has registered a token), and
-        ///   3. no active scene component declares it owns Mission 01 startup.
+        ///   2. the process-wide permission is allowed, and
+        ///   3. no active scene component still claims exclusive ownership of the opening.
         ///
-        /// Check 3 is what removes the initialization-order race. Checks 1 and 2 can only be true
-        /// once some other component's Awake has already run; check 3 reads serialized intent
-        /// directly off the scene, and Unity deserializes [SerializeField] state before ANY Awake
-        /// executes. So this is correct even when MissionStoryDirector.OnEnable runs first.
+        /// Check 3 reads serialized intent directly off the scene (Unity deserializes
+        /// [SerializeField] state before ANY Awake runs), which is what keeps the answer correct
+        /// regardless of component initialization order.
         /// </summary>
         public bool IsOpeningStartAllowed =>
             !HoldOpeningSequence
@@ -80,27 +97,102 @@ namespace OperationOutbreak.Story
             && !OpeningStoryStartPermission.AnyActiveHoldSourceRequestsHold();
 
         /// <summary>
-        /// Releases the local gate and attempts to start the opening (public API for the 1Z.1C
-        /// handoff). This clears only the director's OWN hold; if an exterior cinematic still
-        /// claims startup ownership the opening correctly stays deferred. Use
-        /// <see cref="ForceReleaseAllOpeningHolds"/> for a full handoff.
+        /// Step 2A — true when a global opening cinematic in the scene owns game startup, so this
+        /// director must NOT put Mission 01 into gameplay by itself. Answerable from serialized
+        /// state before the cinematic initializes.
+        /// </summary>
+        public bool IsOpeningOwnedByGlobalCinematic =>
+            OpeningStoryStartPermission.AnyActiveHoldSourceRequestsHold();
+
+        /// <summary>True once Mission 01 is in its normal, playable gameplay state.</summary>
+        public bool IsInGameplayPhase => _phase == Phase.Gameplay;
+
+        /// <summary>True while the RAVEN/Kane opening story sequence is running.</summary>
+        public bool IsPlayingOpeningStory => _phase == Phase.Opening;
+
+        /// <summary>
+        /// Step 2A — THE explicit entry point for the GLOBAL OPENING CINEMATIC pipeline to run the
+        /// RAVEN/Kane helicopter-interior sequence. Nothing calls this automatically; the opening
+        /// cinematic coordinator invokes it during the 1Z.1C handoff.
+        ///
+        /// Ownership boundary: this director still EXECUTES the sequence (it owns the interior rig,
+        /// fades, HUD and Kane swap that the sequence's cues drive), but it no longer DECIDES when
+        /// the sequence runs. Returns true if the sequence actually started.
+        /// </summary>
+        public bool StartOpeningStorySequence()
+        {
+            if (_phase != Phase.Idle)
+            {
+                Debug.LogWarning("[STORY M01] Opening story requested but the director has already " +
+                                 "left Idle (phase=" + _phase + ") — ignoring duplicate request.");
+                return false;
+            }
+
+            if (!IsOpeningStartAllowed)
+            {
+                Debug.LogWarning("[STORY M01] Opening story requested but it is not permitted yet " +
+                                 "(a hold is still active). Release the hold before handing off.");
+                return false;
+            }
+
+            if (mission01 == null || mission01.MissionId != "mission_01"
+                || _openingSeq == null || _runner == null)
+            {
+                Debug.LogWarning("[STORY M01] Opening story requested but Mission 01 / sequence / " +
+                                 "runner references are missing — entering gameplay directly.");
+                EnterMission01GameplayState(skipped: true);
+                return false;
+            }
+
+            _phase = Phase.Opening;
+            if (_sections != null) _sections.enabled = false;
+            if (_hudCtrl != null) _hudCtrl.HideGameplayHud();
+            Debug.Log("[STORY M01] Opening story started (requested by the global opening cinematic).");
+            _runner.LoadSequence(_openingSeq);
+            return true;
+        }
+
+        /// <summary>
+        /// Step 2A — DEVELOPMENT BYPASS entry point. Puts Mission 01 straight into the exact
+        /// gameplay state that previously existed only AFTER the opening completed or was skipped.
+        ///
+        /// This deliberately routes through the SAME single transition
+        /// (<see cref="EnterMission01GameplayState"/>) the completed/skipped opening uses, so there
+        /// is exactly one gameplay-start path and no duplicated initialization.
+        /// </summary>
+        public void EnterGameplayWithoutOpening()
+        {
+            if (_phase != Phase.Idle)
+            {
+                Debug.Log("[STORY M01] Gameplay entry requested but the director already left Idle " +
+                          "(phase=" + _phase + ") — ignoring.");
+                return;
+            }
+
+            Debug.Log("[STORY M01] No global opening cinematic owns startup — entering Mission 01 " +
+                      "gameplay directly (opening story bypassed).");
+            EnterMission01GameplayState(skipped: false);
+        }
+
+        /// <summary>
+        /// Legacy QA fix #8/#10 API. Clears the director's own hold, then resolves startup
+        /// ownership exactly as OnEnable does.
         /// </summary>
         public void ReleaseOpeningSequence()
         {
             HoldOpeningSequence = false;
-            TryStartOpening();
+            ResolveStartupOwnership();
         }
 
         /// <summary>
-        /// Full 1Z.1C handoff: clears the local gate, tells every active hold source to
-        /// relinquish its claim, then starts the opening. NOTHING calls this automatically in
-        /// QA fix #10 — the exterior cinematic deliberately keeps the story held.
+        /// Full handoff: clears the local gate and tells every active hold source to relinquish
+        /// its claim, then resolves startup ownership. NOTHING calls this automatically.
         /// </summary>
         public void ForceReleaseAllOpeningHolds()
         {
             HoldOpeningSequence = false;
             OpeningStoryStartPermission.ReleaseSceneHoldSources();
-            TryStartOpening();
+            ResolveStartupOwnership();
         }
 
         // Interior rig world position — far from gameplay lane, invisible from gameplay camera.
@@ -148,40 +240,75 @@ namespace OperationOutbreak.Story
             }
             if (_spawner != null) _spawner.EncounterCompleted += OnEncounterCompleted;
 
-            TryStartOpening();
+            // Step 2A: resolve WHO owns startup. This never starts the global opening story.
+            ResolveStartupOwnership();
         }
 
         /// <summary>
-        /// QA fix #8 — extracted from OnEnable so the gate can defer the auto-start without
-        /// preventing the director's normal initialization (event subscriptions, references).
-        /// QA fix #10 — the gate check is now the authoritative three-way
-        /// <see cref="IsOpeningStartAllowed"/> test instead of a single local bool.
-        /// The director stays enabled and fully initialized either way.
+        /// Step 2A — the ONLY thing OnEnable does about startup: decide who owns it. It never
+        /// starts the global opening story itself.
+        ///
+        ///   A global opening cinematic is present and owns startup
+        ///       -> do nothing. The cinematic pipeline will call StartOpeningStorySequence()
+        ///          during the 1Z.1C handoff.
+        ///
+        ///   No global opening cinematic owns startup (bypass, or no cinematic in the scene)
+        ///       -> enter Mission 01 gameplay directly, WITHOUT the RAVEN/Kane opening story.
+        ///
+        /// This is the ownership correction: the RAVEN/Kane sequence is part of the global game
+        /// opening, not something Mission 01 plays merely because Mission 01 started.
         /// </summary>
-        private void TryStartOpening()
+        private void ResolveStartupOwnership()
         {
-            // Evaluate the scene scan once and reuse it for the diagnostic, so a deferred start
-            // costs exactly one scan rather than three.
-            bool permissionAllowed = OpeningStoryStartPermission.IsAllowed;
-            bool sceneRequestsHold = OpeningStoryStartPermission.AnyActiveHoldSourceRequestsHold();
+            if (_phase != Phase.Idle) return; // already resolved
 
-            if (HoldOpeningSequence || !permissionAllowed || sceneRequestsHold)
+            if (!IsMission01Context())
             {
-                Debug.Log("[STORY M01] Opening deferred — startup is owned elsewhere " +
-                          $"(localHold={HoldOpeningSequence}, permissionAllowed={permissionAllowed}, " +
-                          $"sceneRequestsHold={sceneRequestsHold}).");
+                // Another mission: this director has no Mission 01 opening responsibility at all.
                 return;
             }
 
-            if (mission01 != null && mission01.MissionId == "mission_01"
-                && _openingSeq != null && _runner != null)
+            if (IsOpeningOwnedByGlobalCinematic)
             {
-                _phase = Phase.Opening;
-                if (_sections != null) _sections.enabled = false;
-                _hudCtrl.HideGameplayHud();
-                Debug.Log("[STORY M01] Opening started.");
-                _runner.LoadSequence(_openingSeq);
+                Debug.Log("[STORY M01] Global opening cinematic owns startup — the director will " +
+                          "NOT start the opening story. Awaiting explicit handoff.");
+                return;
             }
+
+            EnterGameplayWithoutOpening();
+        }
+
+        private bool IsMission01Context() =>
+            mission01 != null && mission01.MissionId == "mission_01";
+
+        /// <summary>
+        /// Step 2A — THE single authoritative Mission 01 gameplay-start transition.
+        ///
+        /// Every path into gameplay funnels through here so initialization is never duplicated:
+        ///   - opening story completed normally,
+        ///   - opening story skipped with Space/Escape,
+        ///   - development bypass (no opening story at all).
+        ///
+        /// Idempotent: re-entry after the phase has advanced is a no-op.
+        /// </summary>
+        private void EnterMission01GameplayState(bool skipped)
+        {
+            if (_phase == Phase.Gameplay) return;
+
+            _phase = Phase.Gameplay;
+            if (_sections != null) _sections.enabled = true;
+            if (_hudCtrl != null) _hudCtrl.RestoreGameplayHud();
+            if (_player != null && !_player.gameObject.activeSelf)
+                _player.gameObject.SetActive(true);
+            if (_interiorRig != null) _interiorRig.Teardown();
+            if (_fade != null) _fade.ClearInstant();   // never leave a black screen
+
+            // On a normal finish the helicopter_depart beat already started a graceful fly-away
+            // (the placeholder hides itself on reaching its depart point). On a SKIP — and in
+            // bypass mode, where the helicopter never flew — yank it so nothing lingers.
+            if (skipped && _heli != null) _heli.HideNow();
+
+            Debug.Log("[STORY M01] Mission 01 gameplay state entered (skipped=" + skipped + ").");
         }
 
         private void OnDisable()
@@ -305,18 +432,10 @@ namespace OperationOutbreak.Story
         {
             if (seq == _openingSeq)
             {
-                _phase = Phase.Gameplay;
-                if (_sections != null) _sections.enabled = true;
-                if (_hudCtrl != null) _hudCtrl.RestoreGameplayHud();
-                if (_player != null && !_player.gameObject.activeSelf)
-                    _player.gameObject.SetActive(true);
-                if (_interiorRig != null) _interiorRig.Teardown();
-                if (_fade != null) _fade.ClearInstant();   // never leave a black screen
-                // On a normal finish the helicopter_depart beat already started a graceful fly-away
-                // (the placeholder hides itself on reaching its depart point). Only on a SKIP do we
-                // yank it instantly so no stray helicopter lingers over gameplay.
-                if (skipped && _heli != null) _heli.HideNow();
-                Debug.Log("[STORY M01] Opening complete -> gameplay (skip=" + skipped + ").");
+                // Space/Escape skip and normal completion both land here, and both go through the
+                // SAME single gameplay transition the bypass path uses.
+                Debug.Log("[STORY M01] Opening story complete -> gameplay (skip=" + skipped + ").");
+                EnterMission01GameplayState(skipped);
             }
             else if (seq == _outroSeq)
             {

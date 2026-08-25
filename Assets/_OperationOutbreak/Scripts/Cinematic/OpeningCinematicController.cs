@@ -236,6 +236,42 @@ namespace OperationOutbreak.Cinematic
         /// <summary>Back-compat alias for the QA fix #8 gate release.</summary>
         private void ReleaseGate() => ReleaseStoryHandoff();
 
+        /// <summary>
+        /// Step 2A — THE global opening cinematic's handoff into the RAVEN/Kane interior story.
+        ///
+        /// This is the seam where 1Z.1C will continue the pipeline:
+        ///     ExteriorFlyover -> AwaitingInteriorTransition -> [here] -> interior story -> gameplay
+        ///
+        /// It relinquishes this controller's hold and then asks MissionStoryDirector to EXECUTE the
+        /// existing opening sequence asset. The story content is not duplicated — the director
+        /// still owns the interior rig, fades and Kane swap that the sequence's cues drive; this
+        /// controller only owns the DECISION to run it.
+        ///
+        /// NOT called automatically in this step: the 10-second flyover ends in
+        /// AwaitingInteriorTransition and deliberately stays there until 1Z.1C wires this up.
+        /// Returns true if the interior story actually started.
+        /// </summary>
+        public bool HandoffToInteriorStory()
+        {
+            ReleaseStoryHandoff();
+
+            var director = Object.FindAnyObjectByType<MissionStoryDirector>();
+            if (director == null)
+            {
+                Debug.LogWarning("[OPENING CINEMATIC] Handoff requested but no MissionStoryDirector " +
+                                 "exists in the scene — cannot run the interior story.");
+                return false;
+            }
+
+            bool started = director.StartOpeningStorySequence();
+            if (started)
+            {
+                CurrentPhase = Phase.Complete;
+                Debug.Log("[OPENING CINEMATIC] Handed off to the interior RAVEN/Kane story.");
+            }
+            return started;
+        }
+
         private void OnDestroy()
         {
             // Safety: restore the gameplay Main Camera and release the story hold.
