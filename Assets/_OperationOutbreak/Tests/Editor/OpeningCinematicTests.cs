@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using NUnit.Framework;
 using OperationOutbreak.Cinematic;
 using OperationOutbreak.EditorTools;
@@ -10,6 +11,8 @@ namespace OperationOutbreak.Tests
     /// Milestone 1Z.1B — EditMode tests for the opening exterior helicopter flyover cinematic.
     /// Uses OpeningCinematicBuilder.BuildInto to create the hierarchy under a temp parent (never
     /// mutates the scene or production assets). QA fix #8 updated these for the gate architecture.
+    /// QA fix #9 rewrote CinematicDoesNotPermanentlyDisableMainCamera for deterministic
+    /// Camera.main resolution in the EditMode bootstrap scene.
     /// </summary>
     public sealed class OpeningCinematicTests
     {
@@ -318,30 +321,140 @@ namespace OperationOutbreak.Tests
         [Test]
         public void CinematicDoesNotPermanentlyDisableMainCamera()
         {
-            // Verify the controller tracks and can restore the Main Camera.
+            // QA fix #9 — rewritten. The old version failed for two TEST-side reasons
+            // (the runtime contract was already correct):
+            //
+            // 1) WRONG Camera.main TARGET: the Unity Test Framework builds the EditMode
+            //    bootstrap scene with NewSceneSetup.DefaultGameObjects, so the test scene
+            //    already contains a default "Main Camera" (tagged MainCamera, Camera
+            //    enabled) before any test code runs. Camera.main returns "the first valid
+            //    result from its cache" of MainCamera-tagged GameObjects, so with two
+            //    enabled tagged cameras it resolved the bootstrap camera — not the
+            //    runtime-created test camera. The controller correctly disabled a real
+            //    main camera; the assertion simply watched the wrong instance.
+            //
+            // 2) WRONG LIFECYCLE ASSUMPTION: in Edit Mode, MonoBehaviour event functions
+            //    (including OnDestroy) do not run for components without
+            //    ExecuteInEditMode/ExecuteAlways, so DestroyImmediate never invoked the
+            //    controller's restore path the old test relied on.
+            //
+            // Verified lifecycle contract (runtime code unchanged):
+            //   (A) gameplay Main Camera enabled and ExteriorCamera disabled before start,
+            //   (B) StartExteriorFlyover activates the ExteriorCamera,
+            //   (C) the Main Camera is temporarily disabled while the flyover runs,
+            //   (D) cinematic teardown restores the Main Camera to its original enabled state,
+            //   (E) failed startup validation leaves the Main Camera enabled,
+            //   (F) the development bypass (autoStartOnPlay = false) never disables it.
+            //
+            // The test makes its camera the ONLY enabled MainCamera-tagged camera in the
+            // scene so Camera.main resolves deterministically, order-independent of
+            // whatever the bootstrap scene contains or earlier tests left behind.
+
             var root = Build();
             var controller = root.GetComponent<OpeningCinematicController>();
-            // Create a fake Main Camera.
+
+            // Gameplay Main Camera under test.
             var camGo = new GameObject("FakeMainCam");
             camGo.tag = "MainCamera";
             var cam = camGo.AddComponent<Camera>();
             cam.enabled = true;
+
+            var suppressed = new List<Camera>();
             try
             {
-                controller.StartExteriorFlyover();
-                // After start, the main camera should be disabled (tracked for restore).
-                Assert.IsFalse(cam.enabled, "Main camera must be disabled during flyover.");
+                // Suppress every OTHER enabled MainCamera-tagged camera (the EditMode
+                // bootstrap scene's default "Main Camera") so Camera.main deterministically
+                // resolves to the test camera.
+                foreach (var other in Object.FindObjectsByType<Camera>(
+                             FindObjectsInactive.Exclude, FindObjectsSortMode.None))
+                {
+                    if (other == null || other == cam || !other.enabled) continue;
+                    if (!other.CompareTag("MainCamera")) continue;
+                    other.enabled = false;
+                    suppressed.Add(other);
+                }
+                Assert.IsTrue(Camera.main == cam,
+                    "Camera.main must resolve the test Main Camera after all competing " +
+                    "MainCamera-tagged cameras are suppressed.");
 
-                // Simulate OnDestroy restoration (call the private restore logic via destruction).
-                Object.DestroyImmediate(root);
-                // After destruction, the camera should be restored.
+                // ---- (F) Bypass (autoStartOnPlay = false) must not disable the Main Camera ----
+                GetPrivateField("autoStartOnPlay").SetValue(controller, false);
+                // Invoke the real OnEnable entry point (Unity suppresses event functions in
+                // Edit Mode). With the bypass flag set it must not start the flyover.
+                InvokePrivateLifecycle(controller, "OnEnable");
+                Assert.AreEqual(OpeningCinematicController.Phase.Inactive, controller.CurrentPhase,
+                    "(F) A bypassed cinematic must not start the exterior flyover.");
                 Assert.IsTrue(cam.enabled,
-                    "Main camera must be restored when the cinematic controller is destroyed.");
+                    "(F) Bypassed cinematic (autoStartOnPlay = false) must not disable the Main Camera.");
+
+                // ---- (E) Failed startup validation must leave the Main Camera enabled ----
+                root = Build();
+                controller = root.GetComponent<OpeningCinematicController>();
+                GetPrivateField("exteriorCamera").SetValue(controller, null);
+
+                LogAssert.Expect(LogType.Error, "[OPENING CINEMATIC] Exterior camera is null or inactive.");
+                LogAssert.Expect(LogType.Error, "[OPENING CINEMATIC] Setup validation failed — aborting. Gameplay camera preserved.");
+                controller.StartExteriorFlyover();
+                Assert.AreEqual(OpeningCinematicController.Phase.Inactive, controller.CurrentPhase,
+                    "(E) Invalid cinematic setup must abort before the flyover starts.");
+                Assert.IsTrue(cam.enabled,
+                    "(E) Main Camera must remain enabled when cinematic startup validation fails.");
+
+                // ---- (A-D) Full exterior-flyover lifecycle ----
+                root = Build();
+                controller = root.GetComponent<OpeningCinematicController>();
+                var exteriorCam = root.transform.Find("Cameras/ExteriorCamera").GetComponent<Camera>();
+
+                // (A) Premises before the flyover.
+                Assert.IsTrue(cam.enabled, "(A) Main Camera must start enabled.");
+                Assert.IsFalse(exteriorCam.enabled, "(A) ExteriorCamera must start disabled.");
+
+                // (B) Start activates the ExteriorCamera...
+                controller.StartExteriorFlyover();
+                Assert.IsTrue(controller.IsExteriorCameraEnabled,
+                    "(B) StartExteriorFlyover must activate the ExteriorCamera.");
+                Assert.IsTrue(exteriorCam.enabled,
+                    "(B) ExteriorCamera component must be enabled during the flyover.");
+                Assert.AreEqual(OpeningCinematicController.Phase.ExteriorFlyover, controller.CurrentPhase,
+                    "(B) Controller must be in the ExteriorFlyover phase after start.");
+
+                // (C) ...and temporarily disables the gameplay Main Camera while it runs.
+                Assert.IsFalse(cam.enabled,
+                    "(C) Main Camera must be temporarily disabled while the exterior flyover is running.");
+
+                // (D) Cinematic teardown restores the Main Camera to its original enabled
+                //     state. The restore lives in the private OnDestroy(), which Unity does
+                //     not invoke for this component in Edit Mode (event functions are
+                //     play-mode-only without ExecuteAlways), so invoke the real method.
+                InvokePrivateLifecycle(controller, "OnDestroy");
+                Assert.IsTrue(cam.enabled,
+                    "(D) Cinematic teardown must restore the Main Camera to enabled.");
             }
             finally
             {
-                Object.DestroyImmediate(camGo);
+                // Restore every camera this test suppressed (bootstrap default Main Camera).
+                foreach (var other in suppressed)
+                    if (other != null) other.enabled = true;
+                if (camGo != null) Object.DestroyImmediate(camGo);
             }
+        }
+
+        private static System.Reflection.FieldInfo GetPrivateField(string fieldName)
+        {
+            var field = typeof(OpeningCinematicController).GetField(fieldName,
+                System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+            Assert.IsNotNull(field,
+                fieldName + " must exist on OpeningCinematicController.");
+            return field;
+        }
+
+        private static void InvokePrivateLifecycle(OpeningCinematicController controller, string methodName)
+        {
+            var method = typeof(OpeningCinematicController).GetMethod(methodName,
+                System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+            Assert.IsNotNull(method,
+                methodName + " must exist on OpeningCinematicController (cinematic lifecycle).");
+            method.Invoke(controller, null);
         }
     }
 }
