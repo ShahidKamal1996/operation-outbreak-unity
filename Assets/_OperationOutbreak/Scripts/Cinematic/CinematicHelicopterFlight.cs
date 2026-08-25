@@ -60,9 +60,14 @@ namespace OperationOutbreak.Cinematic
         [SerializeField] private float maxRiseHeight = 6f;
 
         [Header("Orientation")]
-        [Tooltip("Degrees of nose-down pitch eased in during takeoff. Purely cosmetic — it does " +
-                 "NOT bend the flight path. Use a negative value for nose-up.")]
+        [Tooltip("Degrees of nose-down pitch eased in during takeoff. In Micro Task #3 cosmetic pitch " +
+                 "was migrated to CinematicHelicopterVisualMotion on the child model (helicopter_rigged). " +
+                 "Retained for backward compatibility / tests.")]
         [SerializeField] private float takeoffPitch = 4f;
+
+        [Tooltip("When true, applies cosmetic pitch to HelicopterFlightRoot. Defaults to false " +
+                 "so CinematicHelicopterVisualMotion owns visual pitch without duplicate pitching.")]
+        [SerializeField] private bool applyTakeoffPitch = false;
 
         [Tooltip("Which LOCAL axis of THIS flight root counts as 'forward'. Default (0,0,1) is " +
                  "the root's own authored forward. If the helicopter flies backwards or sideways, " +
@@ -113,6 +118,24 @@ namespace OperationOutbreak.Cinematic
         {
             get => flightEnabled;
             set => flightEnabled = value;
+        }
+
+        /// <summary>
+        /// When true, applies cosmetic takeoff pitch directly to this root transform.
+        /// Defaults to false in Micro Task #3 because cosmetic pitch is now owned by
+        /// CinematicHelicopterVisualMotion on the child model, preventing duplicate pitching.
+        /// </summary>
+        public bool ApplyTakeoffPitch
+        {
+            get => applyTakeoffPitch;
+            set => applyTakeoffPitch = value;
+        }
+
+        /// <summary>Cosmetic takeoff pitch in degrees (migrated to visual motion).</summary>
+        public float TakeoffPitch
+        {
+            get => takeoffPitch;
+            set => takeoffPitch = value;
         }
 
         private void Awake() => CaptureStartState();
@@ -177,10 +200,13 @@ namespace OperationOutbreak.Cinematic
                                  + _travelDirection * _distance
                                  + _riseDirection * _rise;
 
-            // --- cosmetic forward-flight pitch (never affects the path) ---
-            transform.rotation = takeoffPitch == 0f
-                ? _startRotation
-                : _startRotation * Quaternion.AngleAxis(takeoffPitch * factor, Vector3.right);
+            // --- rotation: authoritative flight root keeps its authored orientation ---
+            // In Micro Task #3, cosmetic pitch is owned by CinematicHelicopterVisualMotion on the
+            // child model. If applyTakeoffPitch is explicitly enabled (legacy standalone mode),
+            // apply it here; otherwise keep _startRotation so the flight root is purely authoritative.
+            transform.rotation = (applyTakeoffPitch && takeoffPitch != 0f)
+                ? _startRotation * Quaternion.AngleAxis(takeoffPitch * factor, Vector3.right)
+                : _startRotation;
         }
 
         /// <summary>
