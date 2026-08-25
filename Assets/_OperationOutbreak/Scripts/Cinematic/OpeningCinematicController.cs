@@ -8,18 +8,23 @@ namespace OperationOutbreak.Cinematic
     /// Owns ONLY cinematic sequence state, flight progression, camera activation, and a clean
     /// transition hook. Does NOT own gameplay, enemies, objectives, or environment construction.
     ///
-    /// QA fix #8 architecture: Instead of suppressing MissionStoryDirector (which broke the
-    /// Space-to-start flow and the Mission 01 lifecycle), this controller sets a start GATE
-    /// on the director in Awake(). The director initializes normally (Awake, OnEnable,
-    /// subscriptions) but does NOT auto-load the opening sequence while the gate is held.
-    /// The gate is released on OnDestroy so the original flow is fully recoverable.
+    /// QA fix #10 architecture: this controller no longer PUSHES a flag onto MissionStoryDirector
+    /// in Awake() (that was racy — if the director's OnEnable ran first it had already started the
+    /// opening, and RAVEN ORTIZ dialogue played over the exterior flyover). Instead it DECLARES
+    /// its intent via <see cref="RequestsStoryHold"/>, which is answered purely from serialized
+    /// state and is therefore readable before this component initializes. The director polls that
+    /// declaration itself, so the answer no longer depends on who wakes up first.
     ///
-    /// DEVELOPMENT BYPASS: Set autoStartOnPlay = false in the Inspector. The gate is NOT held,
-    /// the exterior flyover does NOT run, and MissionStoryDirector auto-starts the Mission 01
-    /// opening exactly as before (including Space-to-start skip behavior).
+    /// It additionally acquires a process-wide OpeningStoryStartPermission token in Awake as a
+    /// second, explicit layer, and releases it on teardown so the original flow is recoverable.
+    ///
+    /// DEVELOPMENT BYPASS: Set autoStartOnPlay = false in the Inspector. RequestsStoryHold is
+    /// false, no permission token is acquired, the exterior flyover does NOT run, and
+    /// MissionStoryDirector auto-starts the Mission 01 opening exactly as before (including
+    /// Space-to-start skip behavior).
     /// </summary>
     [DisallowMultipleComponent]
-    public sealed class OpeningCinematicController : MonoBehaviour
+    public sealed class OpeningCinematicController : MonoBehaviour, IOpeningStoryHoldSource
     {
         public enum Phase { Inactive, ExteriorFlyover, AwaitingInteriorTransition, Complete }
 
@@ -64,32 +69,59 @@ namespace OperationOutbreak.Cinematic
         private Quaternion _cameraRot;
         private Camera _disabledMainCamera;
         private bool _mainCameraWasEnabled;
-        private MissionStoryDirector _heldDirector;
+
+        /// <summary>Set once the 1Z.1C handoff relinquishes this controller's claim on startup.</summary>
+        private bool _storyHandoffReleased;
 
         /// <summary>True when the exterior camera component is enabled and rendering.</summary>
         public bool IsExteriorCameraEnabled => exteriorCamera != null && exteriorCamera.enabled;
 
-        /// <summary>True when this controller is holding the MissionStoryDirector's opening gate.</summary>
-        public bool IsHoldingDirectorGate => _heldDirector != null && _heldDirector.HoldOpeningSequence;
+        /// <summary>
+        /// QA fix #10 — declares that this controller owns Mission 01 startup, so the opening
+        /// story must stay deferred.
+        ///
+        /// RACE-CRITICAL: every term here is serialized state or Unity-managed activation state.
+        /// Nothing is assigned in Awake/OnEnable/Start. Unity restores [SerializeField] values
+        /// before any Awake runs, so MissionStoryDirector gets the correct answer no matter which
+        /// component initializes first — which is exactly the ordering bug QA fix #8 could not
+        /// close. Do NOT introduce a term here that is only initialized at runtime.
+        /// </summary>
+        public bool RequestsStoryHold =>
+            autoStartOnPlay            // serialized intent
+            && enabled                 // component not disabled
+            && gameObject.activeInHierarchy
+            && !_storyHandoffReleased; // 1Z.1C has not handed off yet
+
+        /// <summary>
+        /// True when this controller currently holds a permission token. Retained under the QA
+        /// fix #8 name so existing gate assertions keep working; it now reports the authoritative
+        /// process-wide token rather than a flag pushed onto the director.
+        /// </summary>
+        public bool IsHoldingDirectorGate => OpeningStoryStartPermission.HoldsToken(this);
 
         private void Awake()
         {
-            // QA fix #8: Set the opening gate (NOT component disabling). This runs before any
-            // OnEnable, so MissionStoryDirector.OnEnable will see the gate and defer its
-            // auto-start. The director still initializes normally (Awake, subscriptions, refs).
-            if (autoStartOnPlay && Application.isPlaying)
-            {
-                _heldDirector = Object.FindAnyObjectByType<MissionStoryDirector>();
-                if (_heldDirector != null)
-                {
-                    _heldDirector.HoldOpeningSequence = true;
-                    Debug.Log("[OPENING CINEMATIC] Holding MissionStoryDirector opening gate (exterior cinematic active).");
-                }
-            }
+            // QA fix #10: acquire the authoritative permission token instead of reaching into
+            // MissionStoryDirector. This is the explicit second layer — the director is already
+            // protected by RequestsStoryHold even if this Awake has not run yet.
+            AcquireStoryHoldIfNeeded();
+        }
+
+        private void AcquireStoryHoldIfNeeded()
+        {
+            if (!RequestsStoryHold) return;                          // bypass mode: never hold
+            if (OpeningStoryStartPermission.HoldsToken(this)) return; // idempotent
+
+            OpeningStoryStartPermission.Hold(this);
+            Debug.Log("[OPENING CINEMATIC] Holding Mission 01 opening story start (exterior cinematic owns startup).");
         }
 
         private void OnEnable()
         {
+            // Re-acquire if this controller was enabled after Awake already ran (or was disabled
+            // and re-enabled). Idempotent, and a no-op in bypass mode.
+            AcquireStoryHoldIfNeeded();
+
             if (autoStartOnPlay && Application.isPlaying && CurrentPhase == Phase.Inactive)
                 StartExteriorFlyover();
         }
@@ -166,22 +198,50 @@ namespace OperationOutbreak.Cinematic
             return true;
         }
 
-        private void ReleaseGate()
+        private void OnDisable()
         {
-            if (_heldDirector != null)
+            // A disabled controller no longer requests a hold (RequestsStoryHold folds in
+            // `enabled`), so drop the token too and keep the two layers consistent. This does NOT
+            // set _storyHandoffReleased — re-enabling re-acquires via OnEnable.
+            if (OpeningStoryStartPermission.HoldsToken(this))
             {
-                _heldDirector.HoldOpeningSequence = false;
-                _heldDirector = null;
-                Debug.Log("[OPENING CINEMATIC] Released MissionStoryDirector opening gate.");
+                OpeningStoryStartPermission.Release(this);
+                Debug.Log("[OPENING CINEMATIC] Story hold released (cinematic controller disabled).");
             }
         }
 
+        /// <summary>
+        /// QA fix #10 — permanently relinquishes this controller's claim on Mission 01 startup and
+        /// drops its permission token. Idempotent.
+        ///
+        /// Setting _storyHandoffReleased (rather than only dropping the token) is essential: it
+        /// makes RequestsStoryHold return false, so the director's scene scan also stops deferring.
+        /// Dropping the token alone would leave the scan still reporting a hold.
+        ///
+        /// This is the 1Z.1C handoff entry point. It is NOT called when the 10-second flyover
+        /// finishes — only on teardown or aborted startup.
+        /// </summary>
+        public void ReleaseStoryHandoff()
+        {
+            bool hadClaim = !_storyHandoffReleased;
+            _storyHandoffReleased = true;
+
+            if (OpeningStoryStartPermission.HoldsToken(this))
+                OpeningStoryStartPermission.Release(this);
+
+            if (hadClaim)
+                Debug.Log("[OPENING CINEMATIC] Released Mission 01 opening story hold.");
+        }
+
+        /// <summary>Back-compat alias for the QA fix #8 gate release.</summary>
+        private void ReleaseGate() => ReleaseStoryHandoff();
+
         private void OnDestroy()
         {
-            // Safety: restore the gameplay Main Camera and release the gate.
+            // Safety: restore the gameplay Main Camera and release the story hold.
             if (_disabledMainCamera != null && _mainCameraWasEnabled)
                 _disabledMainCamera.enabled = true;
-            ReleaseGate();
+            ReleaseStoryHandoff();
         }
 
         private void Update()
@@ -245,7 +305,8 @@ namespace OperationOutbreak.Cinematic
                 CurrentPhase = Phase.AwaitingInteriorTransition;
                 OnExteriorComplete?.Invoke();
                 Debug.Log("[OPENING CINEMATIC] Exterior flyover complete — awaiting interior transition. " +
-                          "(Gate is still held; MissionStoryDirector will NOT auto-start until released by 1Z.1C.)");
+                          "(Story hold is still held by design; MissionStoryDirector will NOT auto-start " +
+                          "until 1Z.1C performs the handoff.)");
             }
         }
 

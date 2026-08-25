@@ -9,7 +9,12 @@ using UnityEngine;
 namespace OperationOutbreak.Story
 {
     /// <summary>
-    /// Milestone 1Z.1 QA fix #8 — director for Mission 01's helicopter interior opening.
+    /// Milestone 1Z.1 QA fix #8 / #10 — director for Mission 01's helicopter interior opening.
+    ///
+    /// QA fix #10: this director is now AUTHORITATIVE over whether the opening may start. Rather
+    /// than waiting for another component to push a flag onto it (which was order-dependent), it
+    /// asks OpeningStoryStartPermission — including a scan of serialized scene intent — every time
+    /// it considers starting. See <see cref="IsOpeningStartAllowed"/>.
     ///
     /// Owns the interior rig lifecycle, the cinematic fade (so the camera never visibly travels
     /// between the gameplay world and the y=-300 interior), HUD visibility, and the real/cinematic
@@ -50,18 +55,51 @@ namespace OperationOutbreak.Story
         private bool _beat1Fired, _beat2Fired;
 
         /// <summary>
-        /// QA fix #8 — when true, the director defers auto-starting the opening sequence.
-        /// The exterior cinematic sets this in Awake() (before any OnEnable fires) so the
-        /// director initializes normally (Awake, subscriptions, references) but does NOT
-        /// auto-load the Mission 01 opening until the gate is released. This preserves the
-        /// component's full lifecycle for the future interior handoff (1Z.1C).
+        /// Legacy QA fix #8 local gate. RETAINED for compatibility, but it is no longer the
+        /// authority — it is now only one of three independent reasons to defer. See
+        /// <see cref="IsOpeningStartAllowed"/> for the full decision.
         /// </summary>
         public bool HoldOpeningSequence { get; set; }
 
-        /// <summary>Releases the opening gate and starts the sequence (public API for cinematic handoff).</summary>
+        /// <summary>
+        /// QA fix #10 — THE authoritative answer to "may the Mission 01 opening start now?".
+        ///
+        /// The opening starts only when ALL THREE agree:
+        ///   1. no local legacy hold,
+        ///   2. the process-wide permission is allowed (a holder has registered a token), and
+        ///   3. no active scene component declares it owns Mission 01 startup.
+        ///
+        /// Check 3 is what removes the initialization-order race. Checks 1 and 2 can only be true
+        /// once some other component's Awake has already run; check 3 reads serialized intent
+        /// directly off the scene, and Unity deserializes [SerializeField] state before ANY Awake
+        /// executes. So this is correct even when MissionStoryDirector.OnEnable runs first.
+        /// </summary>
+        public bool IsOpeningStartAllowed =>
+            !HoldOpeningSequence
+            && OpeningStoryStartPermission.IsAllowed
+            && !OpeningStoryStartPermission.AnyActiveHoldSourceRequestsHold();
+
+        /// <summary>
+        /// Releases the local gate and attempts to start the opening (public API for the 1Z.1C
+        /// handoff). This clears only the director's OWN hold; if an exterior cinematic still
+        /// claims startup ownership the opening correctly stays deferred. Use
+        /// <see cref="ForceReleaseAllOpeningHolds"/> for a full handoff.
+        /// </summary>
         public void ReleaseOpeningSequence()
         {
             HoldOpeningSequence = false;
+            TryStartOpening();
+        }
+
+        /// <summary>
+        /// Full 1Z.1C handoff: clears the local gate, tells every active hold source to
+        /// relinquish its claim, then starts the opening. NOTHING calls this automatically in
+        /// QA fix #10 — the exterior cinematic deliberately keeps the story held.
+        /// </summary>
+        public void ForceReleaseAllOpeningHolds()
+        {
+            HoldOpeningSequence = false;
+            OpeningStoryStartPermission.ReleaseSceneHoldSources();
             TryStartOpening();
         }
 
@@ -116,10 +154,24 @@ namespace OperationOutbreak.Story
         /// <summary>
         /// QA fix #8 — extracted from OnEnable so the gate can defer the auto-start without
         /// preventing the director's normal initialization (event subscriptions, references).
+        /// QA fix #10 — the gate check is now the authoritative three-way
+        /// <see cref="IsOpeningStartAllowed"/> test instead of a single local bool.
+        /// The director stays enabled and fully initialized either way.
         /// </summary>
         private void TryStartOpening()
         {
-            if (HoldOpeningSequence) return; // exterior cinematic holds the gate
+            // Evaluate the scene scan once and reuse it for the diagnostic, so a deferred start
+            // costs exactly one scan rather than three.
+            bool permissionAllowed = OpeningStoryStartPermission.IsAllowed;
+            bool sceneRequestsHold = OpeningStoryStartPermission.AnyActiveHoldSourceRequestsHold();
+
+            if (HoldOpeningSequence || !permissionAllowed || sceneRequestsHold)
+            {
+                Debug.Log("[STORY M01] Opening deferred — startup is owned elsewhere " +
+                          $"(localHold={HoldOpeningSequence}, permissionAllowed={permissionAllowed}, " +
+                          $"sceneRequestsHold={sceneRequestsHold}).");
+                return;
+            }
 
             if (mission01 != null && mission01.MissionId == "mission_01"
                 && _openingSeq != null && _runner != null)

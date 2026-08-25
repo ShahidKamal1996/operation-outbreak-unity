@@ -252,31 +252,66 @@ namespace OperationOutbreak.Tests
             Assert.IsFalse(result, "Validation must fail when no helicopter renderers are enabled.");
         }
 
-        // ---- QA fix #8: gate architecture tests ----
+        // ---- QA fix #8 gate tests, updated for the QA fix #10 permission architecture ----
 
         [Test]
         public void ControllerDoesNotModifyDirectorComponentState()
         {
-            // The controller must NOT disable/enable the MissionStoryDirector component.
-            // It only sets the HoldOpeningSequence gate flag. Verify the gate property exists.
-            var root = Build();
-            var controller = root.GetComponent<OpeningCinematicController>();
-            // In the test hierarchy there's no MissionStoryDirector, so the gate is not held.
-            Assert.IsFalse(controller.IsHoldingDirectorGate,
-                "Controller must not hold the gate when no MissionStoryDirector exists.");
+            // The controller must NEVER disable/enable or otherwise mutate MissionStoryDirector.
+            // Under QA fix #10 it does not even look the director up — it only declares intent.
+            var director = new GameObject("DirectorUnderTest")
+                .AddComponent<OperationOutbreak.Story.MissionStoryDirector>();
+            try
+            {
+                bool enabledBefore = director.enabled;
+                bool activeBefore = director.gameObject.activeSelf;
+
+                var root = Build();
+                var controller = root.GetComponent<OpeningCinematicController>();
+                InvokePrivateLifecycle(controller, "Awake");
+
+                Assert.AreEqual(enabledBefore, director.enabled,
+                    "Cinematic must not enable/disable the MissionStoryDirector component.");
+                Assert.AreEqual(activeBefore, director.gameObject.activeSelf,
+                    "Cinematic must not deactivate the MissionStoryDirector GameObject.");
+                Assert.IsFalse(director.HoldOpeningSequence,
+                    "QA fix #10: the cinematic must no longer push the legacy flag onto the director.");
+
+                // The hold is expressed through the permission authority instead.
+                Assert.IsTrue(controller.IsHoldingDirectorGate,
+                    "An auto-start cinematic must hold a permission token after Awake.");
+
+                InvokePrivateLifecycle(controller, "OnDestroy");
+            }
+            finally
+            {
+                Object.DestroyImmediate(director.gameObject);
+                OperationOutbreak.Story.OpeningStoryStartPermission.ResetState();
+            }
         }
 
         [Test]
         public void DirectorGatePropertyExistsAndDefaultsFalse()
         {
-            // Verify MissionStoryDirector exposes the HoldOpeningSequence gate.
-            var prop = typeof(OperationOutbreak.Story.MissionStoryDirector).GetProperty("HoldOpeningSequence");
+            var directorType = typeof(OperationOutbreak.Story.MissionStoryDirector);
+
+            // Legacy local gate is retained for compatibility.
+            var prop = directorType.GetProperty("HoldOpeningSequence");
             Assert.IsNotNull(prop, "MissionStoryDirector must expose HoldOpeningSequence property.");
             Assert.AreEqual(typeof(bool), prop.PropertyType, "HoldOpeningSequence must be a bool.");
-            // Verify ReleaseOpeningSequence method exists.
-            var method = typeof(OperationOutbreak.Story.MissionStoryDirector).GetMethod("ReleaseOpeningSequence");
+
+            var method = directorType.GetMethod("ReleaseOpeningSequence");
             Assert.IsNotNull(method, "MissionStoryDirector must expose ReleaseOpeningSequence method.");
             Assert.IsTrue(method.IsPublic, "ReleaseOpeningSequence must be public.");
+
+            // QA fix #10 — the authoritative decision property must exist and be read-only.
+            var authoritative = directorType.GetProperty("IsOpeningStartAllowed");
+            Assert.IsNotNull(authoritative,
+                "QA fix #10: MissionStoryDirector must expose IsOpeningStartAllowed.");
+            Assert.AreEqual(typeof(bool), authoritative.PropertyType,
+                "IsOpeningStartAllowed must be a bool.");
+            Assert.IsNull(authoritative.SetMethod,
+                "IsOpeningStartAllowed must be read-only — it is derived, never assigned.");
         }
 
         [Test]
