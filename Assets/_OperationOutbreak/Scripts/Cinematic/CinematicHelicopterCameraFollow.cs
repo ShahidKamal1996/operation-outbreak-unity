@@ -3,28 +3,25 @@ using UnityEngine;
 namespace OperationOutbreak.Cinematic
 {
     /// <summary>
-    /// Micro task #4 — polished cinematic follow camera for the helicopter.
+    /// Micro task #5 — polished cinematic ground-to-air takeoff follow camera for the helicopter.
     ///
     /// Attach to the EXISTING camera in Helicopter_Cinematic. This creates no cameras, disables no
     /// cameras, and changes no camera settings (FOV, clipping, culling are left alone) — it only
     /// moves and aims the transform it lives on.
     ///
-    /// CINEMATIC REAR THREE-QUARTER COMPOSITION
-    /// ----------------------------------------
-    /// Derives a stable target-relative coordinate basis from the verified target axes:
-    ///     forward = target.TransformDirection(targetForwardAxis).normalized;
-    ///     up      = target.TransformDirection(targetUpAxis).normalized;
-    ///     right   = Vector3.Cross(up, forward).normalized;
+    /// CINEMATIC GROUND-TO-AIR TAKEOFF FLOW
+    /// ------------------------------------
+    /// Phase 1: Grounded Establishing Shot (~1.0-1.5s)
+    ///     The camera holds its authored scene transform exactly at Play.
+    ///     Helicopter sits grounded, rotors spinning. No immediate jump/teleport.
     ///
-    /// Places the camera behind, above, and slightly to the side of the helicopter:
-    ///     desiredPos = target.position - forward * followDistance + up * heightOffset + right * sideOffset;
+    /// Phase 2 & 3: Vertical Lift & Forward Transition (~2.0-3.0s)
+    ///     Helicopter lifts off the ground and accelerates forward.
+    ///     Camera smoothly blends from authored shot into dynamic rear 3/4 chase framing.
     ///
-    /// Aims at a tight focus point on the helicopter body rather than far ahead:
-    ///     lookTarget = target.position + forward * lookAheadDistance + up * lookHeight;
-    ///
-    /// When <see cref="stableRearThreeQuarter"/> is enabled, the camera calculates look rotation
-    /// directly from its actual position toward the focus point, guaranteeing the helicopter
-    /// remains consistently framed and preventing any drift toward a front/diagonal angle.
+    /// Phase 4: Full Chase Flight
+    ///     Camera maintains the polished Micro Task #4 rear 3/4 cinematic composition:
+    ///     behind + above + to one side, aimed tightly at the helicopter body.
     ///
     /// Runs in LateUpdate so HelicopterFlightRoot translation and rise have already executed.
     /// </summary>
@@ -35,6 +32,17 @@ namespace OperationOutbreak.Cinematic
         [Header("Target")]
         [Tooltip("What to follow. Assign HelicopterFlightRoot (authoritative flight parent), NOT the child model.")]
         [SerializeField] private Transform target;
+
+        [Header("Cinematic Takeoff Transition")]
+        [Tooltip("When enabled (and snapOnStart is false), preserves the authored ground camera shot and " +
+                 "smoothly transitions into dynamic chase framing as the helicopter lifts off.")]
+        [SerializeField] private bool enableTakeoffTransition = true;
+
+        [Tooltip("Seconds the camera stays locked in its authored ground composition before beginning transition.")]
+        [SerializeField] private float takeoffCameraHoldDuration = 1.2f;
+
+        [Tooltip("Seconds over which camera smoothly blends from authored ground shot into full chase framing.")]
+        [SerializeField] private float takeoffCameraBlendDuration = 2.5f;
 
         [Header("Offsets (relative to target orientation)")]
         [Tooltip("Metres BEHIND the target (suggested 10 to 12).")]
@@ -73,9 +81,8 @@ namespace OperationOutbreak.Cinematic
         [SerializeField] private bool stableRearThreeQuarter = true;
 
         [Header("Startup")]
-        [Tooltip("Snap to ideal pose on first frame instead of gliding in from wherever camera was parked. " +
-                 "Prevents a visible swoop when Play begins.")]
-        [SerializeField] private bool snapOnStart = true;
+        [Tooltip("Snap to ideal chase pose on first frame. Set false for cinematic takeoff transition.")]
+        [SerializeField] private bool snapOnStart = false;
 
         [Header("Control")]
         [Tooltip("Uncheck to freeze follow without removing component.")]
@@ -84,7 +91,13 @@ namespace OperationOutbreak.Cinematic
         [Tooltip("Use unscaled time so follow is unaffected by Time.timeScale.")]
         [SerializeField] private bool useUnscaledTime = true;
 
+        // ---- runtime state ----
         private bool _snapped;
+        private Vector3 _initialCameraPosition;
+        private Quaternion _initialCameraRotation;
+        private Vector3 _dampedPos;
+        private Quaternion _dampedRot;
+        private float _elapsed;
 
         /// <summary>Assign or replace the follow target at runtime.</summary>
         public Transform Target
@@ -93,7 +106,37 @@ namespace OperationOutbreak.Cinematic
             set { target = value; _snapped = false; }
         }
 
-        /// <summary>Enables/disables following at runtime.</summary>
+        public bool EnableTakeoffTransition
+        {
+            get => enableTakeoffTransition;
+            set => enableTakeoffTransition = value;
+        }
+
+        public float TakeoffCameraHoldDuration
+        {
+            get => takeoffCameraHoldDuration;
+            set => takeoffCameraHoldDuration = value;
+        }
+
+        public float TakeoffCameraBlendDuration
+        {
+            get => takeoffCameraBlendDuration;
+            set => takeoffCameraBlendDuration = value;
+        }
+
+        public float TakeoffBlendWeight
+        {
+            get
+            {
+                if (!enableTakeoffTransition || snapOnStart) return 1f;
+                if (_elapsed <= takeoffCameraHoldDuration) return 0f;
+                if (takeoffCameraBlendDuration <= 0f) return 1f;
+
+                float u = Mathf.Clamp01((_elapsed - takeoffCameraHoldDuration) / takeoffCameraBlendDuration);
+                return Mathf.SmoothStep(0f, 1f, u);
+            }
+        }
+
         public bool FollowEnabled
         {
             get => followEnabled;
@@ -166,8 +209,14 @@ namespace OperationOutbreak.Cinematic
             set => snapOnStart = value;
         }
 
-        /// <summary>Forces the next update to snap rather than damp.</summary>
-        public void RequestSnap() => _snapped = false;
+        public float Elapsed => _elapsed;
+
+        /// <summary>Forces the next update to reset initial capture.</summary>
+        public void RequestSnap()
+        {
+            _snapped = false;
+            _elapsed = 0f;
+        }
 
         private void LateUpdate()
         {
@@ -209,10 +258,15 @@ namespace OperationOutbreak.Cinematic
                                  + worldFwd * lookAheadDistance
                                  + worldUp * lookHeight;
 
-            // First frame: optionally adopt ideal pose exactly, preventing a visible swoop on start.
+            // First frame initialization
             if (!_snapped)
             {
                 _snapped = true;
+                _initialCameraPosition = transform.position;
+                _initialCameraRotation = transform.rotation;
+                _dampedPos = _initialCameraPosition;
+                _dampedRot = _initialCameraRotation;
+
                 if (snapOnStart)
                 {
                     Vector3 initToTarget = lookTarget - desiredPos;
@@ -220,28 +274,50 @@ namespace OperationOutbreak.Cinematic
                         ? Quaternion.LookRotation(initToTarget, worldUp)
                         : transform.rotation;
                     transform.SetPositionAndRotation(desiredPos, initRot);
+                    _dampedPos = desiredPos;
+                    _dampedRot = initRot;
+                    return;
+                }
+
+                if (enableTakeoffTransition)
+                {
+                    transform.SetPositionAndRotation(_initialCameraPosition, _initialCameraRotation);
                     return;
                 }
             }
 
             if (deltaTime <= 0f) return;
 
+            _elapsed += deltaTime;
+
             // Exponential damping. 1 - exp(-k * dt) is strictly framerate-independent, unlike a raw
             // Lerp(a, b, k * dt), which changes feel with framerate and can overshoot when k * dt > 1.
             float posT = 1f - Mathf.Exp(-Mathf.Max(0f, positionDamping) * deltaTime);
             float rotT = 1f - Mathf.Exp(-Mathf.Max(0f, rotationDamping) * deltaTime);
 
-            transform.position = Vector3.Lerp(transform.position, desiredPos, Mathf.Clamp01(posT));
+            _dampedPos = Vector3.Lerp(_dampedPos, desiredPos, Mathf.Clamp01(posT));
 
             // When stableRearThreeQuarter is enabled, aim from actual camera position so the
             // helicopter stays framed regardless of flight speed, preventing front drift.
-            Vector3 aimOrigin = stableRearThreeQuarter ? transform.position : desiredPos;
+            Vector3 aimOrigin = stableRearThreeQuarter ? _dampedPos : desiredPos;
             Vector3 toTarget = lookTarget - aimOrigin;
             Quaternion desiredRot = toTarget.sqrMagnitude > 1e-8f
                 ? Quaternion.LookRotation(toTarget, worldUp)
                 : transform.rotation;
 
-            transform.rotation = Quaternion.Slerp(transform.rotation, desiredRot, Mathf.Clamp01(rotT));
+            _dampedRot = Quaternion.Slerp(_dampedRot, desiredRot, Mathf.Clamp01(rotT));
+
+            if (enableTakeoffTransition && !snapOnStart)
+            {
+                float w = TakeoffBlendWeight;
+                transform.position = Vector3.Lerp(_initialCameraPosition, _dampedPos, w);
+                transform.rotation = Quaternion.Slerp(_initialCameraRotation, _dampedRot, w);
+            }
+            else
+            {
+                transform.position = _dampedPos;
+                transform.rotation = _dampedRot;
+            }
         }
 
         private static Vector3 ResolveAxis(Vector3 axis, Vector3 fallback) =>

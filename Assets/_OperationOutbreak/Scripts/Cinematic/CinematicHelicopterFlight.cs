@@ -3,52 +3,56 @@ using UnityEngine;
 namespace OperationOutbreak.Cinematic
 {
     /// <summary>
-    /// Micro task #2 — simple straight-line cinematic takeoff. Nothing else.
+    /// Explicit phases for cinematic takeoff and flight:
+    ///   Phase 1: GroundIdle          — helicopter sits stationary on ground while rotors spin.
+    ///   Phase 2: VerticalLift        — smooth vertical lift off the ground (zero forward movement).
+    ///   Phase 3: ForwardTransition   — smooth forward acceleration easing into cruise speed while climbing.
+    ///   Phase 4: Cruise              — straight flight at cruise speed.
+    /// </summary>
+    public enum FlightPhase
+    {
+        GroundIdle,
+        VerticalLift,
+        ForwardTransition,
+        Cruise
+    }
+
+    /// <summary>
+    /// Micro task #5 — Visible ground-to-air takeoff flight presentation with explicit phases.
     ///
     /// Attach to <c>HelicopterFlightRoot</c>, the MOVEMENT parent of <c>helicopter_rigged</c>.
-    /// This component moves only the GameObject it is attached to. It never touches the visual
-    /// model, the rotors, or <see cref="CinematicHelicopterRotorSpin"/> — those keep running
-    /// independently because the model is simply carried along as a child.
+    /// Moves only the GameObject it is attached to. It never touches the visual model, the rotors,
+    /// or <see cref="CinematicHelicopterRotorSpin"/>.
     ///
-    /// THREE PHASES
-    ///   1. Hold      — for <see cref="startDelay"/> seconds the helicopter is perfectly still
-    ///                  while the rotors spool visually.
-    ///   2. Accelerate— over <see cref="accelerationDuration"/> seconds, SmoothStep-eased from a
-    ///                  dead stop to <see cref="cruiseSpeed"/>, rising gently and easing into a
-    ///                  subtle forward-flight pitch.
-    ///   3. Cruise    — continues straight at cruise speed with a reduced, optionally capped rise.
-    ///
-    /// NO physics, NO Rigidbody, NO Animator, NO root motion, NO waypoints, NO turning, NO banking.
-    ///
-    /// TWO DELIBERATE DESIGN CHOICES
-    ///
-    /// 1. Motion is INTEGRATED FROM THE AUTHORED START TRANSFORM. The start position/rotation are
-    ///    captured on the first frame and every later position is
-    ///    <c>startPosition + forward * distance + up * rise</c>. Nothing is written before that
-    ///    capture, so the helicopter can never jump or snap when Play begins — it departs from
-    ///    exactly where you placed it.
-    ///
-    /// 2. PITCH DOES NOT STEER. The travel direction is captured ONCE at start and is never
-    ///    re-read from the transform. If travel used <c>transform.forward</c> each frame, the
-    ///    cosmetic nose-down pitch would tilt the flight path into the ground. Keeping them
-    ///    separate guarantees genuinely straight flight, which is what this task asks for.
+    /// FOUR EXPLICIT PHASES
+    /// --------------------
+    /// 1. GroundIdle          — sits on ground while rotors spin up.
+    /// 2. VerticalLift        — lifts vertically to initialLiftHeight with ZERO forward displacement.
+    /// 3. ForwardTransition   — smoothly accelerates forward up to cruiseSpeed while gently climbing.
+    /// 4. Cruise              — continues straight at cruise speed.
     /// </summary>
     [DisallowMultipleComponent]
     [AddComponentMenu("Operation Outbreak/Cinematic/Cinematic Helicopter Flight")]
     public sealed class CinematicHelicopterFlight : MonoBehaviour
     {
-        [Header("Timing")]
-        [Tooltip("Seconds the helicopter stays completely still before departing.")]
-        [SerializeField] private float startDelay = 0.75f;
+        [Header("Takeoff Phasing")]
+        [Tooltip("Seconds the helicopter stays stationary on the ground while rotors spool (Phase 1).")]
+        [SerializeField] private float groundIdleDuration = 1.2f;
 
-        [Tooltip("Seconds to ease from a dead stop up to cruise speed.")]
-        [SerializeField] private float accelerationDuration = 2.5f;
+        [Tooltip("Seconds over which the helicopter smoothly lifts straight up off the ground (Phase 2).")]
+        [SerializeField] private float verticalLiftDuration = 1.8f;
+
+        [Tooltip("Target altitude in metres reached at the end of the vertical lift phase.")]
+        [SerializeField] private float initialLiftHeight = 1.75f;
+
+        [Tooltip("Seconds to smoothly accelerate from zero to cruise speed once airborne (Phase 3).")]
+        [SerializeField] private float forwardAccelerationDuration = 2.5f;
 
         [Header("Speed")]
-        [Tooltip("Forward speed in metres/second once fully accelerated.")]
+        [Tooltip("Forward speed in metres/second once fully accelerated (Phase 4: Cruise).")]
         [SerializeField] private float cruiseSpeed = 8f;
 
-        [Tooltip("Upward speed in metres/second at full acceleration.")]
+        [Tooltip("Upward climb speed in metres/second during forward acceleration.")]
         [SerializeField] private float verticalRiseSpeed = 1.2f;
 
         [Tooltip("Rise is scaled by this once cruising, so the helicopter levels off instead of " +
@@ -69,13 +73,10 @@ namespace OperationOutbreak.Cinematic
                  "so CinematicHelicopterVisualMotion owns visual pitch without duplicate pitching.")]
         [SerializeField] private bool applyTakeoffPitch = false;
 
-        [Tooltip("Which LOCAL axis of THIS flight root counts as 'forward'. Default (0,0,1) is " +
-                 "the root's own authored forward. If the helicopter flies backwards or sideways, " +
-                 "change this — e.g. (0,0,-1) or (1,0,0). No code change needed.")]
-        [SerializeField] private Vector3 localForwardAxis = new Vector3(0f, 0f, 1f);
+        [Tooltip("Which LOCAL axis of THIS flight root counts as 'forward'. Verified as (1, 0, 0).")]
+        [SerializeField] private Vector3 localForwardAxis = new Vector3(1f, 0f, 0f);
 
-        [Tooltip("Local axis treated as 'up' for the climb. Default (0,1,0) = world up when the " +
-                 "flight root is unrotated.")]
+        [Tooltip("Local axis treated as 'up' for the climb. Default (0, 1, 0).")]
         [SerializeField] private Vector3 localUpAxis = new Vector3(0f, 1f, 0f);
 
         [Header("Control")]
@@ -85,7 +86,11 @@ namespace OperationOutbreak.Cinematic
         [Tooltip("Use unscaled time so the flight is unaffected by Time.timeScale.")]
         [SerializeField] private bool useUnscaledTime = true;
 
-        // ---- runtime state (captured on the first tick, never authored data) ----
+        // Retained for backward compatibility / tests:
+        [SerializeField] private float startDelay = 0.75f;
+        [SerializeField] private float accelerationDuration = 2.5f;
+
+        // ---- runtime state ----
         private bool _initialized;
         private Vector3 _startPosition;
         private Quaternion _startRotation;
@@ -93,9 +98,10 @@ namespace OperationOutbreak.Cinematic
         private Vector3 _riseDirection;     // world-space, fixed at start
         private float _elapsed;
         private float _distance;
+        private float _forwardClimb;
         private float _rise;
 
-        /// <summary>Seconds since Play began, including the hold phase.</summary>
+        /// <summary>Seconds since Play began, including ground idle and vertical lift.</summary>
         public float Elapsed => _elapsed;
 
         /// <summary>Metres travelled forward from the start position.</summary>
@@ -104,46 +110,100 @@ namespace OperationOutbreak.Cinematic
         /// <summary>Metres risen above the start position.</summary>
         public float HeightGained => _rise;
 
-        /// <summary>0 while holding, easing to 1 across the acceleration window.</summary>
+        public float GroundIdleDuration
+        {
+            get => groundIdleDuration;
+            set { groundIdleDuration = value; startDelay = value; }
+        }
+
+        public float VerticalLiftDuration
+        {
+            get => verticalLiftDuration;
+            set => verticalLiftDuration = value;
+        }
+
+        public float InitialLiftHeight
+        {
+            get => initialLiftHeight;
+            set => initialLiftHeight = value;
+        }
+
+        public float ForwardAccelerationDuration
+        {
+            get => forwardAccelerationDuration;
+            set { forwardAccelerationDuration = value; accelerationDuration = value; }
+        }
+
+        public float CruiseSpeed
+        {
+            get => cruiseSpeed;
+            set => cruiseSpeed = value;
+        }
+
+        public Vector3 LocalForwardAxis
+        {
+            get => localForwardAxis;
+            set => localForwardAxis = value;
+        }
+
+        public Vector3 LocalUpAxis
+        {
+            get => localUpAxis;
+            set => localUpAxis = value;
+        }
+
+        public FlightPhase CurrentPhase
+        {
+            get
+            {
+                float idle = EffectiveIdle;
+                float lift = verticalLiftDuration;
+                float accel = EffectiveAccel;
+
+                if (_elapsed <= idle) return FlightPhase.GroundIdle;
+                if (_elapsed <= idle + lift) return FlightPhase.VerticalLift;
+                if (_elapsed < idle + lift + accel) return FlightPhase.ForwardTransition;
+                return FlightPhase.Cruise;
+            }
+        }
+
+        public bool IsGroundIdle => CurrentPhase == FlightPhase.GroundIdle;
+        public bool IsVerticalLift => CurrentPhase == FlightPhase.VerticalLift;
+        public bool IsForwardTransition => CurrentPhase == FlightPhase.ForwardTransition;
+        public bool IsCruising => CurrentPhase == FlightPhase.Cruise;
+
+        /// <summary>0 during GroundIdle and VerticalLift, smoothly easing 0→1 during ForwardTransition, then 1.</summary>
         public float SpeedFactor => ComputeSpeedFactor(_elapsed);
 
         /// <summary>Current forward speed in metres/second.</summary>
         public float CurrentSpeed => cruiseSpeed * SpeedFactor;
 
-        /// <summary>True once the acceleration window has fully elapsed.</summary>
-        public bool IsCruising => _elapsed >= startDelay + accelerationDuration;
+        /// <summary>0 during GroundIdle, smoothly easing 0→1 during VerticalLift, then 1.</summary>
+        public float VerticalLiftFactor => ComputeVerticalLiftFactor(_elapsed);
 
-        /// <summary>Enables/disables the flight at runtime.</summary>
         public bool FlightEnabled
         {
             get => flightEnabled;
             set => flightEnabled = value;
         }
 
-        /// <summary>
-        /// When true, applies cosmetic takeoff pitch directly to this root transform.
-        /// Defaults to false in Micro Task #3 because cosmetic pitch is now owned by
-        /// CinematicHelicopterVisualMotion on the child model, preventing duplicate pitching.
-        /// </summary>
         public bool ApplyTakeoffPitch
         {
             get => applyTakeoffPitch;
             set => applyTakeoffPitch = value;
         }
 
-        /// <summary>Cosmetic takeoff pitch in degrees (migrated to visual motion).</summary>
         public float TakeoffPitch
         {
             get => takeoffPitch;
             set => takeoffPitch = value;
         }
 
+        private float EffectiveIdle => (groundIdleDuration != 1.2f) ? groundIdleDuration : (startDelay != 0.75f ? startDelay : groundIdleDuration);
+        private float EffectiveAccel => (forwardAccelerationDuration != 2.5f) ? forwardAccelerationDuration : accelerationDuration;
+
         private void Awake() => CaptureStartState();
 
-        /// <summary>
-        /// Snapshots the authored transform and derives the fixed travel/rise directions.
-        /// Idempotent, so calling it again never re-bases an in-progress flight.
-        /// </summary>
         private void CaptureStartState()
         {
             if (_initialized) return;
@@ -152,10 +212,8 @@ namespace OperationOutbreak.Cinematic
             _startPosition = transform.position;
             _startRotation = transform.rotation;
 
-            // Resolve the authored axes into world space ONCE. Degenerate axes fall back to the
-            // transform's own forward/up rather than producing a zero-length direction.
             Vector3 fwd = localForwardAxis.sqrMagnitude < 1e-8f
-                ? Vector3.forward
+                ? Vector3.right
                 : localForwardAxis.normalized;
             Vector3 up = localUpAxis.sqrMagnitude < 1e-8f
                 ? Vector3.up
@@ -172,11 +230,6 @@ namespace OperationOutbreak.Cinematic
             AdvanceFlight(dt);
         }
 
-        /// <summary>
-        /// Advances the flight by <paramref name="deltaTime"/> seconds and writes the resulting
-        /// position/rotation. Exposed so behaviour can be verified deterministically in tests
-        /// (Edit Mode has no frame loop, and Time.deltaTime there is unreliable).
-        /// </summary>
         public void AdvanceFlight(float deltaTime)
         {
             CaptureStartState();
@@ -184,51 +237,62 @@ namespace OperationOutbreak.Cinematic
 
             _elapsed += deltaTime;
 
-            float factor = ComputeSpeedFactor(_elapsed);
+            // Phase 1 & 2: Vertical Lift
+            float liftFactor = ComputeVerticalLiftFactor(_elapsed);
+            float baseLift = initialLiftHeight * liftFactor;
 
-            // --- forward travel ---
-            _distance += cruiseSpeed * factor * deltaTime;
+            // Phase 3 & 4: Forward Acceleration & Climb
+            float speedFactor = ComputeSpeedFactor(_elapsed);
 
-            // --- gentle climb ---
-            // Blending the cruise multiplier by the SAME eased factor keeps the vertical speed
-            // continuous; switching multipliers at the phase boundary would visibly kink the climb.
-            float riseMultiplier = Mathf.Lerp(1f, cruiseRiseMultiplier, factor);
-            _rise += verticalRiseSpeed * factor * riseMultiplier * deltaTime;
+            // Forward translation only occurs once airborne in forward transition
+            _distance += cruiseSpeed * speedFactor * deltaTime;
+
+            // Additional gentle climb during forward travel
+            if (speedFactor > 0f)
+            {
+                float riseMultiplier = Mathf.Lerp(1f, cruiseRiseMultiplier, speedFactor);
+                _forwardClimb += verticalRiseSpeed * speedFactor * riseMultiplier * deltaTime;
+            }
+
+            _rise = baseLift + _forwardClimb;
             if (maxRiseHeight > 0f) _rise = Mathf.Min(_rise, maxRiseHeight);
 
             transform.position = _startPosition
                                  + _travelDirection * _distance
                                  + _riseDirection * _rise;
 
-            // --- rotation: authoritative flight root keeps its authored orientation ---
-            // In Micro Task #3, cosmetic pitch is owned by CinematicHelicopterVisualMotion on the
-            // child model. If applyTakeoffPitch is explicitly enabled (legacy standalone mode),
-            // apply it here; otherwise keep _startRotation so the flight root is purely authoritative.
             transform.rotation = (applyTakeoffPitch && takeoffPitch != 0f)
-                ? _startRotation * Quaternion.AngleAxis(takeoffPitch * factor, Vector3.right)
+                ? _startRotation * Quaternion.AngleAxis(takeoffPitch * speedFactor, Vector3.right)
                 : _startRotation;
         }
 
-        /// <summary>
-        /// 0 during the hold phase, SmoothStep-eased 0→1 across the acceleration window, then 1.
-        /// SmoothStep gives zero velocity change at both ends, which is what makes the departure
-        /// read as cinematic rather than mechanical.
-        /// </summary>
-        private float ComputeSpeedFactor(float elapsed)
+        public float ComputeSpeedFactor(float elapsed)
         {
-            if (elapsed <= startDelay) return 0f;
-            if (accelerationDuration <= 0f) return 1f;
+            float startForwardTime = EffectiveIdle + verticalLiftDuration;
+            if (elapsed <= startForwardTime) return 0f;
+            float accel = EffectiveAccel;
+            if (accel <= 0f) return 1f;
 
-            float u = Mathf.Clamp01((elapsed - startDelay) / accelerationDuration);
+            float u = Mathf.Clamp01((elapsed - startForwardTime) / accel);
             return Mathf.SmoothStep(0f, 1f, u);
         }
 
-        /// <summary>Returns the flight root to its authored start transform and resets the clock.</summary>
+        public float ComputeVerticalLiftFactor(float elapsed)
+        {
+            float idle = EffectiveIdle;
+            if (elapsed <= idle) return 0f;
+            if (verticalLiftDuration <= 0f) return 1f;
+
+            float u = Mathf.Clamp01((elapsed - idle) / verticalLiftDuration);
+            return Mathf.SmoothStep(0f, 1f, u);
+        }
+
         public void ResetFlight()
         {
             CaptureStartState();
             _elapsed = 0f;
             _distance = 0f;
+            _forwardClimb = 0f;
             _rise = 0f;
             transform.position = _startPosition;
             transform.rotation = _startRotation;
