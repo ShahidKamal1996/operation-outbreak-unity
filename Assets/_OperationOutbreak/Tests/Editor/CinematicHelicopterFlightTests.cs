@@ -184,13 +184,210 @@ namespace OperationOutbreak.Tests
             Assert.AreEqual(FlightPhase.Cruise, flight.CurrentPhase);
         }
 
+        // ---- Micro Task #5A: runtime start-transform regressions ----
+        // The helicopter must ALWAYS begin from its authored scene transform at the exact moment
+        // Play begins: no teleport to world origin, zero displacement during GroundIdle, and a
+        // vertical lift that starts from the captured authored position.
+
+        [Test]
+        public void PreservesAuthoredNonZeroRootPositionAndRotationOnFirstFrame()
+        {
+            // Regression 1 + 2: a non-zero authored root position AND rotation must be preserved
+            // verbatim on the very first frame — nothing may snap toward world origin.
+            var authoredPos = new Vector3(28f, 3.5f, -47f);
+            var authoredRot = Quaternion.Euler(0f, 35f, 0f);
+            _root.transform.SetPositionAndRotation(authoredPos, authoredRot);
+
+            var flight = _root.AddComponent<CinematicHelicopterFlight>();
+            flight.AdvanceFlight(1f / 60f);
+
+            Assert.AreEqual(authoredPos.x, _root.transform.position.x, 1e-4f,
+                "Authored X must be preserved on the first frame.");
+            Assert.AreEqual(authoredPos.y, _root.transform.position.y, 1e-4f,
+                "Authored Y must be preserved on the first frame.");
+            Assert.AreEqual(authoredPos.z, _root.transform.position.z, 1e-4f,
+                "Authored Z must be preserved on the first frame.");
+            Assert.Less(Quaternion.Angle(authoredRot, _root.transform.rotation), 0.001f,
+                "Authored rotation must be preserved on the first frame.");
+            Assert.Greater(Vector3.Distance(_root.transform.position, Vector3.zero), 20f,
+                "The root must remain far from world origin exactly as authored.");
+        }
+
+        [Test]
+        public void NeverTeleportsToWorldOriginDuringGroundIdle()
+        {
+            // Regression 5: even though the authored position is far from the origin, every frame
+            // of the whole GroundIdle phase must keep the root EXACTLY at the authored position.
+            var authoredPos = new Vector3(25f, 4f, -60f);
+            _root.transform.position = authoredPos;
+
+            var flight = _root.AddComponent<CinematicHelicopterFlight>();
+
+            for (float t = 0f; t < 1.2f; t += 1f / 60f)
+            {
+                flight.AdvanceFlight(1f / 60f);
+
+                Assert.Greater(Vector3.Distance(_root.transform.position, Vector3.zero), 20f,
+                    "The helicopter must never teleport toward world origin (t=" + t + ").");
+            }
+
+            Assert.AreEqual(authoredPos.x, _root.transform.position.x, 1e-4f);
+            Assert.AreEqual(authoredPos.y, _root.transform.position.y, 1e-4f);
+            Assert.AreEqual(authoredPos.z, _root.transform.position.z, 1e-4f);
+            Assert.AreEqual(0f, flight.DistanceTravelled, 1e-4f, "No forward distance during GroundIdle.");
+            Assert.AreEqual(0f, flight.HeightGained, 1e-4f, "No height gained during GroundIdle.");
+        }
+
+        [Test]
+        public void GroundIdleProducesExactlyZeroDisplacement()
+        {
+            // Regression 3: for the ENTIRE GroundIdle phase (1.2s), the root position and rotation
+            // must remain exactly the captured authored transform. The child model's local
+            // transform must also remain untouched (regression 6).
+            var authoredPos = new Vector3(10f, 0f, 20f);
+            var authoredRot = Quaternion.Euler(0f, 30f, 0f);
+            _root.transform.SetPositionAndRotation(authoredPos, authoredRot);
+
+            var model = new GameObject("helicopter_rigged");
+            model.transform.SetParent(_root.transform, false);
+            model.transform.localPosition = new Vector3(0.1f, 0.2f, 0.3f);
+            model.transform.localRotation = Quaternion.Euler(0f, 15f, 0f);
+            var childPos = model.transform.localPosition;
+            var childRot = model.transform.localRotation;
+
+            var flight = _root.AddComponent<CinematicHelicopterFlight>();
+            Simulate(flight, 1.18f); // comfortably inside the 1.2s GroundIdle window
+
+            Assert.AreEqual(FlightPhase.GroundIdle, flight.CurrentPhase,
+                "Phase must still be GroundIdle within the idle window.");
+            Assert.AreEqual(authoredPos.x, _root.transform.position.x, 1e-4f, "Zero X displacement.");
+            Assert.AreEqual(authoredPos.y, _root.transform.position.y, 1e-4f, "Zero Y displacement.");
+            Assert.AreEqual(authoredPos.z, _root.transform.position.z, 1e-4f, "Zero Z displacement.");
+            Assert.Less(Quaternion.Angle(authoredRot, _root.transform.rotation), 0.001f,
+                "Zero rotation displacement during GroundIdle.");
+            Assert.AreEqual(0f, flight.DistanceTravelled, 1e-4f);
+            Assert.AreEqual(0f, flight.HeightGained, 1e-4f);
+
+            Assert.AreEqual(childPos, model.transform.localPosition,
+                "Flight must not change the child model's local position during GroundIdle.");
+            Assert.AreEqual(childRot, model.transform.localRotation,
+                "Flight must not change the child model's local rotation during GroundIdle.");
+
+            Object.DestroyImmediate(model);
+        }
+
+        [Test]
+        public void VerticalLiftBeginsFromCapturedAuthoredPosition()
+        {
+            // Regression 4: once GroundIdle ends, the lift must be PURELY vertical from the
+            // captured authored position — horizontal coordinates stay fixed, height rises
+            // smoothly from the authored ground height. No jump, no horizontal drift.
+            var authoredPos = new Vector3(5f, 0f, -8f);
+            _root.transform.position = authoredPos;
+
+            var flight = _root.AddComponent<CinematicHelicopterFlight>();
+
+            Simulate(flight, 1.2f);  // full GroundIdle
+            Simulate(flight, 0.5f);  // 0.5s into VerticalLift
+
+            Assert.AreEqual(FlightPhase.VerticalLift, flight.CurrentPhase);
+            Assert.AreEqual(0f, flight.DistanceTravelled, 1e-4f,
+                "VerticalLift must have ZERO forward displacement.");
+            Assert.AreEqual(authoredPos.x, _root.transform.position.x, 1e-3f,
+                "Lift must stay exactly above the authored X position.");
+            Assert.AreEqual(authoredPos.z, _root.transform.position.z, 1e-3f,
+                "Lift must stay exactly above the authored Z position.");
+            Assert.Greater(_root.transform.position.y, authoredPos.y + 0.05f,
+                "Height must begin rising from the authored ground position.");
+            Assert.Less(_root.transform.position.y, authoredPos.y + 1.75f,
+                "Height must still be below the full lift height mid-lift.");
+        }
+
+        [Test]
+        public void NewPlaySessionRecapturesAuthoredTransformAndZeroesPhaseClock()
+        {
+            // Regression for the reported bug: with Enter Play Mode Options (Domain/Scene reload
+            // disabled) the previous session's elapsed time and accumulated distance persist. A
+            // new Play session must discard them, re-capture the CURRENT authored transform, and
+            // restart at GroundIdle — never resuming far away.
+            var authoredPos = new Vector3(30f, 0f, -50f);
+            _root.transform.position = authoredPos;
+
+            var flight = _root.AddComponent<CinematicHelicopterFlight>();
+
+            // First Play session: fly far away (stale state a second session would inherit).
+            Simulate(flight, 6f);
+            Assert.Greater(Vector3.Distance(_root.transform.position, authoredPos), 10f,
+                "Sanity: the helicopter must have travelled away during the first session.");
+            Assert.AreEqual(FlightPhase.Cruise, flight.CurrentPhase);
+            Assert.Greater(flight.Elapsed, 5f);
+
+            // Between sessions the user re-positions the helicopter in the Scene (edit mode).
+            _root.transform.SetPositionAndRotation(authoredPos, Quaternion.Euler(0f, 35f, 0f));
+
+            // Unity enters Play Mode again without a domain/scene reload: the session counter is
+            // bumped (RuntimeInitializeOnLoadMethod) and OnEnable is invoked on the component.
+            var t = typeof(CinematicHelicopterFlight);
+            var counter = t.GetField("_sessionCounter",
+                System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static);
+            counter.SetValue(null, (int)counter.GetValue(null) + 1);
+            var onEnable = t.GetMethod("OnEnable",
+                System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+            onEnable.Invoke(flight, null);
+
+            // First frame of the new session must begin GroundIdle at the authored transform.
+            flight.AdvanceFlight(1f / 60f);
+
+            Assert.AreEqual(FlightPhase.GroundIdle, flight.CurrentPhase,
+                "A new Play session must restart from GroundIdle, not resume mid-flight.");
+            Assert.Less(flight.Elapsed, 0.1f, "The phase clock must be zeroed for the new session.");
+            Assert.AreEqual(0f, flight.DistanceTravelled, 1e-4f,
+                "Stale distance from the previous session must be discarded.");
+            Assert.AreEqual(0f, flight.HeightGained, 1e-4f,
+                "Stale rise from the previous session must be discarded.");
+            Assert.AreEqual(authoredPos.x, _root.transform.position.x, 1e-4f,
+                "Root must return to the CURRENT authored position, never a stale one.");
+            Assert.AreEqual(authoredPos.y, _root.transform.position.y, 1e-4f);
+            Assert.AreEqual(authoredPos.z, _root.transform.position.z, 1e-4f);
+        }
+
+        [Test]
+        public void MidPlayComponentToggleDoesNotRecaptureStartState()
+        {
+            // The session guard must only fire on a NEW Play session. Toggling the component
+            // (or its GameObject) mid-Play calls OnEnable too and must NOT re-base the flight
+            // onto the current mid-flight position.
+            _root.transform.position = new Vector3(0f, 0f, 0f);
+
+            var flight = _root.AddComponent<CinematicHelicopterFlight>();
+            Simulate(flight, 4f);
+
+            float elapsedBefore = flight.Elapsed;
+            Vector3 posBefore = _root.transform.position;
+            Assert.Greater(elapsedBefore, 3.5f, "Sanity: flight must be mid-cruise.");
+
+            var onEnable = typeof(CinematicHelicopterFlight).GetMethod("OnEnable",
+                System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+            onEnable.Invoke(flight, null); // same session: must be a no-op
+
+            flight.AdvanceFlight(1f / 60f);
+
+            Assert.Greater(flight.Elapsed, elapsedBefore,
+                "Elapsed time must keep advancing, not restart from zero.");
+            Assert.Greater(Vector3.Distance(_root.transform.position, Vector3.zero), 1f,
+                "The flight must continue from its current position, not jump back to start.");
+            Assert.Greater(Vector3.Distance(_root.transform.position, posBefore), 0f,
+                "The flight must keep moving forward from where it was.");
+        }
+
         // ---- flight: straight line + rise ----
 
         [Test]
         public void FliesStraightAlongAuthoredForwardWithoutDrift()
         {
             // QA point 4: flies straight forward. Rotate the root so a naive world-axis
-            // implementation would fail this.
+            // implementation would fail this. Verified forward axis is (1, 0, 0), so with a
+            // yaw-90 root the travel direction is world -Z.
             _root.transform.position = Vector3.zero;
             _root.transform.rotation = Quaternion.Euler(0f, 90f, 0f);
 
@@ -199,9 +396,9 @@ namespace OperationOutbreak.Tests
 
             Vector3 p = _root.transform.position;
 
-            // Yaw 90 means authored forward (0,0,1) points along world +X.
-            Assert.Greater(p.x, 1f, "Must travel along the authored forward direction.");
-            Assert.AreEqual(0f, p.z, 0.01f, "Must not drift sideways — flight must be straight.");
+            // Yaw 90 means the verified local forward (1,0,0) points along world -Z.
+            Assert.Less(p.z, -1f, "Must travel along the authored forward direction.");
+            Assert.AreEqual(0f, p.x, 0.01f, "Must not drift sideways — flight must be straight.");
         }
 
         [Test]
@@ -232,7 +429,8 @@ namespace OperationOutbreak.Tests
 
             Assert.GreaterOrEqual(_root.transform.position.y, 0f,
                 "A nose-down cosmetic pitch must not drag the flight path downward.");
-            Assert.Greater(_root.transform.position.z, 1f, "Forward travel must still occur.");
+            Assert.Greater(_root.transform.position.x, 1f,
+                "Forward travel must still occur (verified forward axis is (1, 0, 0)).");
         }
 
         [Test]
@@ -320,6 +518,9 @@ namespace OperationOutbreak.Tests
         [Test]
         public void CameraSnapsBehindAboveAndToTheSideOnFirstUpdate()
         {
+            // Snap-On-Start path: the camera jumps straight to the chase pose on the first
+            // update. (Micro Task #5 introduced the takeoff transition, where Snap On Start is
+            // FALSE and the camera instead holds its authored shot — covered separately.)
             _root.transform.position = Vector3.zero;
             _root.transform.rotation = Quaternion.identity;
 
@@ -328,6 +529,7 @@ namespace OperationOutbreak.Tests
             {
                 var follow = camGo.AddComponent<CinematicHelicopterCameraFollow>();
                 follow.Target = _root.transform;
+                follow.SnapOnStart = true;
                 follow.UpdateFollow(1f / 60f);
 
                 Vector3 p = camGo.transform.position;

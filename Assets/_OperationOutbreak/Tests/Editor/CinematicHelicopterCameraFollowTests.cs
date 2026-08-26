@@ -458,5 +458,73 @@ namespace OperationOutbreak.Tests
                 Object.DestroyImmediate(cam);
             }
         }
+
+        // ---- Micro Task #5A: runtime authored-shot regression ----
+        // With Snap On Start = false the camera must preserve its authored transform throughout
+        // the entire GroundIdle phase, even when a NEW Play session starts without a domain/scene
+        // reload (Unity Enter Play Mode Options) and stale chase state persists from the previous
+        // session.
+
+        [Test]
+        public void NewPlaySessionPreservesAuthoredCameraTransformThroughGroundIdle()
+        {
+            var cam = new GameObject("TestCam");
+            try
+            {
+                var authoredPos = new Vector3(-8f, 1.5f, -6f);
+                var authoredRot = Quaternion.Euler(5f, 35f, 0f);
+                cam.transform.SetPositionAndRotation(authoredPos, authoredRot);
+
+                var follow = cam.AddComponent<CinematicHelicopterCameraFollow>();
+                follow.Target = _target.transform;
+                follow.SnapOnStart = false;
+                follow.EnableTakeoffTransition = true;
+                follow.TakeoffCameraHoldDuration = 1.2f;
+
+                // First Play session: run well past the hold into full chase so the camera leaves
+                // the authored shot (stale state a second session would inherit).
+                for (float t = 0f; t < 4.2f; t += 1f / 60f)
+                {
+                    follow.UpdateFollow(1f / 60f);
+                }
+
+                Assert.AreEqual(1f, follow.TakeoffBlendWeight, 1e-4f, "Sanity: first session reached full chase.");
+                Assert.AreNotEqual(authoredPos, cam.transform.position, "Sanity: camera left the authored shot.");
+
+                // Between sessions the user re-positions the camera in the Scene (edit mode).
+                cam.transform.SetPositionAndRotation(authoredPos, authoredRot);
+
+                // Unity enters Play Mode again without a domain/scene reload: the session counter
+                // is bumped (RuntimeInitializeOnLoadMethod) and OnEnable is invoked on the camera.
+                var t = typeof(CinematicHelicopterCameraFollow);
+                var counter = t.GetField("_sessionCounter",
+                    System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static);
+                counter.SetValue(null, (int)counter.GetValue(null) + 1);
+                var onEnable = t.GetMethod("OnEnable",
+                    System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+                onEnable.Invoke(follow, null);
+
+                // Whole GroundIdle hold (1.2s): the camera must stay EXACTLY on the authored shot.
+                for (float t = 0f; t < 1.0f; t += 1f / 60f)
+                {
+                    follow.UpdateFollow(1f / 60f);
+                }
+
+                Assert.AreEqual(0f, follow.TakeoffBlendWeight, 1e-4f,
+                    "Blend weight must be zero during the new session's ground hold.");
+                Assert.AreEqual(authoredPos.x, cam.transform.position.x, 1e-4f,
+                    "Camera X must match the authored ground shot.");
+                Assert.AreEqual(authoredPos.y, cam.transform.position.y, 1e-4f,
+                    "Camera Y must match the authored ground shot.");
+                Assert.AreEqual(authoredPos.z, cam.transform.position.z, 1e-4f,
+                    "Camera Z must match the authored ground shot.");
+                Assert.Less(Quaternion.Angle(authoredRot, cam.transform.rotation), 1e-4f,
+                    "Camera rotation must match the authored ground shot.");
+            }
+            finally
+            {
+                Object.DestroyImmediate(cam);
+            }
+        }
     }
 }

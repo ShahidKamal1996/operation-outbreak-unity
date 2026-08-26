@@ -295,7 +295,9 @@ namespace OperationOutbreak.Tests
             var flight = _flightRoot.AddComponent<CinematicHelicopterFlight>();
             var motion = _heliModel.AddComponent<CinematicHelicopterVisualMotion>();
 
-            for (float t = 0f; t < 5f; t += 1f / 60f)
+            // 7s covers the full Micro Task #5 phase sequence (GroundIdle 1.2s + VerticalLift
+            // 1.8s + ForwardAcceleration 2.5s) and reaches Cruise.
+            for (float t = 0f; t < 7f; t += 1f / 60f)
             {
                 flight.AdvanceFlight(1f / 60f);
                 motion.AdvanceVisualMotion(1f / 60f);
@@ -442,7 +444,9 @@ namespace OperationOutbreak.Tests
             var flight = _flightRoot.AddComponent<CinematicHelicopterFlight>();
             var motion = _heliModel.AddComponent<CinematicHelicopterVisualMotion>();
 
-            for (int i = 0; i < 240; i++)
+            // 6s reaches full cruise (Micro Task #5: forward acceleration completes at 5.5s),
+            // so the visual pitch factor saturates at 1 like the pre-#5 timing did at 4s.
+            for (int i = 0; i < 360; i++)
             {
                 flight.AdvanceFlight(1f / 60f);
                 motion.AdvanceVisualMotion(1f / 60f);
