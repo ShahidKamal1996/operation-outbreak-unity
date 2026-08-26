@@ -56,6 +56,19 @@ namespace OperationOutbreak.Cinematic
     /// elapsed advancement, distance/rise integration, or transform write. The first frame of
     /// every new session thus writes exactly the authored transform. Awake, Start and OnEnable
     /// are no longer relied upon for this invariant.
+    ///
+    /// QA FIX #5D.1 — SCALED TIME IS THE SAFE DEFAULT
+    /// ------------------------------------------------
+    /// The #5D diagnostic trace proved the remaining Play-start jump: the first movement
+    /// tick consumed dt = 6.43 s — the editor stall between pressing Play and the first
+    /// Update — through Time.unscaledDeltaTime because "Use Unscaled Time" defaulted to
+    /// true. One ~6.4 s tick skips GroundIdle + VerticalLift + ForwardTransition in a
+    /// single integration step and lands the root in Cruise (~51 m, ~4 m up), far outside
+    /// the starting camera shot. The serialized default of useUnscaledTime is therefore
+    /// now FALSE (scaled Time.deltaTime), so a normal Play run can never consume the
+    /// Play-start stall in one giant tick. The field remains serialized, so unscaled
+    /// behavior can still be opted into explicitly from the Inspector when progress while
+    /// Time.timeScale = 0 is required.
     /// </summary>
     [DisallowMultipleComponent]
     [AddComponentMenu("Operation Outbreak/Cinematic/Cinematic Helicopter Flight")]
@@ -109,8 +122,12 @@ namespace OperationOutbreak.Cinematic
         [Tooltip("Uncheck to freeze the flight without removing the component.")]
         [SerializeField] private bool flightEnabled = true;
 
-        [Tooltip("Use unscaled time so the flight is unaffected by Time.timeScale.")]
-        [SerializeField] private bool useUnscaledTime = true;
+        [Tooltip("Use unscaled time so the flight is unaffected by Time.timeScale. Off by default: " +
+                 "with unscaled time ON, the multi-second editor stall between pressing Play and the " +
+                 "first Update is consumed in a single first tick (QA diagnostic #5D measured dt = 6.43s), " +
+                 "which skips the takeoff phases and teleports the helicopter into Cruise. Enable only if " +
+                 "the flight must keep progressing while Time.timeScale is 0.")]
+        [SerializeField] private bool useUnscaledTime = false;
 
         // Retained for backward compatibility / tests:
         [SerializeField] private float startDelay = 0.75f;
@@ -241,55 +258,7 @@ namespace OperationOutbreak.Cinematic
         private float EffectiveIdle => (groundIdleDuration != 1.2f) ? groundIdleDuration : (startDelay != 0.75f ? startDelay : groundIdleDuration);
         private float EffectiveAccel => (forwardAccelerationDuration != 2.5f) ? forwardAccelerationDuration : accelerationDuration;
 
-        // ---- QA Diagnostic #5D — TEMPORARY first-frame state trace (remove after diagnosis) ----
-        // Logs the exact internal state used by the first movement ticks, plus the lifecycle
-        // events (Awake / OnEnable / RecaptureStartState / EnsureCurrentPlaySessionInitialized),
-        // to diagnose the (39.055, 4.0004, 0) first-frame jump observed with Domain+Scene
-        // reload ENABLED (so stale persisted state should NOT be present). Logging only — no
-        // runtime behavior is altered: tick logs stop after 5 ticks, lifecycle logs stop after
-        // 20 events.
-        private int _traceTickCount;
-        private int _traceEventCount;
-        private const int TraceTickLimit = 5;
-        private const int TraceEventLimit = 20;
-
-        private void LogTraceEvent(string what)
-        {
-            if (_traceEventCount >= TraceEventLimit) return;
-            _traceEventCount++;
-            Debug.Log("[HELI FLIGHT TRACE] event " + _traceEventCount + "/" + TraceEventLimit + " " + what);
-        }
-
-        private void LogTraceTick(float deltaTime, Vector3 computedPosition)
-        {
-            if (_traceTickCount >= TraceTickLimit) return;
-            _traceTickCount++;
-            Debug.Log("[HELI FLIGHT TRACE] tick " + _traceTickCount + "/" + TraceTickLimit
-                + " dt=" + deltaTime.ToString("F6")
-                + " pos=(" + transform.position.x.ToString("F4") + "," + transform.position.y.ToString("F4") + "," + transform.position.z.ToString("F4") + ")"
-                + " start=(" + _startPosition.x.ToString("F4") + "," + _startPosition.y.ToString("F4") + "," + _startPosition.z.ToString("F4") + ")"
-                + " startRot=(" + _startRotation.x.ToString("F4") + "," + _startRotation.y.ToString("F4") + "," + _startRotation.z.ToString("F4") + "," + _startRotation.w.ToString("F4") + ")"
-                + " elapsed=" + _elapsed.ToString("F6")
-                + " distance=" + _distance.ToString("F6")
-                + " fwdClimb=" + _forwardClimb.ToString("F6")
-                + " rise=" + _rise.ToString("F6")
-                + " initialized=" + _initialized
-                + " playSessionId=" + _playSessionId
-                + " sessionCounter=" + _sessionCounter
-                + " phase=" + CurrentPhase
-                + " travel=(" + _travelDirection.x.ToString("F4") + "," + _travelDirection.y.ToString("F4") + "," + _travelDirection.z.ToString("F4") + ")"
-                + " riseDir=(" + _riseDirection.x.ToString("F4") + "," + _riseDirection.y.ToString("F4") + "," + _riseDirection.z.ToString("F4") + ")"
-                + " computed=(" + computedPosition.x.ToString("F4") + "," + computedPosition.y.ToString("F4") + "," + computedPosition.z.ToString("F4") + ")");
-        }
-
-        private void Awake()
-        {
-            LogTraceEvent("Awake pos=(" + transform.position.x.ToString("F4") + ","
-                + transform.position.y.ToString("F4") + "," + transform.position.z.ToString("F4")
-                + ") rot=(" + transform.rotation.x.ToString("F4") + "," + transform.rotation.y.ToString("F4")
-                + "," + transform.rotation.z.ToString("F4") + "," + transform.rotation.w.ToString("F4") + ")");
-            CaptureStartState();
-        }
+        private void Awake() => CaptureStartState();
 
         /// <summary>
         /// QA Fix #5C — the authoritative fresh-session guarantee, run at the start of EVERY
@@ -310,21 +279,7 @@ namespace OperationOutbreak.Cinematic
         /// </summary>
         private void EnsureCurrentPlaySessionInitialized()
         {
-            if (_playSessionId == _sessionCounter)
-            {
-                LogTraceEvent("EnsureCurrentPlaySessionInitialized NO-OP (same session " + _playSessionId
-                    + ") pos=(" + transform.position.x.ToString("F4") + "," + transform.position.y.ToString("F4")
-                    + "," + transform.position.z.ToString("F4") + ") elapsed=" + _elapsed.ToString("F6")
-                    + " distance=" + _distance.ToString("F6"));
-                return;
-            }
-            LogTraceEvent("EnsureCurrentPlaySessionInitialized RE-ARM (session mismatch: " + _playSessionId
-                + " -> " + _sessionCounter + ") stale elapsed=" + _elapsed.ToString("F6")
-                + " distance=" + _distance.ToString("F6") + " fwdClimb=" + _forwardClimb.ToString("F6")
-                + " rise=" + _rise.ToString("F6") + " initialized=" + _initialized
-                + " pos=(" + transform.position.x.ToString("F4") + "," + transform.position.y.ToString("F4")
-                + "," + transform.position.z.ToString("F4") + ") start=(" + _startPosition.x.ToString("F4")
-                + "," + _startPosition.y.ToString("F4") + "," + _startPosition.z.ToString("F4") + ")");
+            if (_playSessionId == _sessionCounter) return;
             _playSessionId = _sessionCounter;
 
             _elapsed = 0f;
@@ -341,11 +296,6 @@ namespace OperationOutbreak.Cinematic
             // NOT the authoritative guarantee, though: OnEnable is not guaranteed to fire at
             // every Enter Play Mode, so AdvanceFlight calls the same self-heal on the first
             // movement tick of every new session (QA Fix #5C).
-            LogTraceEvent("OnEnable playSessionId=" + _playSessionId + " sessionCounter=" + _sessionCounter
-                + " initialized=" + _initialized + " elapsed=" + _elapsed.ToString("F6")
-                + " distance=" + _distance.ToString("F6") + " rise=" + _rise.ToString("F6")
-                + " pos=(" + transform.position.x.ToString("F4") + "," + transform.position.y.ToString("F4")
-                + "," + transform.position.z.ToString("F4") + ")");
             EnsureCurrentPlaySessionInitialized();
         }
 
@@ -375,11 +325,6 @@ namespace OperationOutbreak.Cinematic
         /// </summary>
         public void RecaptureStartState()
         {
-            LogTraceEvent("RecaptureStartState initialized(before)=" + _initialized
-                + " pos=(" + transform.position.x.ToString("F4") + "," + transform.position.y.ToString("F4")
-                + "," + transform.position.z.ToString("F4") + ") rot=(" + transform.rotation.x.ToString("F4")
-                + "," + transform.rotation.y.ToString("F4") + "," + transform.rotation.z.ToString("F4")
-                + "," + transform.rotation.w.ToString("F4") + ")");
             _initialized = false;
             CaptureStartState();
         }
@@ -424,15 +369,9 @@ namespace OperationOutbreak.Cinematic
             _rise = baseLift + _forwardClimb;
             if (maxRiseHeight > 0f) _rise = Mathf.Min(_rise, maxRiseHeight);
 
-            Vector3 computedPosition = _startPosition
-                                       + _travelDirection * _distance
-                                       + _riseDirection * _rise;
-
-            // QA Diagnostic #5D — TEMPORARY: report the exact state used BEFORE the transform
-            // write (first 5 movement ticks only, then silent).
-            LogTraceTick(deltaTime, computedPosition);
-
-            transform.position = computedPosition;
+            transform.position = _startPosition
+                                 + _travelDirection * _distance
+                                 + _riseDirection * _rise;
 
             transform.rotation = (applyTakeoffPitch && takeoffPitch != 0f)
                 ? _startRotation * Quaternion.AngleAxis(takeoffPitch * speedFactor, Vector3.right)

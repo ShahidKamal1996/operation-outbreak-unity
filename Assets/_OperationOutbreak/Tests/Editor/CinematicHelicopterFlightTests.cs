@@ -462,6 +462,50 @@ namespace OperationOutbreak.Tests
             Assert.AreEqual(authoredPos.z, _root.transform.position.z, 1e-4f);
         }
 
+        // ---- QA Fix #5D.1: scaled time is the safe default ----
+
+        [Test]
+        public void DefaultsToScaledTimeAndScaledPathKeepsTakeoffBehavior()
+        {
+            // QA diagnostic #5D proved the Play-start jump: with "Use Unscaled Time" ON (the old
+            // default), the ~6.4 s editor stall between pressing Play and the first Update was
+            // consumed through Time.unscaledDeltaTime in a single first tick (dt = 6.429102 in the
+            // trace), which skipped GroundIdle + VerticalLift + ForwardTransition in one giant
+            // integration step and teleported the root into Cruise (~51 m, ~4 m up). Scaled time
+            // (Time.deltaTime) is therefore the safe default: a normal Play run can never consume
+            // the Play-start stall in one tick. The field must still exist so unscaled behavior
+            // can be opted into explicitly from the Inspector.
+            const System.Reflection.BindingFlags F =
+                System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance;
+
+            _root.transform.position = Vector3.zero;
+            var flight = _root.AddComponent<CinematicHelicopterFlight>();
+
+            var field = typeof(CinematicHelicopterFlight).GetField("useUnscaledTime", F);
+            Assert.IsNotNull(field, "The useUnscaledTime field must remain serialized (Inspector opt-in).");
+            Assert.IsFalse((bool)field.GetValue(flight),
+                "Scaled time must be the safe default (useUnscaledTime = false).");
+
+            // The scaled-time path (AdvanceFlight with normal per-frame dt) must still run the
+            // exact 4-phase takeoff with the untouched timings: 1.2s GroundIdle, 1.8s lift to
+            // 1.75m, 2.5s acceleration, then 8 m/s Cruise.
+            Simulate(flight, 1.2f);  // exact GroundIdle window
+            Assert.AreEqual(FlightPhase.GroundIdle, flight.CurrentPhase);
+            Assert.AreEqual(0f, flight.DistanceTravelled, 1e-4f, "No forward distance during GroundIdle.");
+            Assert.AreEqual(0f, flight.HeightGained, 1e-4f, "No rise during GroundIdle.");
+            Assert.AreEqual(0f, _root.transform.position.y, 1e-4f, "The root must stay grounded.");
+
+            Simulate(flight, 1.8f);  // exact VerticalLift window (t = 3.0s)
+            Assert.AreEqual(0f, flight.DistanceTravelled, 1e-4f, "VerticalLift must stay purely vertical.");
+            Assert.AreEqual(1.75f, flight.HeightGained, 0.01f, "Lift must reach initialLiftHeight.");
+
+            Simulate(flight, 2.5f);  // exact ForwardTransition window (t = 5.5s)
+            Simulate(flight, 1.0f);  // 1.0s of Cruise (t = 6.5s)
+            Assert.AreEqual(FlightPhase.Cruise, flight.CurrentPhase, "Cruise must begin after 5.5s.");
+            Assert.AreEqual(8f, flight.CurrentSpeed, 0.01f, "Full cruise speed must be reached.");
+            Assert.Greater(flight.DistanceTravelled, 10f, "Cruise must have accumulated forward distance.");
+        }
+
         // ---- flight: straight line + rise ----
 
         [Test]
@@ -732,7 +776,8 @@ namespace OperationOutbreak.Tests
             foreach (var name in new[]
                      {
                          "startDelay", "accelerationDuration", "cruiseSpeed",
-                         "verticalRiseSpeed", "takeoffPitch", "localForwardAxis"
+                         "verticalRiseSpeed", "takeoffPitch", "localForwardAxis",
+                         "useUnscaledTime"
                      })
                 Assert.IsNotNull(flight.GetField(name, F), name + " must be Inspector-exposed.");
 
