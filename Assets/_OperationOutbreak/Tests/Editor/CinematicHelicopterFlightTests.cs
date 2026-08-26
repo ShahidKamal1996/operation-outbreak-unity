@@ -79,6 +79,7 @@ namespace OperationOutbreak.Tests
             // QA point 3: gradual acceleration.
             var flight = _root.AddComponent<CinematicHelicopterFlight>();
             SetPrivate(flight, "startDelay", 0.75f);
+            SetPrivate(flight, "verticalLiftDuration", 0f);
             SetPrivate(flight, "accelerationDuration", 2.5f);
             SetPrivate(flight, "cruiseSpeed", 8f);
 
@@ -98,6 +99,7 @@ namespace OperationOutbreak.Tests
         {
             var flight = _root.AddComponent<CinematicHelicopterFlight>();
             SetPrivate(flight, "startDelay", 0.75f);
+            SetPrivate(flight, "verticalLiftDuration", 0f);
             SetPrivate(flight, "accelerationDuration", 2.5f);
             SetPrivate(flight, "cruiseSpeed", 8f);
 
@@ -106,6 +108,80 @@ namespace OperationOutbreak.Tests
             Assert.IsTrue(flight.IsCruising, "The flight must reach the cruise phase.");
             Assert.AreEqual(8f, flight.CurrentSpeed, 0.01f, "Cruise speed must be reached.");
             Assert.AreEqual(1f, flight.SpeedFactor, 0.001f, "Speed factor must saturate at 1.");
+        }
+
+        // ---- Micro Task #5: Explicit 4-Phase Takeoff Tests ----
+
+        [Test]
+        public void GroundIdleKeepsHelicopterCompletelyStationary()
+        {
+            _root.transform.position = new Vector3(10f, 0f, 20f);
+            var flight = _root.AddComponent<CinematicHelicopterFlight>();
+
+            Simulate(flight, 1.0f);
+
+            Assert.AreEqual(FlightPhase.GroundIdle, flight.CurrentPhase);
+            Assert.AreEqual(0f, flight.DistanceTravelled, 1e-4f, "No forward distance during GroundIdle.");
+            Assert.AreEqual(0f, flight.HeightGained, 1e-4f, "No vertical lift during GroundIdle.");
+            Assert.AreEqual(0f, flight.CurrentSpeed, 1e-4f, "Speed must be zero during GroundIdle.");
+        }
+
+        [Test]
+        public void VerticalLiftRisesToTargetHeightWithZeroForwardDisplacement()
+        {
+            _root.transform.position = Vector3.zero;
+            var flight = _root.AddComponent<CinematicHelicopterFlight>();
+
+            // GroundIdle is 1.2s, VerticalLift is 1.8s. Total to end of lift = 3.0s.
+            Simulate(flight, 3.0f);
+
+            Assert.AreEqual(0f, flight.DistanceTravelled, 1e-4f,
+                "Forward displacement must remain strictly zero throughout VerticalLift.");
+            Assert.AreEqual(1.75f, flight.HeightGained, 0.01f,
+                "Helicopter must rise to initialLiftHeight (1.75m) at end of VerticalLift.");
+            Assert.AreEqual(0f, flight.CurrentSpeed, 1e-4f,
+                "Forward speed must remain zero throughout VerticalLift.");
+        }
+
+        [Test]
+        public void ForwardTransitionAcceleratesOnlyAfterVerticalLift()
+        {
+            _root.transform.position = Vector3.zero;
+            var flight = _root.AddComponent<CinematicHelicopterFlight>();
+
+            // Simulate to end of VerticalLift (3.0s)
+            Simulate(flight, 3.0f);
+            Assert.AreEqual(0f, flight.DistanceTravelled, 1e-4f);
+
+            // Step into ForwardTransition (3.0s to 5.5s)
+            Simulate(flight, 1.25f); // t = 4.25s (mid acceleration)
+            Assert.AreEqual(FlightPhase.ForwardTransition, flight.CurrentPhase);
+            Assert.Greater(flight.DistanceTravelled, 0.5f, "Forward travel begins during ForwardTransition.");
+            Assert.Greater(flight.CurrentSpeed, 2f, "Forward speed builds during ForwardTransition.");
+            Assert.Greater(flight.HeightGained, 1.75f, "Climb continues above initial lift height.");
+
+            // Step to Cruise (t > 5.5s)
+            Simulate(flight, 2.0f); // t = 6.25s
+            Assert.AreEqual(FlightPhase.Cruise, flight.CurrentPhase);
+            Assert.AreEqual(8f, flight.CurrentSpeed, 0.01f, "Full cruise speed reached.");
+        }
+
+        [Test]
+        public void FlightPhasesEnumReportsCorrectPhaseContinuity()
+        {
+            var flight = _root.AddComponent<CinematicHelicopterFlight>();
+
+            flight.AdvanceFlight(0.5f);
+            Assert.AreEqual(FlightPhase.GroundIdle, flight.CurrentPhase);
+
+            flight.AdvanceFlight(1.0f); // t = 1.5s
+            Assert.AreEqual(FlightPhase.VerticalLift, flight.CurrentPhase);
+
+            flight.AdvanceFlight(2.0f); // t = 3.5s
+            Assert.AreEqual(FlightPhase.ForwardTransition, flight.CurrentPhase);
+
+            flight.AdvanceFlight(3.0f); // t = 6.5s
+            Assert.AreEqual(FlightPhase.Cruise, flight.CurrentPhase);
         }
 
         // ---- flight: straight line + rise ----

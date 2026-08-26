@@ -34,6 +34,7 @@ namespace OperationOutbreak.Tests
             _cameraGo = new GameObject("CinematicCamera");
             _follow = _cameraGo.AddComponent<CinematicHelicopterCameraFollow>();
             _follow.Target = _target.transform;
+            _follow.SnapOnStart = true;
         }
 
         [TearDown]
@@ -285,6 +286,7 @@ namespace OperationOutbreak.Tests
                          "target", "followDistance", "heightOffset", "sideOffset",
                          "lookAheadDistance", "lookHeight", "positionDamping", "rotationDamping",
                          "targetForwardAxis", "targetUpAxis", "stableRearThreeQuarter",
+                         "enableTakeoffTransition", "takeoffCameraHoldDuration", "takeoffCameraBlendDuration",
                          "snapOnStart", "followEnabled", "useUnscaledTime"
                      })
             {
@@ -337,6 +339,124 @@ namespace OperationOutbreak.Tests
 
             bool stable = (bool)t.GetField("stableRearThreeQuarter", F).GetValue(_follow);
             Assert.IsTrue(stable);
+
+            float holdDur = (float)t.GetField("takeoffCameraHoldDuration", F).GetValue(_follow);
+            Assert.AreEqual(1.2f, holdDur, 1e-4f);
+
+            float blendDur = (float)t.GetField("takeoffCameraBlendDuration", F).GetValue(_follow);
+            Assert.AreEqual(2.5f, blendDur, 1e-4f);
+
+            bool takeoffTransition = (bool)t.GetField("enableTakeoffTransition", F).GetValue(_follow);
+            Assert.IsTrue(takeoffTransition);
+
+            bool snap = (bool)t.GetField("snapOnStart", F).GetValue(_follow);
+            Assert.IsFalse(snap, "snapOnStart must default to false for the cinematic takeoff presentation.");
+        }
+
+        // ---- Micro Task #5: Takeoff Camera Transition Tests ----
+
+        [Test]
+        public void CameraPreservesAuthoredShotDuringGroundHold()
+        {
+            var cam = new GameObject("TestCam");
+            try
+            {
+                var authoredPos = new Vector3(-8f, 1.5f, -6f);
+                var authoredRot = Quaternion.Euler(5f, 35f, 0f);
+                cam.transform.SetPositionAndRotation(authoredPos, authoredRot);
+
+                var follow = cam.AddComponent<CinematicHelicopterCameraFollow>();
+                follow.Target = _target.transform;
+                follow.SnapOnStart = false;
+                follow.EnableTakeoffTransition = true;
+                follow.TakeoffCameraHoldDuration = 1.2f;
+
+                // Step 1.0s (within hold phase)
+                for (float t = 0f; t < 1.0f; t += 1f / 60f)
+                {
+                    follow.UpdateFollow(1f / 60f);
+                }
+
+                Assert.AreEqual(0f, follow.TakeoffBlendWeight, 1e-4f, "Blend weight must be zero during ground hold.");
+                Assert.AreEqual(authoredPos.x, cam.transform.position.x, 1e-4f, "Position must match authored ground shot.");
+                Assert.AreEqual(authoredPos.y, cam.transform.position.y, 1e-4f, "Position must match authored ground shot.");
+                Assert.AreEqual(authoredPos.z, cam.transform.position.z, 1e-4f, "Position must match authored ground shot.");
+                Assert.Less(Quaternion.Angle(authoredRot, cam.transform.rotation), 1e-4f, "Rotation must match authored ground shot.");
+            }
+            finally
+            {
+                Object.DestroyImmediate(cam);
+            }
+        }
+
+        [Test]
+        public void CameraSmoothlyBlendsFromAuthoredShotToChaseWithoutJump()
+        {
+            var cam = new GameObject("TestCam");
+            try
+            {
+                var authoredPos = new Vector3(-8f, 1.5f, -6f);
+                var authoredRot = Quaternion.Euler(5f, 35f, 0f);
+                cam.transform.SetPositionAndRotation(authoredPos, authoredRot);
+
+                var follow = cam.AddComponent<CinematicHelicopterCameraFollow>();
+                follow.Target = _target.transform;
+                follow.SnapOnStart = false;
+                follow.EnableTakeoffTransition = true;
+                follow.TakeoffCameraHoldDuration = 1.2f;
+                follow.TakeoffCameraBlendDuration = 2.5f;
+
+                // Step to mid-blend: 1.2s hold + 1.25s (half of blend) = 2.45s
+                for (float t = 0f; t < 2.45f; t += 1f / 60f)
+                {
+                    follow.UpdateFollow(1f / 60f);
+                }
+
+                Assert.Greater(follow.TakeoffBlendWeight, 0.2f, "Blend weight must progress during transition.");
+                Assert.Less(follow.TakeoffBlendWeight, 0.8f, "Blend weight must be mid-way during transition.");
+
+                // Camera position must be intermediate between authored and chase pose
+                Assert.AreNotEqual(authoredPos, cam.transform.position, "Camera must have moved away from authored shot.");
+            }
+            finally
+            {
+                Object.DestroyImmediate(cam);
+            }
+        }
+
+        [Test]
+        public void CameraReachesFullChaseFramingAfterBlend()
+        {
+            var cam = new GameObject("TestCam");
+            try
+            {
+                var authoredPos = new Vector3(-8f, 1.5f, -6f);
+                cam.transform.position = authoredPos;
+
+                var follow = cam.AddComponent<CinematicHelicopterCameraFollow>();
+                follow.Target = _target.transform;
+                follow.SnapOnStart = false;
+                follow.EnableTakeoffTransition = true;
+                follow.TakeoffCameraHoldDuration = 1.2f;
+                follow.TakeoffCameraBlendDuration = 2.5f;
+
+                // Step past blend window: 1.2s + 2.5s + 0.5s = 4.2s
+                for (float t = 0f; t < 4.2f; t += 1f / 60f)
+                {
+                    follow.UpdateFollow(1f / 60f);
+                }
+
+                Assert.AreEqual(1f, follow.TakeoffBlendWeight, 1e-4f, "Blend weight must saturate at 1.0 after blend duration.");
+
+                // Distance to target should now match chase follow distance (~11-12m)
+                float dist = Vector3.Distance(cam.transform.position, _target.transform.position);
+                Assert.Less(dist, 14f, "Camera must be in full chase follow mode.");
+                Assert.Greater(dist, 10f, "Camera must maintain rear 3/4 follow distance.");
+            }
+            finally
+            {
+                Object.DestroyImmediate(cam);
+            }
         }
     }
 }
