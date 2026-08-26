@@ -30,6 +30,17 @@ namespace OperationOutbreak.Cinematic
     /// 2. VerticalLift        — lifts vertically to initialLiftHeight with ZERO forward displacement.
     /// 3. ForwardTransition   — smoothly accelerates forward up to cruiseSpeed while gently climbing.
     /// 4. Cruise              — continues straight at cruise speed.
+    ///
+    /// MICRO TASK #5A FIX — START TRANSFORM IS ALWAYS THE AUTHORED TRANSFORM AT PLAY
+    /// -------------------------------------------------------------------------------
+    /// The start transform and the phase clock are captured/reset in <see cref="OnEnable"/>
+    /// every time a new Play session begins, not only in Awake. Unity's Enter Play Mode Options
+    /// can disable Domain Reload and/or Scene Reload, in which case Awake is NOT called again on
+    /// the next Play and the one-shot capture would keep the stale end-of-flight position, the
+    /// stale elapsed time, and the stale accumulated distance from the previous session — making
+    /// the helicopter instantly reappear far away instead of performing GroundIdle -> VerticalLift
+    /// from its authored position. OnEnable IS called at every Play entry, so it is the reliable
+    /// place to guarantee a fresh start transform and a zeroed phase clock.
     /// </summary>
     [DisallowMultipleComponent]
     [AddComponentMenu("Operation Outbreak/Cinematic/Cinematic Helicopter Flight")]
@@ -100,6 +111,19 @@ namespace OperationOutbreak.Cinematic
         private float _distance;
         private float _forwardClimb;
         private float _rise;
+
+        // ---- play-session guards (Micro Task #5A) ----
+        // These make the one-shot start capture robust against Unity's "Enter Play Mode Options":
+        // when Domain Reload and/or Scene Reload are disabled, scene objects and their instance
+        // fields persist between Play sessions, so Awake may not run again. OnEnable is still
+        // called at every Play entry; a session counter bumped from a RuntimeInitializeOnLoadMethod
+        // lets OnEnable distinguish "a brand-new Play session" (re-capture) from "component toggled
+        // mid-Play" (keep the in-flight state).
+        private static int _sessionCounter;
+        private int _playSessionId;
+
+        [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.SubsystemRegistration)]
+        private static void OnNewPlaySession() => _sessionCounter++;
 
         /// <summary>Seconds since Play began, including ground idle and vertical lift.</summary>
         public float Elapsed => _elapsed;
@@ -204,6 +228,21 @@ namespace OperationOutbreak.Cinematic
 
         private void Awake() => CaptureStartState();
 
+        private void OnEnable()
+        {
+            // Runs at the start of EVERY Play session — even when Enter Play Mode Options skip
+            // Domain/Scene reload and Awake is never called again. Re-capture the CURRENT authored
+            // transform as the start transform and zero the phase clock, so the flight always
+            // begins GroundIdle from exactly where the scene places the helicopter.
+            if (_playSessionId == _sessionCounter) return;
+            _playSessionId = _sessionCounter;
+            RecaptureStartState();
+            _elapsed = 0f;
+            _distance = 0f;
+            _forwardClimb = 0f;
+            _rise = 0f;
+        }
+
         private void CaptureStartState()
         {
             if (_initialized) return;
@@ -221,6 +260,17 @@ namespace OperationOutbreak.Cinematic
 
             _travelDirection = (_startRotation * fwd).normalized;
             _riseDirection = (_startRotation * up).normalized;
+        }
+
+        /// <summary>
+        /// Forces the CURRENT transform to become the new authored start transform.
+        /// Used by <see cref="OnEnable"/> when a new Play session begins so the flight can never
+        /// depart from a stale position captured in a previous session.
+        /// </summary>
+        public void RecaptureStartState()
+        {
+            _initialized = false;
+            CaptureStartState();
         }
 
         private void Update()

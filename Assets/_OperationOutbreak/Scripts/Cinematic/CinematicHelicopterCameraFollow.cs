@@ -24,6 +24,15 @@ namespace OperationOutbreak.Cinematic
     ///     behind + above + to one side, aimed tightly at the helicopter body.
     ///
     /// Runs in LateUpdate so HelicopterFlightRoot translation and rise have already executed.
+    ///
+    /// MICRO TASK #5A FIX — AUTHORED CAMERA SHOT IS ALWAYS RECAPTURED AT PLAY
+    /// ----------------------------------------------------------------------
+    /// The authored-shot capture (and the takeoff blend timeline) is re-armed in OnEnable every
+    /// time a new Play session begins. Unity's Enter Play Mode Options can disable Domain/Scene
+    /// reload, in which case the persisted _snapped/_elapsed/_dampedPos state from the previous
+    /// session would otherwise skip the authored ground shot and jump the camera to the old
+    /// chase pose on the very first frame. OnEnable is called at every Play entry, so the camera
+    /// always re-captures its CURRENT authored transform and holds it for the full ground hold.
     /// </summary>
     [DisallowMultipleComponent]
     [AddComponentMenu("Operation Outbreak/Cinematic/Cinematic Helicopter Camera Follow")]
@@ -98,6 +107,19 @@ namespace OperationOutbreak.Cinematic
         private Vector3 _dampedPos;
         private Quaternion _dampedRot;
         private float _elapsed;
+
+        // ---- play-session guards (Micro Task #5A) ----
+        // With Unity's "Enter Play Mode Options" (Domain/Scene reload disabled) instance state
+        // persists between Play sessions and the camera would otherwise keep the previous
+        // session's chase pose and blend timeline instead of re-capturing the authored shot.
+        // OnEnable is called at every Play entry; the session counter (bumped from a
+        // RuntimeInitializeOnLoadMethod, which runs even without domain reload) distinguishes a
+        // brand-new Play session from a component toggle mid-Play.
+        private static int _sessionCounter;
+        private int _playSessionId;
+
+        [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.SubsystemRegistration)]
+        private static void OnNewPlaySession() => _sessionCounter++;
 
         /// <summary>Assign or replace the follow target at runtime.</summary>
         public Transform Target
@@ -214,6 +236,18 @@ namespace OperationOutbreak.Cinematic
         /// <summary>Forces the next update to reset initial capture.</summary>
         public void RequestSnap()
         {
+            _snapped = false;
+            _elapsed = 0f;
+        }
+
+        private void OnEnable()
+        {
+            // Runs at the start of EVERY Play session — even when Enter Play Mode Options skip
+            // Domain/Scene reload. Re-arm the authored-shot capture and reset the takeoff blend
+            // timeline so the camera always opens a session from its CURRENT authored transform
+            // and holds it through the ground idle (Snap On Start = false).
+            if (_playSessionId == _sessionCounter) return;
+            _playSessionId = _sessionCounter;
             _snapped = false;
             _elapsed = 0f;
         }
