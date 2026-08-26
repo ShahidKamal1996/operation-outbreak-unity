@@ -241,7 +241,55 @@ namespace OperationOutbreak.Cinematic
         private float EffectiveIdle => (groundIdleDuration != 1.2f) ? groundIdleDuration : (startDelay != 0.75f ? startDelay : groundIdleDuration);
         private float EffectiveAccel => (forwardAccelerationDuration != 2.5f) ? forwardAccelerationDuration : accelerationDuration;
 
-        private void Awake() => CaptureStartState();
+        // ---- QA Diagnostic #5D — TEMPORARY first-frame state trace (remove after diagnosis) ----
+        // Logs the exact internal state used by the first movement ticks, plus the lifecycle
+        // events (Awake / OnEnable / RecaptureStartState / EnsureCurrentPlaySessionInitialized),
+        // to diagnose the (39.055, 4.0004, 0) first-frame jump observed with Domain+Scene
+        // reload ENABLED (so stale persisted state should NOT be present). Logging only — no
+        // runtime behavior is altered: tick logs stop after 5 ticks, lifecycle logs stop after
+        // 20 events.
+        private int _traceTickCount;
+        private int _traceEventCount;
+        private const int TraceTickLimit = 5;
+        private const int TraceEventLimit = 20;
+
+        private void LogTraceEvent(string what)
+        {
+            if (_traceEventCount >= TraceEventLimit) return;
+            _traceEventCount++;
+            Debug.Log("[HELI FLIGHT TRACE] event " + _traceEventCount + "/" + TraceEventLimit + " " + what);
+        }
+
+        private void LogTraceTick(float deltaTime, Vector3 computedPosition)
+        {
+            if (_traceTickCount >= TraceTickLimit) return;
+            _traceTickCount++;
+            Debug.Log("[HELI FLIGHT TRACE] tick " + _traceTickCount + "/" + TraceTickLimit
+                + " dt=" + deltaTime.ToString("F6")
+                + " pos=(" + transform.position.x.ToString("F4") + "," + transform.position.y.ToString("F4") + "," + transform.position.z.ToString("F4") + ")"
+                + " start=(" + _startPosition.x.ToString("F4") + "," + _startPosition.y.ToString("F4") + "," + _startPosition.z.ToString("F4") + ")"
+                + " startRot=(" + _startRotation.x.ToString("F4") + "," + _startRotation.y.ToString("F4") + "," + _startRotation.z.ToString("F4") + "," + _startRotation.w.ToString("F4") + ")"
+                + " elapsed=" + _elapsed.ToString("F6")
+                + " distance=" + _distance.ToString("F6")
+                + " fwdClimb=" + _forwardClimb.ToString("F6")
+                + " rise=" + _rise.ToString("F6")
+                + " initialized=" + _initialized
+                + " playSessionId=" + _playSessionId
+                + " sessionCounter=" + _sessionCounter
+                + " phase=" + CurrentPhase
+                + " travel=(" + _travelDirection.x.ToString("F4") + "," + _travelDirection.y.ToString("F4") + "," + _travelDirection.z.ToString("F4") + ")"
+                + " riseDir=(" + _riseDirection.x.ToString("F4") + "," + _riseDirection.y.ToString("F4") + "," + _riseDirection.z.ToString("F4") + ")"
+                + " computed=(" + computedPosition.x.ToString("F4") + "," + computedPosition.y.ToString("F4") + "," + computedPosition.z.ToString("F4") + ")");
+        }
+
+        private void Awake()
+        {
+            LogTraceEvent("Awake pos=(" + transform.position.x.ToString("F4") + ","
+                + transform.position.y.ToString("F4") + "," + transform.position.z.ToString("F4")
+                + ") rot=(" + transform.rotation.x.ToString("F4") + "," + transform.rotation.y.ToString("F4")
+                + "," + transform.rotation.z.ToString("F4") + "," + transform.rotation.w.ToString("F4") + ")");
+            CaptureStartState();
+        }
 
         /// <summary>
         /// QA Fix #5C — the authoritative fresh-session guarantee, run at the start of EVERY
@@ -262,7 +310,21 @@ namespace OperationOutbreak.Cinematic
         /// </summary>
         private void EnsureCurrentPlaySessionInitialized()
         {
-            if (_playSessionId == _sessionCounter) return;
+            if (_playSessionId == _sessionCounter)
+            {
+                LogTraceEvent("EnsureCurrentPlaySessionInitialized NO-OP (same session " + _playSessionId
+                    + ") pos=(" + transform.position.x.ToString("F4") + "," + transform.position.y.ToString("F4")
+                    + "," + transform.position.z.ToString("F4") + ") elapsed=" + _elapsed.ToString("F6")
+                    + " distance=" + _distance.ToString("F6"));
+                return;
+            }
+            LogTraceEvent("EnsureCurrentPlaySessionInitialized RE-ARM (session mismatch: " + _playSessionId
+                + " -> " + _sessionCounter + ") stale elapsed=" + _elapsed.ToString("F6")
+                + " distance=" + _distance.ToString("F6") + " fwdClimb=" + _forwardClimb.ToString("F6")
+                + " rise=" + _rise.ToString("F6") + " initialized=" + _initialized
+                + " pos=(" + transform.position.x.ToString("F4") + "," + transform.position.y.ToString("F4")
+                + "," + transform.position.z.ToString("F4") + ") start=(" + _startPosition.x.ToString("F4")
+                + "," + _startPosition.y.ToString("F4") + "," + _startPosition.z.ToString("F4") + ")");
             _playSessionId = _sessionCounter;
 
             _elapsed = 0f;
@@ -279,6 +341,11 @@ namespace OperationOutbreak.Cinematic
             // NOT the authoritative guarantee, though: OnEnable is not guaranteed to fire at
             // every Enter Play Mode, so AdvanceFlight calls the same self-heal on the first
             // movement tick of every new session (QA Fix #5C).
+            LogTraceEvent("OnEnable playSessionId=" + _playSessionId + " sessionCounter=" + _sessionCounter
+                + " initialized=" + _initialized + " elapsed=" + _elapsed.ToString("F6")
+                + " distance=" + _distance.ToString("F6") + " rise=" + _rise.ToString("F6")
+                + " pos=(" + transform.position.x.ToString("F4") + "," + transform.position.y.ToString("F4")
+                + "," + transform.position.z.ToString("F4") + ")");
             EnsureCurrentPlaySessionInitialized();
         }
 
@@ -308,6 +375,11 @@ namespace OperationOutbreak.Cinematic
         /// </summary>
         public void RecaptureStartState()
         {
+            LogTraceEvent("RecaptureStartState initialized(before)=" + _initialized
+                + " pos=(" + transform.position.x.ToString("F4") + "," + transform.position.y.ToString("F4")
+                + "," + transform.position.z.ToString("F4") + ") rot=(" + transform.rotation.x.ToString("F4")
+                + "," + transform.rotation.y.ToString("F4") + "," + transform.rotation.z.ToString("F4")
+                + "," + transform.rotation.w.ToString("F4") + ")");
             _initialized = false;
             CaptureStartState();
         }
@@ -352,9 +424,15 @@ namespace OperationOutbreak.Cinematic
             _rise = baseLift + _forwardClimb;
             if (maxRiseHeight > 0f) _rise = Mathf.Min(_rise, maxRiseHeight);
 
-            transform.position = _startPosition
-                                 + _travelDirection * _distance
-                                 + _riseDirection * _rise;
+            Vector3 computedPosition = _startPosition
+                                       + _travelDirection * _distance
+                                       + _riseDirection * _rise;
+
+            // QA Diagnostic #5D — TEMPORARY: report the exact state used BEFORE the transform
+            // write (first 5 movement ticks only, then silent).
+            LogTraceTick(deltaTime, computedPosition);
+
+            transform.position = computedPosition;
 
             transform.rotation = (applyTakeoffPitch && takeoffPitch != 0f)
                 ? _startRotation * Quaternion.AngleAxis(takeoffPitch * speedFactor, Vector3.right)
