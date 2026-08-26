@@ -483,7 +483,7 @@ namespace OperationOutbreak.Tests
 
                 // First Play session: run well past the hold into full chase so the camera leaves
                 // the authored shot (stale state a second session would inherit).
-                for (float t = 0f; t < 4.2f; t += 1f / 60f)
+                for (float frameTime = 0f; frameTime < 4.2f; frameTime += 1f / 60f)
                 {
                     follow.UpdateFollow(1f / 60f);
                 }
@@ -505,7 +505,7 @@ namespace OperationOutbreak.Tests
                 onEnable.Invoke(follow, null);
 
                 // Whole GroundIdle hold (1.2s): the camera must stay EXACTLY on the authored shot.
-                for (float t = 0f; t < 1.0f; t += 1f / 60f)
+                for (float frameTime = 0f; frameTime < 1.0f; frameTime += 1f / 60f)
                 {
                     follow.UpdateFollow(1f / 60f);
                 }
