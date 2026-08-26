@@ -29,10 +29,23 @@ namespace OperationOutbreak.Tests
             f.SetValue(target, value);
         }
 
-        /// <summary>Steps the flight in small fixed increments, mimicking a real frame loop.</summary>
+        /// <summary>
+        /// Steps the flight in small fixed increments, mimicking a real frame loop.
+        ///
+        /// The requested duration is converted to an EXACT whole-frame count so the simulation
+        /// stops at exactly the requested time. A float `for (t = 0; t < seconds; t += step)`
+        /// accumulator runs one frame long: float(1/60) is slightly below the exact 1/60, so 72
+        /// additions only reach ~1.1999999 (below float(1.2) = 1.20000005) and 180 additions only
+        /// reach ~2.9999999 (below 3.0), and the loop keeps going until the NEXT addition finally
+        /// crosses the bound. The extra frame then samples the flight PAST the phase boundary under
+        /// test — 1.2167s is already inside VerticalLift and 3.0167s already inside
+        /// ForwardTransition — which is what leaked 0.000447m of lift into the GroundIdle
+        /// assertions and 0.00106 m/s of forward speed into the VerticalLift assertions.
+        /// </summary>
         private static void Simulate(CinematicHelicopterFlight flight, float seconds, float step = 1f / 60f)
         {
-            for (float t = 0f; t < seconds; t += step) flight.AdvanceFlight(step);
+            int frames = (int)Mathf.Round(seconds / step);
+            for (int i = 0; i < frames; i++) flight.AdvanceFlight(step);
         }
 
         // ---- flight: startup safety ----
@@ -223,12 +236,16 @@ namespace OperationOutbreak.Tests
 
             var flight = _root.AddComponent<CinematicHelicopterFlight>();
 
-            for (float t = 0f; t < 1.2f; t += 1f / 60f)
+            // GroundIdle lasts 1.2s = exactly 72 frames at 60fps. Step an EXACT frame count — a
+            // float `t < 1.2f` accumulator runs one frame long (see Simulate), which would step
+            // into VerticalLift and sample the first tick of the lift ramp (Y = 4.000447).
+            int groundIdleFrames = (int)Mathf.Round(1.2f / (1f / 60f));
+            for (int frame = 0; frame < groundIdleFrames; frame++)
             {
                 flight.AdvanceFlight(1f / 60f);
 
                 Assert.Greater(Vector3.Distance(_root.transform.position, Vector3.zero), 20f,
-                    "The helicopter must never teleport toward world origin (t=" + t + ").");
+                    "The helicopter must never teleport toward world origin (t=" + ((frame + 1f) / 60f) + ").");
             }
 
             Assert.AreEqual(authoredPos.x, _root.transform.position.x, 1e-4f);

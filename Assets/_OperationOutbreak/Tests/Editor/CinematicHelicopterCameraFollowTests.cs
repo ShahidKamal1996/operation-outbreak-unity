@@ -304,53 +304,68 @@ namespace OperationOutbreak.Tests
 
             var t = typeof(CinematicHelicopterCameraFollow);
 
-            float dist = (float)t.GetField("followDistance", F).GetValue(_follow);
-            Assert.GreaterOrEqual(dist, 10f);
-            Assert.LessOrEqual(dist, 12f);
+            // Probe the defaults on a FRESH component instance. SetUp deliberately sets
+            // _follow.SnapOnStart = true (the single-step composition tests rely on the chase
+            // snap), so reading the defaults from _follow would report that mutated value instead
+            // of the component's actual defaults — which is exactly why the snapOnStart default
+            // check failed even though the field initializer is false.
+            var probeGo = new GameObject("DefaultProbeCamera");
+            try
+            {
+                var probe = probeGo.AddComponent<CinematicHelicopterCameraFollow>();
 
-            float height = (float)t.GetField("heightOffset", F).GetValue(_follow);
-            Assert.GreaterOrEqual(height, 3f);
-            Assert.LessOrEqual(height, 4f);
+                float dist = (float)t.GetField("followDistance", F).GetValue(probe);
+                Assert.GreaterOrEqual(dist, 10f);
+                Assert.LessOrEqual(dist, 12f);
 
-            float side = (float)t.GetField("sideOffset", F).GetValue(_follow);
-            Assert.GreaterOrEqual(side, 3f);
-            Assert.LessOrEqual(side, 4f);
+                float height = (float)t.GetField("heightOffset", F).GetValue(probe);
+                Assert.GreaterOrEqual(height, 3f);
+                Assert.LessOrEqual(height, 4f);
 
-            float lookAhead = (float)t.GetField("lookAheadDistance", F).GetValue(_follow);
-            Assert.GreaterOrEqual(lookAhead, 1f);
-            Assert.LessOrEqual(lookAhead, 3f);
+                float side = (float)t.GetField("sideOffset", F).GetValue(probe);
+                Assert.GreaterOrEqual(side, 3f);
+                Assert.LessOrEqual(side, 4f);
 
-            float lookH = (float)t.GetField("lookHeight", F).GetValue(_follow);
-            Assert.AreEqual(1f, lookH, 1e-4f);
+                float lookAhead = (float)t.GetField("lookAheadDistance", F).GetValue(probe);
+                Assert.GreaterOrEqual(lookAhead, 1f);
+                Assert.LessOrEqual(lookAhead, 3f);
 
-            float posDamp = (float)t.GetField("positionDamping", F).GetValue(_follow);
-            Assert.GreaterOrEqual(posDamp, 4f);
-            Assert.LessOrEqual(posDamp, 6f);
+                float lookH = (float)t.GetField("lookHeight", F).GetValue(probe);
+                Assert.AreEqual(1f, lookH, 1e-4f);
 
-            float rotDamp = (float)t.GetField("rotationDamping", F).GetValue(_follow);
-            Assert.GreaterOrEqual(rotDamp, 4f);
-            Assert.LessOrEqual(rotDamp, 6f);
+                float posDamp = (float)t.GetField("positionDamping", F).GetValue(probe);
+                Assert.GreaterOrEqual(posDamp, 4f);
+                Assert.LessOrEqual(posDamp, 6f);
 
-            Vector3 fwd = (Vector3)t.GetField("targetForwardAxis", F).GetValue(_follow);
-            Assert.AreEqual(new Vector3(1f, 0f, 0f), fwd);
+                float rotDamp = (float)t.GetField("rotationDamping", F).GetValue(probe);
+                Assert.GreaterOrEqual(rotDamp, 4f);
+                Assert.LessOrEqual(rotDamp, 6f);
 
-            Vector3 up = (Vector3)t.GetField("targetUpAxis", F).GetValue(_follow);
-            Assert.AreEqual(new Vector3(0f, 1f, 0f), up);
+                Vector3 fwd = (Vector3)t.GetField("targetForwardAxis", F).GetValue(probe);
+                Assert.AreEqual(new Vector3(1f, 0f, 0f), fwd);
 
-            bool stable = (bool)t.GetField("stableRearThreeQuarter", F).GetValue(_follow);
-            Assert.IsTrue(stable);
+                Vector3 up = (Vector3)t.GetField("targetUpAxis", F).GetValue(probe);
+                Assert.AreEqual(new Vector3(0f, 1f, 0f), up);
 
-            float holdDur = (float)t.GetField("takeoffCameraHoldDuration", F).GetValue(_follow);
-            Assert.AreEqual(1.2f, holdDur, 1e-4f);
+                bool stable = (bool)t.GetField("stableRearThreeQuarter", F).GetValue(probe);
+                Assert.IsTrue(stable);
 
-            float blendDur = (float)t.GetField("takeoffCameraBlendDuration", F).GetValue(_follow);
-            Assert.AreEqual(2.5f, blendDur, 1e-4f);
+                float holdDur = (float)t.GetField("takeoffCameraHoldDuration", F).GetValue(probe);
+                Assert.AreEqual(1.2f, holdDur, 1e-4f);
 
-            bool takeoffTransition = (bool)t.GetField("enableTakeoffTransition", F).GetValue(_follow);
-            Assert.IsTrue(takeoffTransition);
+                float blendDur = (float)t.GetField("takeoffCameraBlendDuration", F).GetValue(probe);
+                Assert.AreEqual(2.5f, blendDur, 1e-4f);
 
-            bool snap = (bool)t.GetField("snapOnStart", F).GetValue(_follow);
-            Assert.IsFalse(snap, "snapOnStart must default to false for the cinematic takeoff presentation.");
+                bool takeoffTransition = (bool)t.GetField("enableTakeoffTransition", F).GetValue(probe);
+                Assert.IsTrue(takeoffTransition);
+
+                bool snap = (bool)t.GetField("snapOnStart", F).GetValue(probe);
+                Assert.IsFalse(snap, "snapOnStart must default to false for the cinematic takeoff presentation.");
+            }
+            finally
+            {
+                Object.DestroyImmediate(probeGo);
+            }
         }
 
         // ---- Micro Task #5: Takeoff Camera Transition Tests ----
