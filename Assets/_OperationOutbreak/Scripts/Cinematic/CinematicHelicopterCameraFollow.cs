@@ -404,7 +404,7 @@ namespace OperationOutbreak.Cinematic
                 Quaternion takeoffRot = _initialCameraRotation;
                 if (target.rotation != _targetStartRotation)
                 {
-                    takeoffRot = target.rotation * _targetStartRotation.inverse * _initialCameraRotation;
+                    takeoffRot = target.rotation * Quaternion.Inverse(_targetStartRotation) * _initialCameraRotation;
                 }
 
                 // Ease-in pose blend: the tracking composition stays dominant through
