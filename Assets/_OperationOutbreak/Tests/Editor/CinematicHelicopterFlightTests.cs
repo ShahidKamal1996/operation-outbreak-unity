@@ -397,6 +397,71 @@ namespace OperationOutbreak.Tests
                 "The flight must keep moving forward from where it was.");
         }
 
+        [Test]
+        public void FirstMovementTickOfNewPlaySessionSelfHealsStaleStateWithoutOnEnable()
+        {
+            // QA Fix #5C regression — reproduces the real Unity failure. With Enter Play Mode
+            // Options set to disable Domain/Scene reload, the component's instance fields
+            // persist between Play sessions and OnEnable is NOT guaranteed to fire again at
+            // Play entry. Manual QA: a finished previous session left _elapsed ~9.4s (stale
+            // Cruise), _distance ~41.6m and _rise ~4.0m behind, and the first tick of the new
+            // session teleported the root to (41.57841, 4.008937, 0).
+            // The FIRST movement tick of a new session must therefore discard the stale state
+            // by itself, before any trajectory calculation — no OnEnable, no Awake.
+
+            // The scene restore places the root at its (new) authored transform before Play.
+            Vector3 authoredPos = new Vector3(7.5f, 0.25f, -3f);
+            Quaternion authoredRot = Quaternion.Euler(0f, 20f, 0f);
+            _root.transform.SetPositionAndRotation(authoredPos, authoredRot);
+
+            var flight = _root.AddComponent<CinematicHelicopterFlight>();
+
+            // Stale state persisted from the finished previous Play session (manual QA values).
+            SetPrivate(flight, "_elapsed", 9.4f);
+            SetPrivate(flight, "_distance", 41.58f);
+            SetPrivate(flight, "_forwardClimb", 2.26f);
+            SetPrivate(flight, "_rise", 4.01f);
+            SetPrivate(flight, "_startPosition", new Vector3(0f, 0f, 0f));
+            SetPrivate(flight, "_startRotation", Quaternion.identity);
+            SetPrivate(flight, "_initialized", true); // blocks the normal one-shot re-capture
+
+            // A new Play session begins (RuntimeInitializeOnLoadMethod bumps the generation)...
+            var counter = typeof(CinematicHelicopterFlight).GetField("_sessionCounter",
+                System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static);
+            int previousGeneration = (int)counter.GetValue(null);
+            SetPrivate(flight, "_playSessionId", previousGeneration); // ...the component still believes it is in that session
+            counter.SetValue(null, previousGeneration + 1);           // ...and a new session starts
+
+            // ...but OnEnable is NOT invoked — exactly the configuration that defeated QA #5A.
+            // The normal first runtime movement tick must self-heal before moving anything.
+            flight.AdvanceFlight(1f / 60f);
+
+            // No teleport: the first frame writes EXACTLY the new authored transform.
+            Assert.AreEqual(authoredPos.x, _root.transform.position.x, 1e-4f,
+                "No stale-distance teleport (X) on the first tick of a new session.");
+            Assert.AreEqual(authoredPos.y, _root.transform.position.y, 1e-4f,
+                "No stale-rise teleport (Y) on the first tick of a new session.");
+            Assert.AreEqual(authoredPos.z, _root.transform.position.z, 1e-4f,
+                "No stale-distance teleport (Z) on the first tick of a new session.");
+            Assert.Less(Quaternion.Angle(authoredRot, _root.transform.rotation), 1e-3f,
+                "First frame must restore the authored rotation (travel direction re-captured).");
+
+            // Stale session state discarded.
+            Assert.AreEqual(FlightPhase.GroundIdle, flight.CurrentPhase,
+                "A new session must begin in GroundIdle, not resume a stale Cruise.");
+            Assert.Less(flight.Elapsed, 0.1f, "The phase clock must be zeroed for the new session.");
+            Assert.AreEqual(0f, flight.DistanceTravelled, 1e-4f, "Stale distance must be discarded.");
+            Assert.AreEqual(0f, flight.HeightGained, 1e-4f, "Stale rise must be discarded.");
+
+            // GroundIdle then holds the authored position exactly (71 more frames => exactly 1.2s).
+            for (int i = 0; i < 71; i++) flight.AdvanceFlight(1f / 60f);
+            Assert.AreEqual(FlightPhase.GroundIdle, flight.CurrentPhase);
+            Assert.AreEqual(authoredPos.x, _root.transform.position.x, 1e-4f,
+                "GroundIdle must hold the authored position exactly.");
+            Assert.AreEqual(authoredPos.y, _root.transform.position.y, 1e-4f);
+            Assert.AreEqual(authoredPos.z, _root.transform.position.z, 1e-4f);
+        }
+
         // ---- flight: straight line + rise ----
 
         [Test]

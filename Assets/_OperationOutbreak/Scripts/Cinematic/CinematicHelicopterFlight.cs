@@ -33,14 +33,29 @@ namespace OperationOutbreak.Cinematic
     ///
     /// MICRO TASK #5A FIX — START TRANSFORM IS ALWAYS THE AUTHORED TRANSFORM AT PLAY
     /// -------------------------------------------------------------------------------
-    /// The start transform and the phase clock are captured/reset in <see cref="OnEnable"/>
-    /// every time a new Play session begins, not only in Awake. Unity's Enter Play Mode Options
-    /// can disable Domain Reload and/or Scene Reload, in which case Awake is NOT called again on
-    /// the next Play and the one-shot capture would keep the stale end-of-flight position, the
-    /// stale elapsed time, and the stale accumulated distance from the previous session — making
-    /// the helicopter instantly reappear far away instead of performing GroundIdle -> VerticalLift
-    /// from its authored position. OnEnable IS called at every Play entry, so it is the reliable
-    /// place to guarantee a fresh start transform and a zeroed phase clock.
+    /// The start transform and the phase clock are re-captured/reset for every new Play session,
+    /// not only in Awake. Unity's Enter Play Mode Options can disable Domain Reload and/or Scene
+    /// Reload, in which case Awake is NOT called again on the next Play and the one-shot capture
+    /// would keep the stale end-of-flight position, the stale elapsed time, and the stale
+    /// accumulated distance from the previous session — making the helicopter instantly
+    /// reappear far away instead of performing GroundIdle -> VerticalLift from its authored
+    /// position.
+    ///
+    /// QA FIX #5C — THE FIRST MOVEMENT TICK SELF-HEALS STALE SESSION STATE
+    /// ------------------------------------------------------------------
+    /// Manual runtime QA proved the #5A OnEnable-only re-arm is NOT sufficient: with Domain
+    /// Reload / Scene Reload disabled, OnEnable is NOT guaranteed to fire again at Play entry
+    /// (the component instance persists without an enable transition), so the previous
+    /// session's _elapsed (~9.4s), _distance (~41.6m), _forwardClimb/_rise (~4.0m) and
+    /// _initialized flag reached the first Update of the new session and teleported the root
+    /// ~41.6m forward and ~4m up on frame 1. The invariant is therefore enforced where it
+    /// matters: <see cref="AdvanceFlight"/> begins with EnsureCurrentPlaySessionInitialized(),
+    /// which compares the instance session token against the play-session generation and, on
+    /// mismatch, captures the CURRENT authored transform, recomputes the travel/up directions,
+    /// and zeroes the phase clock and all accumulated values BEFORE any phase calculation,
+    /// elapsed advancement, distance/rise integration, or transform write. The first frame of
+    /// every new session thus writes exactly the authored transform. Awake, Start and OnEnable
+    /// are no longer relied upon for this invariant.
     /// </summary>
     [DisallowMultipleComponent]
     [AddComponentMenu("Operation Outbreak/Cinematic/Cinematic Helicopter Flight")]
@@ -228,19 +243,43 @@ namespace OperationOutbreak.Cinematic
 
         private void Awake() => CaptureStartState();
 
-        private void OnEnable()
+        /// <summary>
+        /// QA Fix #5C — the authoritative fresh-session guarantee, run at the start of EVERY
+        /// movement tick (and best-effort in OnEnable).
+        ///
+        /// When Enter Play Mode Options disable Domain Reload and/or Scene Reload, this
+        /// component's instance fields PERSIST from the previous Play session, and OnEnable is
+        /// NOT guaranteed to fire again at Play entry — so the Micro Task #5A OnEnable re-arm
+        /// alone could be skipped entirely. If this instance's session token does not match the
+        /// current play-session generation, ALL stale state is discarded BEFORE any phase
+        /// calculation, elapsed advancement, distance/rise integration, or transform write:
+        ///   1. the CURRENT authored transform is captured as the new start,
+        ///   2. travel/up directions are recomputed from that authored state,
+        ///   3. the phase clock and every accumulated distance/rise value are zeroed,
+        /// so the first frame of the new session writes exactly the authored transform
+        /// (GroundIdle, zero displacement) instead of teleporting to the previous session's
+        /// end-of-flight position. Component toggles mid-Play (same generation) are untouched.
+        /// </summary>
+        private void EnsureCurrentPlaySessionInitialized()
         {
-            // Runs at the start of EVERY Play session — even when Enter Play Mode Options skip
-            // Domain/Scene reload and Awake is never called again. Re-capture the CURRENT authored
-            // transform as the start transform and zero the phase clock, so the flight always
-            // begins GroundIdle from exactly where the scene places the helicopter.
             if (_playSessionId == _sessionCounter) return;
             _playSessionId = _sessionCounter;
-            RecaptureStartState();
+
             _elapsed = 0f;
             _distance = 0f;
             _forwardClimb = 0f;
             _rise = 0f;
+            RecaptureStartState();
+        }
+
+        private void OnEnable()
+        {
+            // Runs at the start of every Play session in the configurations where OnEnable
+            // does fire (domain-reload builds, mid-Play re-enables) and re-arms early. It is
+            // NOT the authoritative guarantee, though: OnEnable is not guaranteed to fire at
+            // every Enter Play Mode, so AdvanceFlight calls the same self-heal on the first
+            // movement tick of every new session (QA Fix #5C).
+            EnsureCurrentPlaySessionInitialized();
         }
 
         private void CaptureStartState()
@@ -282,6 +321,12 @@ namespace OperationOutbreak.Cinematic
 
         public void AdvanceFlight(float deltaTime)
         {
+            // QA Fix #5C — FIRST line of the movement path: the first tick of a new Play session
+            // must discard any stale previous-session state (elapsed, distance, rise, start
+            // transform) BEFORE any trajectory calculation. This makes the invariant hold
+            // regardless of whether OnEnable fired at Play entry.
+            EnsureCurrentPlaySessionInitialized();
+
             CaptureStartState();
             if (deltaTime <= 0f) return;
 
