@@ -20,6 +20,10 @@ namespace OperationOutbreak.Tests
     /// 10. Camera follow does not create or modify unrelated objects/cameras.
     /// 11. All requested Inspector fields are exposed.
     /// 12. Default values match the polished cinematic specifications.
+    /// 13. QA Fix #5B: the helicopter remains continuously framed through the whole takeoff
+    ///     (authored shot holds through GroundIdle, the establishing camera tracks the vertical
+    ///     lift, both phase-boundary handovers are continuous, and the blend ends in the
+    ///     established rear 3/4 chase framing).
     /// </summary>
     public sealed class CinematicHelicopterCameraFollowTests
     {
@@ -539,6 +543,285 @@ namespace OperationOutbreak.Tests
             finally
             {
                 Object.DestroyImmediate(cam);
+            }
+        }
+
+        // ---- QA Fix #5B: helicopter must remain visible through the entire takeoff ----
+        // The authored establishing composition must track the helicopter's takeoff motion so the
+        // subject never leaves the camera frame between GroundIdle and the established chase
+        // framing. The rig below mirrors a tight cinematic establishing shot: the camera sits
+        // behind/above/to the side of the grounded helicopter (verified forward axis (1,0,0)),
+        // and the flight root runs the production CinematicHelicopterFlight (GroundIdle 1.2s ->
+        // VerticalLift 1.8s to 1.75m -> ForwardTransition 2.5s -> Cruise 8 m/s).
+
+        private static readonly Vector3 AuthoredCamPos = new Vector3(-5.5f, 0.9f, -2.8f);
+        private static readonly Quaternion AuthoredCamRot =
+            Quaternion.LookRotation(new Vector3(0f, 1.05f, 0f) - AuthoredCamPos, Vector3.up);
+
+        private CinematicHelicopterCameraFollow CreateAuthoredTakeoffCamera(out GameObject camGo)
+        {
+            camGo = new GameObject("TakeoffCamera");
+            camGo.transform.SetPositionAndRotation(AuthoredCamPos, AuthoredCamRot);
+            var follow = camGo.AddComponent<CinematicHelicopterCameraFollow>();
+            follow.Target = _target.transform;
+            follow.SnapOnStart = false;
+            follow.EnableTakeoffTransition = true;
+            return follow;
+        }
+
+        [Test]
+        public void AuthoredCompositionHoldsExactlyThroughoutGroundIdleWithRealFlight()
+        {
+            // Requirement: the GroundIdle establishing shot remains intact — with the REAL flight
+            // component attached, every frame of the 1.2s GroundIdle must hold the camera EXACTLY
+            // on the authored composition (no drift, no snap, no early tracking).
+            var flight = _target.AddComponent<CinematicHelicopterFlight>();
+            var follow = CreateAuthoredTakeoffCamera(out var camGo);
+            try
+            {
+                for (int frame = 0; frame < 72; frame++) // 72 frames = exactly 1.2s at 60fps
+                {
+                    flight.AdvanceFlight(1f / 60f);
+                    follow.UpdateFollow(1f / 60f);
+
+                    Assert.AreEqual(AuthoredCamPos.x, camGo.transform.position.x, 1e-4f, "X drift on frame " + frame);
+                    Assert.AreEqual(AuthoredCamPos.y, camGo.transform.position.y, 1e-4f, "Y drift on frame " + frame);
+                    Assert.AreEqual(AuthoredCamPos.z, camGo.transform.position.z, 1e-4f, "Z drift on frame " + frame);
+                    Assert.Less(Quaternion.Angle(AuthoredCamRot, camGo.transform.rotation), 1e-4f,
+                        "Rotation drift on frame " + frame);
+                }
+
+                Assert.AreEqual(FlightPhase.GroundIdle, flight.CurrentPhase,
+                    "Still inside GroundIdle after exactly 1.2s of stepped frames.");
+                Assert.AreEqual(0f, follow.TakeoffBlendWeight, 1e-4f, "Blend weight must be zero during GroundIdle.");
+            }
+            finally
+            {
+                Object.DestroyImmediate(camGo);
+            }
+        }
+
+        [Test]
+        public void CameraTracksVerticalLiftWithHelicopter()
+        {
+            // Requirement: when VerticalLift begins, the camera starts following the helicopter's
+            // vertical displacement — the establishing camera must rise WITH the helicopter
+            // (keeping up with at least 60% of the lift), not stay frozen while the subject
+            // climbs out of the authored framing.
+            var flight = _target.AddComponent<CinematicHelicopterFlight>();
+            var follow = CreateAuthoredTakeoffCamera(out var camGo);
+            try
+            {
+                for (int frame = 0; frame < 72; frame++)
+                {
+                    flight.AdvanceFlight(1f / 60f);
+                    follow.UpdateFollow(1f / 60f);
+                }
+
+                float camYBefore = camGo.transform.position.y;
+                float heliYBefore = _target.transform.position.y;
+
+                for (int frame = 0; frame < 36; frame++) // 0.6s into VerticalLift
+                {
+                    flight.AdvanceFlight(1f / 60f);
+                    follow.UpdateFollow(1f / 60f);
+                }
+
+                Assert.AreEqual(FlightPhase.VerticalLift, flight.CurrentPhase);
+                float heliRise = _target.transform.position.y - heliYBefore;
+                Assert.Greater(heliRise, 0.2f, "Sanity: the helicopter must have risen during VerticalLift.");
+
+                float camRise = camGo.transform.position.y - camYBefore;
+                Assert.Greater(camRise, 0f, "The camera must move (not stay frozen) during VerticalLift.");
+                Assert.GreaterOrEqual(camRise, 0.6f * heliRise,
+                    "Camera must follow the helicopter's vertical displacement during VerticalLift.");
+                Assert.LessOrEqual(camRise, 1.6f * heliRise,
+                    "Camera must track the lift, not fly away from it.");
+            }
+            finally
+            {
+                Object.DestroyImmediate(camGo);
+            }
+        }
+
+        [Test]
+        public void HelicopterRemainsInFrontOfCameraThroughoutTakeoff()
+        {
+            // Requirement: the helicopter must stay in front of the camera from frame 1 through
+            // the whole takeoff and into cruise — never behind the camera or coincident with it.
+            var flight = _target.AddComponent<CinematicHelicopterFlight>();
+            var follow = CreateAuthoredTakeoffCamera(out var camGo);
+            try
+            {
+                for (int frame = 0; frame < 270; frame++) // 4.5s: GroundIdle -> lift -> forward -> early cruise
+                {
+                    flight.AdvanceFlight(1f / 60f);
+                    follow.UpdateFollow(1f / 60f);
+
+                    Vector3 toHeli = _target.transform.position - camGo.transform.position;
+                    float dist = toHeli.magnitude;
+                    Assert.Greater(dist, 0.5f, "Camera must not sit on top of the helicopter (frame " + frame + ").");
+                    float front = Vector3.Dot(camGo.transform.forward, toHeli / dist);
+                    Assert.Greater(front, 0.5f,
+                        "Helicopter must remain in front of the camera (frame " + frame + ").");
+                }
+            }
+            finally
+            {
+                Object.DestroyImmediate(camGo);
+            }
+        }
+
+        [Test]
+        public void HelicopterStaysInsideFramingEnvelopeThroughoutTakeoff()
+        {
+            // The regression guard for QA #5B: the visual top of the model (rotor sweep, ~2.2m
+            // above the flight root) and the flight root itself must never swing more than a
+            // reasonable framing envelope away from the camera axis during the takeoff. The old
+            // frozen-authored blend let the rotor sweep reach ~13.5 deg off-axis at t~2.2s in
+            // this rig (out of the frame for a ~30 deg vertical FOV camera); the tracking blend
+            // keeps the worst case at ~10.5 deg (the authored composition itself).
+            var flight = _target.AddComponent<CinematicHelicopterFlight>();
+            var follow = CreateAuthoredTakeoffCamera(out var camGo);
+            try
+            {
+                for (int frame = 0; frame < 270; frame++)
+                {
+                    flight.AdvanceFlight(1f / 60f);
+                    follow.UpdateFollow(1f / 60f);
+
+                    Vector3 probe = _target.transform.position + new Vector3(0f, 2.2f, 0f);
+                    float probeAngle = Vector3.Angle(camGo.transform.forward, probe - camGo.transform.position);
+                    Assert.LessOrEqual(probeAngle, 12f,
+                        "Rotor sweep left the framing envelope (frame " + frame + ").");
+
+                    float rootAngle = Vector3.Angle(camGo.transform.forward,
+                        _target.transform.position - camGo.transform.position);
+                    Assert.LessOrEqual(rootAngle, 15f,
+                        "Helicopter root left the framing envelope (frame " + frame + ").");
+                }
+            }
+            finally
+            {
+                Object.DestroyImmediate(camGo);
+            }
+        }
+
+        [Test]
+        public void NoCameraDiscontinuityAtGroundIdleToVerticalLiftBoundary()
+        {
+            // The GroundIdle -> VerticalLift handover must be continuous: no position or
+            // rotation jump on the frames straddling t = 1.2s.
+            var flight = _target.AddComponent<CinematicHelicopterFlight>();
+            var follow = CreateAuthoredTakeoffCamera(out var camGo);
+            try
+            {
+                for (int frame = 0; frame < 71; frame++)
+                {
+                    flight.AdvanceFlight(1f / 60f);
+                    follow.UpdateFollow(1f / 60f);
+                }
+
+                Vector3 prevPos = camGo.transform.position;
+                Quaternion prevRot = camGo.transform.rotation;
+                for (int frame = 0; frame < 2; frame++) // frames 72 and 73 straddle the 1.2s boundary
+                {
+                    flight.AdvanceFlight(1f / 60f);
+                    follow.UpdateFollow(1f / 60f);
+
+                    Assert.Less(Vector3.Distance(camGo.transform.position, prevPos), 0.05f,
+                        "Camera position jump at the GroundIdle -> VerticalLift boundary.");
+                    Assert.Less(Quaternion.Angle(camGo.transform.rotation, prevRot), 0.2f,
+                        "Camera rotation jump at the GroundIdle -> VerticalLift boundary.");
+
+                    prevPos = camGo.transform.position;
+                    prevRot = camGo.transform.rotation;
+                }
+            }
+            finally
+            {
+                Object.DestroyImmediate(camGo);
+            }
+        }
+
+        [Test]
+        public void NoCameraDiscontinuityAtVerticalLiftToForwardTransitionBoundary()
+        {
+            // The VerticalLift -> ForwardTransition handover must be continuous: no position or
+            // rotation jump on the frames straddling t = 3.0s (no snap into the chase framing).
+            var flight = _target.AddComponent<CinematicHelicopterFlight>();
+            var follow = CreateAuthoredTakeoffCamera(out var camGo);
+            try
+            {
+                for (int frame = 0; frame < 179; frame++)
+                {
+                    flight.AdvanceFlight(1f / 60f);
+                    follow.UpdateFollow(1f / 60f);
+                }
+
+                Vector3 prevPos = camGo.transform.position;
+                Quaternion prevRot = camGo.transform.rotation;
+                for (int frame = 0; frame < 2; frame++) // frames 180 and 181 straddle the 3.0s boundary
+                {
+                    flight.AdvanceFlight(1f / 60f);
+                    follow.UpdateFollow(1f / 60f);
+
+                    Assert.Less(Vector3.Distance(camGo.transform.position, prevPos), 0.2f,
+                        "Camera position jump at the VerticalLift -> ForwardTransition boundary.");
+                    Assert.Less(Quaternion.Angle(camGo.transform.rotation, prevRot), 1.0f,
+                        "Camera rotation jump at the VerticalLift -> ForwardTransition boundary.");
+
+                    prevPos = camGo.transform.position;
+                    prevRot = camGo.transform.rotation;
+                }
+
+                Assert.AreEqual(FlightPhase.ForwardTransition, flight.CurrentPhase);
+            }
+            finally
+            {
+                Object.DestroyImmediate(camGo);
+            }
+        }
+
+        [Test]
+        public void TakeoffBlendEndsInEstablishedRearThreeQuarterChaseFraming()
+        {
+            // Requirement: after the transition the camera must be in the EXISTING Micro Task #4
+            // rear 3/4 chase composition — behind + above + to one side of the helicopter at the
+            // established offsets (followDistance 11m, height 3.5m, side 3.5m plus the bounded
+            // damping lag of a cruising target). The cruise composition itself is unchanged.
+            var flight = _target.AddComponent<CinematicHelicopterFlight>();
+            var follow = CreateAuthoredTakeoffCamera(out var camGo);
+            try
+            {
+                for (int frame = 0; frame < 360; frame++) // 6.0s: past the 3.7s blend end AND the 5.5s Cruise start
+                {
+                    flight.AdvanceFlight(1f / 60f);
+                    follow.UpdateFollow(1f / 60f);
+                }
+
+                Assert.AreEqual(FlightPhase.Cruise, flight.CurrentPhase);
+                Assert.AreEqual(1f, follow.TakeoffBlendWeight, 1e-4f, "Blend must be fully established in cruise.");
+
+                Vector3 toCam = camGo.transform.position - _target.transform.position;
+                Vector3 fwd = Vector3.right; // verified forward axis (1,0,0); flight root keeps its identity rotation
+                Vector3 up = Vector3.up;
+                Vector3 right = Vector3.Cross(up, fwd).normalized;
+
+                float behind = -Vector3.Dot(toCam, fwd);
+                float above = Vector3.Dot(toCam, up);
+                float side = Vector3.Dot(toCam, right);
+
+                Assert.GreaterOrEqual(behind, 10.5f, "Camera must sit behind the helicopter in cruise.");
+                Assert.LessOrEqual(behind, 13.5f, "Camera must stay at the established chase distance.");
+                Assert.GreaterOrEqual(above, 2.0f, "Camera must sit above the helicopter in cruise.");
+                Assert.LessOrEqual(above, 4.8f, "Camera must stay at the established chase height.");
+                Assert.GreaterOrEqual(side, 2.0f, "Camera must keep the rear three-quarter side offset.");
+                Assert.LessOrEqual(side, 5.0f, "Camera must keep the rear three-quarter side offset.");
+            }
+            finally
+            {
+                Object.DestroyImmediate(camGo);
             }
         }
     }

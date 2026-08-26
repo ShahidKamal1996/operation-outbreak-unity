@@ -17,7 +17,12 @@ namespace OperationOutbreak.Cinematic
     ///
     /// Phase 2 & 3: Vertical Lift & Forward Transition (~2.0-3.0s)
     ///     Helicopter lifts off the ground and accelerates forward.
-    ///     Camera smoothly blends from authored shot into dynamic rear 3/4 chase framing.
+    ///     The authored establishing composition RIGIDLY TRACKS the helicopter (it is carried by
+    ///     the helicopter's displacement since capture, so the subject stays exactly as framed as
+    ///     it was at Play), and the camera smoothly blends from that takeoff-tracking composition
+    ///     into the dynamic rear 3/4 chase framing. The pose blend uses an ease-in weighting of
+    ///     TakeoffBlendWeight, so the establishing shot dominates through the vertical lift and
+    ///     the chase framing takes over across the forward transition.
     ///
     /// Phase 4: Full Chase Flight
     ///     Camera maintains the polished Micro Task #4 rear 3/4 cinematic composition:
@@ -33,6 +38,26 @@ namespace OperationOutbreak.Cinematic
     /// session would otherwise skip the authored ground shot and jump the camera to the old
     /// chase pose on the very first frame. OnEnable is called at every Play entry, so the camera
     /// always re-captures its CURRENT authored transform and holds it for the full ground hold.
+    ///
+    /// QA FIX #5B — THE ESTABLISHING SHOT TRACKS THE LIFTOFF (HELICOPTER NEVER LEAVES THE FRAME)
+    /// ---------------------------------------------------------------------------------------
+    /// Root cause of the "takeoff is invisible for the first few seconds" report: the takeoff
+    /// blend interpolated between the AUTHORED (world-locked, frozen) camera transform and the
+    /// damped chase pose. The helicopter's VerticalLift (+1.75m) and ForwardTransition move the
+    /// subject OUT of the frozen authored composition, while the chase framing only becomes
+    /// dominant once the helicopter is already airborne — so the subject left the camera frame
+    /// during the opening seconds and was re-acquired mid-flight.
+    ///
+    /// Fix: the "from" end of the blend is no longer the frozen authored transform. It is the
+    /// authored composition RIGIDLY CARRIED by the target's displacement since capture
+    /// (position + orientation delta). During GroundIdle the helicopter is stationary, so this
+    /// is EXACTLY the authored establishing shot (unchanged behavior); once VerticalLift
+    /// begins the establishing camera translates with the rising helicopter, keeping the
+    /// subject continuously framed with the same relative composition the scene author
+    /// verified. The "to" end (damped chase pose) always aims at the current helicopter, so
+    /// every blend state frames the subject: the helicopter can never leave the frame during
+    /// the takeoff. All smoothing stays framerate-independent (exponential damping +
+    /// SmoothStep blend), and the Snap On Start = false cinematic behavior is preserved.
     /// </summary>
     [DisallowMultipleComponent]
     [AddComponentMenu("Operation Outbreak/Cinematic/Cinematic Helicopter Camera Follow")]
@@ -108,6 +133,12 @@ namespace OperationOutbreak.Cinematic
         private Quaternion _dampedRot;
         private float _elapsed;
 
+        // QA Fix #5B — the target's pose at the moment the authored shot was captured.
+        // The takeoff blend's "from" pole is the authored composition rigidly carried by the
+        // target's displacement relative to these values (see UpdateFollow / class docs).
+        private Vector3 _targetStartPosition;
+        private Quaternion _targetStartRotation;
+
         // ---- play-session guards (Micro Task #5A) ----
         // With Unity's "Enter Play Mode Options" (Domain/Scene reload disabled) instance state
         // persists between Play sessions and the camera would otherwise keep the previous
@@ -146,6 +177,13 @@ namespace OperationOutbreak.Cinematic
             set => takeoffCameraBlendDuration = value;
         }
 
+        /// <summary>
+        /// 0 while the authored ground shot is held, SmoothStep-ramping over
+        /// takeoffCameraBlendDuration afterwards, 1 once the chase framing is fully established.
+        /// The pose blend additionally applies an ease-in square of this weight so the
+        /// takeoff-tracking (establishing) composition stays dominant through VerticalLift and
+        /// the chase framing takes over across ForwardTransition (see UpdateFollow).
+        /// </summary>
         public float TakeoffBlendWeight
         {
             get
@@ -298,6 +336,14 @@ namespace OperationOutbreak.Cinematic
                 _snapped = true;
                 _initialCameraPosition = transform.position;
                 _initialCameraRotation = transform.rotation;
+
+                // QA Fix #5B — capture the target's pose at the same moment as the authored shot.
+                // The takeoff blend's "from" pole is the authored composition rigidly carried by
+                // the target's displacement relative to these values, so the establishing camera
+                // follows the helicopter's takeoff instead of staying frozen in world space.
+                _targetStartPosition = target.position;
+                _targetStartRotation = target.rotation;
+
                 _dampedPos = _initialCameraPosition;
                 _dampedRot = _initialCameraRotation;
 
@@ -344,8 +390,29 @@ namespace OperationOutbreak.Cinematic
             if (enableTakeoffTransition && !snapOnStart)
             {
                 float w = TakeoffBlendWeight;
-                transform.position = Vector3.Lerp(_initialCameraPosition, _dampedPos, w);
-                transform.rotation = Quaternion.Slerp(_initialCameraRotation, _dampedRot, w);
+
+                // QA Fix #5B — "from" pole: the authored establishing composition, rigidly
+                // carried by the target's displacement since capture. While the helicopter sits
+                // in GroundIdle the displacement is zero, so this is EXACTLY the authored shot
+                // (unchanged behavior); once VerticalLift begins the establishing camera
+                // translates with the rising helicopter, keeping the subject continuously
+                // framed with the composition the scene author verified. (A frozen, world-locked
+                // authored transform as the blend's "from" pole is what let the helicopter leave
+                // the frame during the first few seconds of the takeoff before the chase
+                // framing took over.)
+                Vector3 takeoffPos = _initialCameraPosition + (target.position - _targetStartPosition);
+                Quaternion takeoffRot = _initialCameraRotation;
+                if (target.rotation != _targetStartRotation)
+                {
+                    takeoffRot = target.rotation * _targetStartRotation.inverse * _initialCameraRotation;
+                }
+
+                // Ease-in pose blend: the tracking composition stays dominant through
+                // VerticalLift, and the chase framing takes over across ForwardTransition.
+                // (TakeoffBlendWeight itself is unchanged and remains the public contract.)
+                float poseW = w * w;
+                transform.position = Vector3.Lerp(takeoffPos, _dampedPos, poseW);
+                transform.rotation = Quaternion.Slerp(takeoffRot, _dampedRot, poseW);
             }
             else
             {
