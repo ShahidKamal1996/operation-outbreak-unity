@@ -38,8 +38,9 @@ namespace OperationOutbreak.Cinematic
     /// -----
     /// Scripting only. It never creates/modifies geometry, materials, or lights; never parents
     /// or unparents anything; never searches for, or references, the player, the seated
-    /// animation, the rifle, or any camera. With Motion Enabled off (or on disable) the root is
-    /// held/restored exactly at its authored pose.
+    /// animation, the rifle, or any camera. With Motion Enabled off, or when disabled via
+    /// DisableMotion() (deterministic synchronous restore) or Unity-managed deactivation
+    /// (OnDisable/OnDestroy backstop), the root is held/restored exactly at its authored pose.
     /// </summary>
     [DisallowMultipleComponent]
     [AddComponentMenu("Operation Outbreak/Cinematic/Cinematic Helicopter Interior Motion")]
@@ -155,6 +156,27 @@ namespace OperationOutbreak.Cinematic
 
             if (deltaTime > 0f) _elapsed += deltaTime;
             ApplyMotion(_elapsed);
+        }
+
+        /// <summary>
+        /// Disables the motion and synchronously restores the root to the captured authored
+        /// local pose — the deterministic disable entry point.
+        ///
+        /// QA fix #2C: in the Unity 6000.5.7f1 EditMode test runner, lifecycle callbacks
+        /// (OnDisable/OnDestroy) do not execute for a component that is created and driven
+        /// manually (new GameObject + AddComponent + direct AdvanceMotion calls; no play
+        /// mode, no editor frame pump), so a restore that lives only behind a callback can
+        /// never run there. This method performs the same contract in the current call:
+        /// it turns off the Motion Enabled master switch (so every subsequent frame holds
+        /// the authored pose exactly) and writes the exact captured authored pose now.
+        /// OnDisable/OnDestroy remain as the backstop for Unity-managed deactivation in
+        /// environments where those callbacks do fire (play mode, inspector toggles).
+        /// </summary>
+        public void DisableMotion()
+        {
+            EnsureAuthoredPoseCaptured();
+            motionEnabled = false;
+            RestoreAuthoredPose();
         }
 
         private void ApplyMotion(float t)

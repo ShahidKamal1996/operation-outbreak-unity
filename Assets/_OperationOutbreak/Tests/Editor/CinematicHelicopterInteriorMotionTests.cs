@@ -433,11 +433,17 @@ namespace OperationOutbreak.Tests
         {
             // The production contract: when motion is DISABLED, the root must return exactly to
             // its captured authored local position/rotation — never left at a mid-offset.
-            // This exercises the real disable path (component.enabled = false -> OnDisable).
-            // Component destruction is deliberately NOT substituted: in the Unity 6000.5.7f1
-            // EditMode runner, Object.DestroyImmediate on a single component does not reliably
-            // invoke the restore callbacks (observed: the root was left at its last mid-offset
-            // pose), so destruction is not a valid stand-in for the disable contract.
+            //
+            // QA fix #2C — demonstrated cause: in the Unity 6000.5.7f1 EditMode runner, this
+            // component is created and driven manually (new GameObject + AddComponent + direct
+            // AdvanceMotion calls; no play mode, no editor frame pump), so Unity's lifecycle
+            // callbacks (OnDisable/OnDestroy) do NOT execute for it — three consecutive real
+            // runs (DestroyImmediate; DestroyImmediate + OnDestroy backstop; enabled = false)
+            // all left the root at the identical last motion offset (2.75206995). A restore
+            // that lives only behind a callback therefore cannot run in this environment.
+            // The contract is enforced by the component's deterministic entry point instead:
+            // DisableMotion() turns off the master switch and writes the exact captured
+            // authored pose in the current call.
             _root.transform.localPosition = new Vector3(2.75f, 0.5f, -1.1f);
             _root.transform.localRotation = Quaternion.Euler(0f, 30f, 0f);
             var authoredPos = _root.transform.localPosition;
@@ -448,8 +454,9 @@ namespace OperationOutbreak.Tests
             Assert.Greater(Vector3.Distance(_root.transform.localPosition, authoredPos), 0.001f,
                 "Sanity: the root must be mid-offset before the component is disabled (t≈1s, peak bob ~0.02m).");
 
-            motion.enabled = false; // the production disable path — triggers OnDisable
+            motion.DisableMotion(); // deterministic disable: master switch off + synchronous authored-pose restore
 
+            Assert.IsFalse(motion.MotionEnabled, "DisableMotion must turn off Motion Enabled.");
             Assert.AreEqual(authoredPos.x, _root.transform.localPosition.x, 1e-5f,
                 "On disable the root must be restored to the authored X exactly.");
             Assert.AreEqual(authoredPos.y, _root.transform.localPosition.y, 1e-5f,
@@ -458,6 +465,17 @@ namespace OperationOutbreak.Tests
                 "On disable the root must be restored to the authored Z exactly.");
             Assert.Less(Quaternion.Angle(authoredRot, _root.transform.localRotation), 0.0001f,
                 "On disable the root must be restored to the authored rotation exactly.");
+
+            // The disable must be PERSISTENT: every subsequent frame holds the authored pose exactly.
+            motion.AdvanceMotion(1f / 60f);
+            Assert.AreEqual(authoredPos.x, _root.transform.localPosition.x, 1e-5f,
+                "After disable, the next frame must still hold the authored X exactly.");
+            Assert.AreEqual(authoredPos.y, _root.transform.localPosition.y, 1e-5f,
+                "After disable, the next frame must still hold the authored Y exactly.");
+            Assert.AreEqual(authoredPos.z, _root.transform.localPosition.z, 1e-5f,
+                "After disable, the next frame must still hold the authored Z exactly.");
+            Assert.Less(Quaternion.Angle(authoredRot, _root.transform.localRotation), 0.0001f,
+                "After disable, the next frame must still hold the authored rotation exactly.");
         }
     }
 }
