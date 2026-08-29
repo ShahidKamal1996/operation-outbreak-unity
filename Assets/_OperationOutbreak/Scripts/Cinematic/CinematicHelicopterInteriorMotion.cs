@@ -180,13 +180,25 @@ namespace OperationOutbreak.Cinematic
 
         private void OnDisable()
         {
-            // Clean stop: a disabled component leaves the root exactly at its authored pose,
-            // never at a mid-offset.
-            if (_poseCaptured)
-            {
-                transform.localPosition = _authoredLocalPosition;
-                transform.localRotation = _authoredLocalRotation;
-            }
+            RestoreAuthoredPose();
+        }
+
+        private void OnDestroy()
+        {
+            // DestroyImmediate on a single component does not invoke OnDisable in the Unity
+            // 6000.5.7f1 EditMode runner (observed: the root was left at its last mid-offset
+            // pose after the test destroyed the component). The contract — no residual motion
+            // offset once the component stops existing — must hold on EVERY teardown path.
+            RestoreAuthoredPose();
+        }
+
+        private void RestoreAuthoredPose()
+        {
+            // Clean stop: a disabled/destroyed component leaves the root exactly at its
+            // authored pose, never at a mid-offset.
+            if (!_poseCaptured || transform == null) return;
+            transform.localPosition = _authoredLocalPosition;
+            transform.localRotation = _authoredLocalRotation;
         }
 
         /// <summary>

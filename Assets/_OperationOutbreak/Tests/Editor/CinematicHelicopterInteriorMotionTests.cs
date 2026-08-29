@@ -121,9 +121,11 @@ namespace OperationOutbreak.Tests
             // Two identically authored roots advanced with identical dt sequences must produce
             // identical poses at every sampled frame — the pose is a pure function of elapsed
             // time, independent of which component instance is driving it.
+            var authoredLocal = new Vector3(0.25f, 0.1f, -0.5f);
+            var authoredLocalRot = Quaternion.Euler(1.5f, 7f, -0.5f);
             _parent.transform.SetPositionAndRotation(new Vector3(3f, -2f, 8f), Quaternion.Euler(12f, -40f, 4f));
-            _root.transform.localPosition = new Vector3(0.25f, 0.1f, -0.5f);
-            _root.transform.localRotation = Quaternion.Euler(1.5f, 7f, -0.5f);
+            _root.transform.localPosition = authoredLocal;
+            _root.transform.localRotation = authoredLocalRot;
 
             var otherParent = new GameObject("OtherParent");
             var otherRoot = new GameObject("OtherInteriorRoot");
@@ -131,8 +133,8 @@ namespace OperationOutbreak.Tests
             {
                 otherRoot.transform.SetParent(otherParent.transform, false);
                 otherParent.transform.SetPositionAndRotation(_parent.transform.position, _parent.transform.rotation);
-                otherRoot.transform.localPosition = _root.transform.localPosition;
-                otherRoot.transform.localRotation = _root.transform.localRotation;
+                otherRoot.transform.localPosition = authoredLocal;
+                otherRoot.transform.localRotation = authoredLocalRot;
 
                 var motionA = _root.AddComponent<CinematicHelicopterInteriorMotion>();
                 var motionB = otherRoot.AddComponent<CinematicHelicopterInteriorMotion>();
@@ -156,15 +158,17 @@ namespace OperationOutbreak.Tests
                 }
 
                 // History independence: reaching the same elapsed time by two 300-frame steps
-                // (instead of one 600-frame run) must land on the same pose.
+                // (instead of one 600-frame run) must land on the same pose. The control root
+                // must be based on the AUTHORED pose — not on _root's current (already moved)
+                // pose, which would stack a second motion offset on top.
                 GameObject thirdParent = new GameObject("ThirdParent");
                 try
                 {
                     var thirdRoot = new GameObject("ThirdInteriorRoot");
                     thirdRoot.transform.SetParent(thirdParent.transform, false);
                     thirdParent.transform.SetPositionAndRotation(_parent.transform.position, _parent.transform.rotation);
-                    thirdRoot.transform.localPosition = _root.transform.localPosition;
-                    thirdRoot.transform.localRotation = _root.transform.localRotation;
+                    thirdRoot.transform.localPosition = authoredLocal;
+                    thirdRoot.transform.localRotation = authoredLocalRot;
 
                     var motionC = thirdRoot.AddComponent<CinematicHelicopterInteriorMotion>();
                     for (int frame = 0; frame < 300; frame++) motionC.AdvanceMotion(1f / 60f);
@@ -349,8 +353,13 @@ namespace OperationOutbreak.Tests
                 float worldDistance = Vector3.Distance(_root.transform.position, authoredWorldPos);
                 Assert.LessOrEqual(worldDistance, 0.025f + 0.006f + 0.01f + 0.005f,
                     "The root must stay within its motion envelope of the authored WORLD pose (frame " + frame + ").");
-                Assert.Greater(worldDistance, 0.05f,
-                    "Sanity: the root must be far from the world origin exactly as authored (frame " + frame + ").");
+                // The authored WORLD pose is ~41.6m from the world origin; the root must stay
+                // there — it must never snap toward the origin. (Measuring the offset from the
+                // authored pose can never exceed the small configured amplitudes, so the
+                // origin-distance is the correct liveness check.)
+                float originDistance = Vector3.Distance(_root.transform.position, Vector3.zero);
+                Assert.Greater(originDistance, 30f,
+                    "The root must never snap toward the world origin (frame " + frame + ").");
             }
 
             Assert.Less(Quaternion.Angle(_root.transform.rotation, authoredWorldRot), 0.45f + 0.25f + 0.05f,
