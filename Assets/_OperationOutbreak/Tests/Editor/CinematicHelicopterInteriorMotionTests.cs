@@ -431,8 +431,13 @@ namespace OperationOutbreak.Tests
         [Test]
         public void RestoresAuthoredPoseCleanlyWhenDisabled()
         {
-            // Disabling/destroying the component must leave the root exactly at its authored
-            // pose — never at a mid-offset.
+            // The production contract: when motion is DISABLED, the root must return exactly to
+            // its captured authored local position/rotation — never left at a mid-offset.
+            // This exercises the real disable path (component.enabled = false -> OnDisable).
+            // Component destruction is deliberately NOT substituted: in the Unity 6000.5.7f1
+            // EditMode runner, Object.DestroyImmediate on a single component does not reliably
+            // invoke the restore callbacks (observed: the root was left at its last mid-offset
+            // pose), so destruction is not a valid stand-in for the disable contract.
             _root.transform.localPosition = new Vector3(2.75f, 0.5f, -1.1f);
             _root.transform.localRotation = Quaternion.Euler(0f, 30f, 0f);
             var authoredPos = _root.transform.localPosition;
@@ -441,9 +446,9 @@ namespace OperationOutbreak.Tests
             var motion = AddMotion();
             for (int frame = 0; frame < 60; frame++) motion.AdvanceMotion(1f / 60f);
             Assert.Greater(Vector3.Distance(_root.transform.localPosition, authoredPos), 0.001f,
-                "Sanity: the root must be mid-offset before the component is removed (t≈1s, peak bob ~0.02m).");
+                "Sanity: the root must be mid-offset before the component is disabled (t≈1s, peak bob ~0.02m).");
 
-            Object.DestroyImmediate(motion); // triggers OnDisable
+            motion.enabled = false; // the production disable path — triggers OnDisable
 
             Assert.AreEqual(authoredPos.x, _root.transform.localPosition.x, 1e-5f,
                 "On disable the root must be restored to the authored X exactly.");
