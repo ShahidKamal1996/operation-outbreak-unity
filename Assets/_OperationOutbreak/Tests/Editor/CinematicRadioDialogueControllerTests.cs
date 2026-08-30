@@ -38,7 +38,12 @@ namespace OperationOutbreak.Tests
         {
             var f = c.GetType().GetField("onSequenceCompleted", BindingFlags.NonPublic | BindingFlags.Instance);
             Assert.IsNotNull(f, "onSequenceCompleted must exist.");
-            return (UnityEvent)f.GetValue(c);
+            var evt = (UnityEvent)f.GetValue(c);
+            // Regression guard (QA fix #1): a component created with AddComponent in EditMode is
+            // not serialized through a scene/prefab, so the field initializer is its only
+            // initialization. It must be a live (non-null) UnityEvent, not null.
+            Assert.IsNotNull(evt, "onSequenceCompleted must be non-null on a dynamically created component (field initialization).");
+            return evt;
         }
 
         private static RadioDialogueLine MakeLine(string speaker, string text, AudioClip voice,
@@ -480,6 +485,27 @@ namespace OperationOutbreak.Tests
 
             Step(c, 2f);
             Assert.IsFalse(c.IsPlaying, "No playback may resume after a stop.");
+        }
+
+        // ---- 16. QA fix #1 regression: dynamically created components expose a live completion event ----
+
+        [Test]
+        public void DynamicallyCreatedComponentExposesLiveCompletionEvent()
+        {
+            // QA fix #1: the serialized UnityEvent was declared without an initializer, so it was
+            // null on components created via AddComponent in EditMode (never serialized through a
+            // scene/prefab); the five completion-event tests all threw NullReferenceException on
+            // AddListener. This locks in the discovered scenario explicitly.
+            var c = _go.AddComponent<CinematicRadioDialogueController>();
+            int completed = 0;
+            var evt = GetCompletionEvent(c); // asserts the event is non-null on a dynamic component
+            Assert.DoesNotThrow(() => evt.AddListener(() => completed++),
+                "AddListener on a dynamically created component's completion event must not throw.");
+
+            c.SetDialogueLines(new RadioDialogueLine[0]);
+            c.PlaySequence();
+            Assert.IsTrue(c.IsComplete, "An empty sequence must complete immediately.");
+            Assert.AreEqual(1, completed, "The completion event must fire exactly once on natural completion.");
         }
     }
 }
