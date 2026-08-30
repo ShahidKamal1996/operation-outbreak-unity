@@ -110,7 +110,7 @@ namespace OperationOutbreak.Cinematic
         [SerializeField] private RadioDialogueLine[] dialogueLines = new RadioDialogueLine[0];
 
         [Tooltip("Invoked exactly once when the sequence completes naturally (never from StopSequence).")]
-        [SerializeField] private UnityEvent onSequenceCompleted;
+        [SerializeField] private UnityEvent onSequenceCompleted = new UnityEvent();
 
         // ---- runtime state (never serialized) ----
         private bool _playing;
