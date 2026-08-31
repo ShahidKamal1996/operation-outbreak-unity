@@ -38,7 +38,7 @@ namespace OperationOutbreak.Tests
             // Clean up the temporary controller assets (and the temp folder if now empty).
             foreach (var path in _tempAssetPaths)
             {
-                if (AssetDatabase.IsValidAsset(path)) AssetDatabase.DeleteAsset(path);
+                if (AssetDatabase.LoadAssetAtPath<UnityEngine.Object>(path) != null) AssetDatabase.DeleteAsset(path);
             }
             _tempAssetPaths.Clear();
             if (AssetDatabase.IsValidFolder(TempAssetRoot))
@@ -81,7 +81,7 @@ namespace OperationOutbreak.Tests
             }
 
             string path = TempAssetRoot + "/" + assetName + ".controller";
-            if (AssetDatabase.IsValidAsset(path)) AssetDatabase.DeleteAsset(path); // stale leftover from a crashed run
+            if (AssetDatabase.LoadAssetAtPath<UnityEngine.Object>(path) != null) AssetDatabase.DeleteAsset(path); // stale leftover from a crashed run
 
             var controller = new AnimatorController { name = assetName };
             foreach (var p in parameters)
