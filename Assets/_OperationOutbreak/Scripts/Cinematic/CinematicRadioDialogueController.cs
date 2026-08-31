@@ -460,15 +460,37 @@ namespace OperationOutbreak.Cinematic
 
         /// <summary>
         /// Null- and error-safe parameter write: missing animators, missing/empty parameter
-        /// names, and parameters that do not exist on the Animator are all skipped silently.
+        /// names, and parameters that do not exist on the Animator (or are not Bool) are all
+        /// skipped silently.
         /// </summary>
         private static void SetBindingBool(SpeakerAnimationBinding binding, bool talking)
         {
             var animator = binding.animator;
             string parameter = binding.TalkingParameter;
             if (animator == null || string.IsNullOrEmpty(parameter)) return;
-            if (!animator.HasBool(parameter)) return;
+            if (!HasBoolParameter(animator, parameter)) return;
             animator.SetBool(parameter, talking);
+        }
+
+        /// <summary>
+        /// Unity-compatible parameter existence/type check: true only when the Animator
+        /// exposes a Bool parameter whose name exactly matches <paramref name="parameterName"/>
+        /// (inspects <see cref="Animator.parameters"/> — the Animator has no built-in HasBool
+        /// API). Returns false for a null Animator, a null/empty name, an empty parameter
+        /// list, or a name that exists as a non-Bool parameter type.
+        /// </summary>
+        private static bool HasBoolParameter(Animator animator, string parameterName)
+        {
+            if (animator == null || string.IsNullOrEmpty(parameterName)) return false;
+            var parameters = animator.parameters;
+            if (parameters == null) return false;
+            for (int i = 0; i < parameters.Length; i++)
+            {
+                var p = parameters[i];
+                if (p != null && p.type == AnimatorControllerParameterType.Bool && p.name == parameterName)
+                    return true;
+            }
+            return false;
         }
 
         // ===================================================================== helpers

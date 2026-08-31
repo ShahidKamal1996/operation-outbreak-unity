@@ -278,5 +278,31 @@ namespace OperationOutbreak.Tests
             Assert.IsFalse(reyes.GetBool("IsTalking"),
                 "The previous speaker must be off once the new line begins (line-end + line-start clears).");
         }
+
+        // ---- 11. same-name NON-Bool parameter is skipped safely ----
+
+        [Test]
+        public void SameNameNonBoolParameterIsSkippedSafely()
+        {
+            // The Animator exposes a FLOAT parameter named "IsTalking" and a Bool "OtherParam".
+            // A name match alone must NOT be accepted: the type must be Bool.
+            var go = new GameObject("MixedParamAnimatorGo");
+            go.transform.SetParent(_go.transform, false);
+            var animator = go.AddComponent<Animator>();
+            var controller = new AnimatorController();
+            controller.name = "MixedParam_TestCtrl";
+            controller.AddParameter(new AnimatorControllerParameter { name = "IsTalking", type = AnimatorControllerParameterType.Float });
+            controller.AddParameter(new AnimatorControllerParameter { name = "OtherParam", type = AnimatorControllerParameterType.Bool });
+            animator.runtimeAnimatorController = controller;
+
+            var c = _go.AddComponent<CinematicRadioDialogueController>();
+            c.SetSpeakerAnimationBindings(new[] { MakeBinding("Kane", animator, "IsTalking") });
+            c.SetDialogueLines(new[] { MakeLine("Kane", "Hi", 10f, 0f, 0f) });
+
+            Assert.DoesNotThrow(() => { c.PlaySequence(); Step(c, 1f); },
+                "A same-name non-Bool parameter must be skipped without throwing.");
+            Assert.IsTrue(c.IsComplete, "The sequence must still complete normally.");
+            Assert.AreEqual(0f, animator.GetFloat("IsTalking"), "A Float parameter must never be written by a Bool binding.");
+        }
     }
 }
