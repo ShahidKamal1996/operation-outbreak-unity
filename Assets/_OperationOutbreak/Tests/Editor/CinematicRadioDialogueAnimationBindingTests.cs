@@ -1,7 +1,9 @@
+using System;
 using System.Collections.Generic;
 using System.Reflection;
 using NUnit.Framework;
 using OperationOutbreak.Cinematic;
+using TMPro;
 using UnityEditor;
 using UnityEditor.Animations;
 using UnityEngine;
@@ -13,36 +15,40 @@ namespace OperationOutbreak.Tests
     /// Tests for the optional speaker -> Animator talking bindings on
     /// <see cref="CinematicRadioDialogueController"/> — driven by fixed 60fps steps.
     ///
-    /// ASSERTION STRATEGY (QA fix #5 — deterministic seam, no more fixture guessing):
+    /// ASSERTION STRATEGY (QA fix #5/#7 — deterministic seam + real presentation window):
     ///
     /// The behavioral tests (1-6, 10) assert on the controller's binding DECISIONS through
     /// a recording override of the controller's protected virtual WriteTalkingParameter
-    /// seam — NOT on Animator parameter state readback. Every (animator, parameter, value)
-    /// write the binding logic makes is recorded; the assertions verify exactly which
-    /// speaker's parameter is set to which value at each lifecycle point (line start,
-    /// line finish, stop, restart, completion). That is the complete binding contract.
+    /// seam. Every (animator, parameter, value) write the binding logic makes is recorded;
+    /// the assertions verify exactly which speaker's parameter is set to which value at
+    /// each lifecycle point (line start, line finish, stop, restart, completion). That is
+    /// the complete binding contract.
     ///
-    /// Why not read Animator.GetBool back? The production path is correct, but an
-    /// INACTIVE EditMode Animator (Play Mode off) does not reliably expose or read back
-    /// runtime parameter state in the real Unity 6000.0.57f1 Test Runner. Two consecutive
-    /// fixture generations were proven against the real runner and both left written
-    /// values unobservable (no exceptions thrown; default-false readbacks worked):
-    ///   1. Code-only AnimatorController objects assigned to runtimeAnimatorController
-    ///      (parameters not exposed through Animator.parameters until the controller is a
-    ///      real asset) — written true values read back false.
-    ///   2. REAL .controller assets created on disk via AssetDatabase.CreateAsset with
-    ///      Animator.Update(0f) flushes before every read — STILL read back false.
-    /// Recording the seam captures the same decisions (same null/empty guards in the base
-    /// class, same per-line lifecycle, same speaker matching) without depending on that
-    /// unreadable path. The behavioral tests therefore use BARE animators — the recording
-    /// override never touches Animator state, so no controller asset is required there.
+    /// WHY THE FIXTURE MUST ASSIGN A TMP TEXT (QA fix #7 — the actual root cause of the
+    /// seven "expected true, but was false" failures):
+    /// A line's presentation window is max(text reveal duration, voice clip length). The
+    /// reveal duration exists only when a TMP text is assigned (canType requires
+    /// dialogueText != null); without a VoiceClip the voice gate is zero. These tests
+    /// create the controller with AddComponent and never assigned a TMP reference, so
+    /// PresentationNeed() was 0: every line STARTED (writing the matching speaker true)
+    /// and FINISHED (writing it false again, plus the completion reset) inside the very
+    /// first AdvanceSequence call. Every "mid-line expected true" assertion was therefore
+    /// correctly observing the post-completion state — false. This defect existed since
+    /// the first binding test; the QA #3/#4/#5 "Animator readback" theory was superseded
+    /// by the seam, which proved the recorded LAST write really was false at assertion
+    /// time. The fixture now assigns a real TextMeshProUGUI under a Canvas (exactly as
+    /// the sibling CinematicRadioDialogueControllerTests do), so the reveal durations the
+    /// test comments state ("0.5s reveal" = "Hello" @ 10 cps, etc.) genuinely exist.
+    ///
+    /// The behavioral tests use BARE animators: the recording override never touches
+    /// Animator state, so no controller asset is required there (and no dependence on
+    /// Animator parameter readback in an inactive EditMode Animator).
     ///
     /// The physical write GATE (missing animators, missing/empty parameter names, a
     /// same-name non-Bool parameter, and the empty-binding default) is verified by the
     /// safety tests (7-9, 11) through the BASE seam implementation with real temporary
-    /// .controller assets: their assertions expect only default values (false / 0f),
-    /// which an inactive Animator reads back reliably — plus the no-throw guarantee.
-    /// Together the two tiers cover the whole production path:
+    /// .controller assets: their assertions expect only default values (false / 0f) plus
+    /// the no-throw guarantee. Together the two tiers cover the whole production path:
     ///   binding decision (who/when/what) = recorded seam; physical write gate = base path.
     /// </summary>
     public sealed class CinematicRadioDialogueAnimationBindingTests
@@ -50,6 +56,7 @@ namespace OperationOutbreak.Tests
         private const string TempAssetRoot = "Assets/_OperationOutbreak/Tests/Editor/_TempDialogueTestAssets";
 
         private GameObject _go;
+        private GameObject _canvasGo;
         private readonly List<string> _tempAssetPaths = new List<string>();
 
         [SetUp]
@@ -69,6 +76,7 @@ namespace OperationOutbreak.Tests
                 var remaining = AssetDatabase.FindAssets("t:Asset", new[] { TempAssetRoot });
                 if (remaining.Length == 0) AssetDatabase.DeleteAsset(TempAssetRoot);
             }
+            if (_canvasGo != null) Object.DestroyImmediate(_canvasGo); // TMP texts created for the behavioral tests
             if (_go != null) Object.DestroyImmediate(_go); // destroys the child animator GameObjects too
         }
 
@@ -110,11 +118,42 @@ namespace OperationOutbreak.Tests
             }
         }
 
+        /// <summary>
+        /// Sets a private (possibly inherited) serialized field on the controller.
+        /// Hierarchy-walking is required: the behavioral tests use the RecordingDialogueController
+        /// subclass, and .NET GetField on a derived type does not return PRIVATE fields
+        /// declared on a base type — without the walk, "dialogueText" / "onSequenceCompleted"
+        /// (both private on CinematicRadioDialogueController) would not be found.
+        /// </summary>
+        private static void SetPrivate(object target, string field, object value)
+        {
+            Type t = target.GetType();
+            while (t != null)
+            {
+                var f = t.GetField(field, BindingFlags.NonPublic | BindingFlags.Instance);
+                if (f != null)
+                {
+                    f.SetValue(target, value);
+                    return;
+                }
+                t = t.BaseType;
+            }
+
+            Assert.Fail(field + " must exist on " + target.GetType().Name + ".");
+        }
+
         private static UnityEvent GetCompletionEvent(CinematicRadioDialogueController c)
         {
-            var f = c.GetType().GetField("onSequenceCompleted", BindingFlags.NonPublic | BindingFlags.Instance);
-            Assert.IsNotNull(f, "onSequenceCompleted must exist.");
-            return (UnityEvent)f.GetValue(c);
+            Type t = c.GetType();
+            while (t != null)
+            {
+                var f = t.GetField("onSequenceCompleted", BindingFlags.NonPublic | BindingFlags.Instance);
+                if (f != null) return (UnityEvent)f.GetValue(c);
+                t = t.BaseType;
+            }
+
+            Assert.Fail("onSequenceCompleted must exist.");
+            return null;
         }
 
         private static RadioDialogueLine MakeLine(string speaker, string text, float cps, float before, float after)
@@ -138,6 +177,24 @@ namespace OperationOutbreak.Tests
             var go = new GameObject(animatorGoName);
             go.transform.SetParent(_go.transform, false);
             return go.AddComponent<Animator>();
+        }
+
+        /// <summary>
+        /// Creates a TextMeshProUGUI under a (lazily created) Canvas — the same technique
+        /// the sibling CinematicRadioDialogueControllerTests use. A TMP text reference is
+        /// what gives the dialogue lines their real typewriter presentation window in the
+        /// tests (see class note); without it every line completes in the first frame.
+        /// </summary>
+        private TMP_Text CreateTmpText(string name)
+        {
+            if (_canvasGo == null)
+            {
+                _canvasGo = new GameObject("Canvas");
+                _canvasGo.AddComponent<Canvas>();
+            }
+            var go = new GameObject(name);
+            go.transform.SetParent(_canvasGo.transform, false);
+            return go.AddComponent<TextMeshProUGUI>();
         }
 
         /// <summary>
@@ -213,6 +270,7 @@ namespace OperationOutbreak.Tests
             var c = _go.AddComponent<RecordingDialogueController>();
             c.SetSpeakerAnimationBindings(new[] { MakeBinding("Kane", kane) });
             c.SetDialogueLines(new[] { MakeLine("Kane", "Hello", 10f, 0f, 0f) }); // 0.5s reveal
+            SetPrivate(c, "dialogueText", CreateTmpText("Dialogue")); // real presentation window (see class note)
 
             Assert.AreEqual(0, c.Writes.Count, "Kane must idle by default: no talking parameter may be written before the sequence.");
 
@@ -231,6 +289,7 @@ namespace OperationOutbreak.Tests
             var c = _go.AddComponent<RecordingDialogueController>();
             c.SetSpeakerAnimationBindings(new[] { MakeBinding("Kane", kane), MakeBinding("Reyes", reyes) });
             c.SetDialogueLines(new[] { MakeLine("Reyes", "Silent", 10f, 0f, 0.1f) }); // 0.6s reveal
+            SetPrivate(c, "dialogueText", CreateTmpText("Dialogue")); // real presentation window (see class note)
 
             c.PlaySequence();
             Step(c, 0.2f); // mid Reyes line
@@ -247,6 +306,7 @@ namespace OperationOutbreak.Tests
             var c = _go.AddComponent<RecordingDialogueController>();
             c.SetSpeakerAnimationBindings(new[] { MakeBinding("Kane", kane) });
             c.SetDialogueLines(new[] { MakeLine("Kane", "Hello", 10f, 0f, 0f) }); // 0.5s reveal, no after-delay
+            SetPrivate(c, "dialogueText", CreateTmpText("Dialogue")); // real presentation window (see class note)
 
             c.PlaySequence();
             Step(c, 0.1f);
@@ -266,6 +326,7 @@ namespace OperationOutbreak.Tests
             var c = _go.AddComponent<RecordingDialogueController>();
             c.SetSpeakerAnimationBindings(new[] { MakeBinding("Kane", kane) });
             c.SetDialogueLines(new[] { MakeLine("Kane", "AAAAAAAAAA", 10f, 0f, 0f) }); // 1.0s presentation
+            SetPrivate(c, "dialogueText", CreateTmpText("Dialogue")); // real presentation window (see class note)
 
             c.PlaySequence();
             Step(c, 0.5f); // mid presentation
@@ -284,6 +345,7 @@ namespace OperationOutbreak.Tests
             var c = _go.AddComponent<RecordingDialogueController>();
             c.SetSpeakerAnimationBindings(new[] { MakeBinding("Kane", kane) });
             c.SetDialogueLines(new[] { MakeLine("Kane", "AAAAAAAAAA", 10f, 0f, 0f) }); // 1.0s presentation
+            SetPrivate(c, "dialogueText", CreateTmpText("Dialogue")); // real presentation window (see class note)
 
             c.PlaySequence();
             Step(c, 0.5f);
@@ -314,6 +376,7 @@ namespace OperationOutbreak.Tests
                 MakeLine("Kane", "AB", 10f, 0f, 0.2f),
                 MakeLine("Raven", "CD", 10f, 0f, 0.2f),
             });
+            SetPrivate(c, "dialogueText", CreateTmpText("Dialogue")); // real presentation window (see class note)
             int completed = 0;
             GetCompletionEvent(c).AddListener(() => completed++);
 
@@ -406,6 +469,7 @@ namespace OperationOutbreak.Tests
                 MakeLine("Reyes", "Hi", 10f, 0f, 0.2f), // 0.2s reveal + 0.2s after = 0.4s
                 MakeLine("Kane", "Yo", 10f, 0f, 0f),
             });
+            SetPrivate(c, "dialogueText", CreateTmpText("Dialogue")); // real presentation window (see class note)
 
             c.PlaySequence();
             Step(c, 0.1f); // mid Reyes line
