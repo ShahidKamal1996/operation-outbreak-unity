@@ -76,8 +76,8 @@ namespace OperationOutbreak.Tests
                 var remaining = AssetDatabase.FindAssets("t:Asset", new[] { TempAssetRoot });
                 if (remaining.Length == 0) AssetDatabase.DeleteAsset(TempAssetRoot);
             }
-            if (_canvasGo != null) Object.DestroyImmediate(_canvasGo); // TMP texts created for the behavioral tests
-            if (_go != null) Object.DestroyImmediate(_go); // destroys the child animator GameObjects too
+            if (_canvasGo != null) UnityEngine.Object.DestroyImmediate(_canvasGo); // TMP texts created for the behavioral tests
+            if (_go != null) UnityEngine.Object.DestroyImmediate(_go); // destroys the child animator GameObjects too
         }
 
         /// <summary>
