@@ -89,7 +89,7 @@ namespace OperationOutbreak.Tests
 
             public readonly List<Write> Writes = new List<Write>();
 
-            public override void WriteTalkingParameter(Animator animator, string parameter, bool value)
+            protected override void WriteTalkingParameter(Animator animator, string parameter, bool value)
             {
                 Writes.Add(new Write { Animator = animator, Parameter = parameter, Value = value });
             }
