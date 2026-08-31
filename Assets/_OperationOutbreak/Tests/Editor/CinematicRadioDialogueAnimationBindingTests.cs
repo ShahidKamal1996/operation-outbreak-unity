@@ -13,14 +13,37 @@ namespace OperationOutbreak.Tests
     /// Tests for the optional speaker -> Animator talking bindings on
     /// <see cref="CinematicRadioDialogueController"/> — driven by fixed 60fps steps.
     ///
-    /// FIXTURE NOTE (QA fix #3): a <c>new AnimatorController()</c> created purely in code and
-    /// assigned to <c>runtimeAnimatorController</c> during EditMode execution does not expose
-    /// its parameters through <c>Animator.parameters</c> (the controller has no properly
-    /// initialized native representation until it is a real asset), so the production
-    /// HasBoolParameter gate correctly found no parameter and the talking bool was never
-    /// driven. The fixture therefore builds each test controller as a REAL temporary
-    /// .controller asset (AssetDatabase.CreateAsset) — exactly the production shape (a
-    /// controller asset with a bool parameter) — and deletes the assets in TearDown.
+    /// ASSERTION STRATEGY (QA fix #5 — deterministic seam, no more fixture guessing):
+    ///
+    /// The behavioral tests (1-6, 10) assert on the controller's binding DECISIONS through
+    /// a recording override of the controller's protected virtual WriteTalkingParameter
+    /// seam — NOT on Animator parameter state readback. Every (animator, parameter, value)
+    /// write the binding logic makes is recorded; the assertions verify exactly which
+    /// speaker's parameter is set to which value at each lifecycle point (line start,
+    /// line finish, stop, restart, completion). That is the complete binding contract.
+    ///
+    /// Why not read Animator.GetBool back? The production path is correct, but an
+    /// INACTIVE EditMode Animator (Play Mode off) does not reliably expose or read back
+    /// runtime parameter state in the real Unity 6000.0.57f1 Test Runner. Two consecutive
+    /// fixture generations were proven against the real runner and both left written
+    /// values unobservable (no exceptions thrown; default-false readbacks worked):
+    ///   1. Code-only AnimatorController objects assigned to runtimeAnimatorController
+    ///      (parameters not exposed through Animator.parameters until the controller is a
+    ///      real asset) — written true values read back false.
+    ///   2. REAL .controller assets created on disk via AssetDatabase.CreateAsset with
+    ///      Animator.Update(0f) flushes before every read — STILL read back false.
+    /// Recording the seam captures the same decisions (same null/empty guards in the base
+    /// class, same per-line lifecycle, same speaker matching) without depending on that
+    /// unreadable path. The behavioral tests therefore use BARE animators — the recording
+    /// override never touches Animator state, so no controller asset is required there.
+    ///
+    /// The physical write GATE (missing animators, missing/empty parameter names, a
+    /// same-name non-Bool parameter, and the empty-binding default) is verified by the
+    /// safety tests (7-9, 11) through the BASE seam implementation with real temporary
+    /// .controller assets: their assertions expect only default values (false / 0f),
+    /// which an inactive Animator reads back reliably — plus the no-throw guarantee.
+    /// Together the two tiers cover the whole production path:
+    ///   binding decision (who/when/what) = recorded seam; physical write gate = base path.
     /// </summary>
     public sealed class CinematicRadioDialogueAnimationBindingTests
     {
@@ -49,6 +72,44 @@ namespace OperationOutbreak.Tests
             if (_go != null) Object.DestroyImmediate(_go); // destroys the child animator GameObjects too
         }
 
+        /// <summary>
+        /// Records the physical parameter writes the controller's binding logic decides to
+        /// make (the WriteTalkingParameter seam). The production implementation is not
+        /// bypassed for anything BEFORE the seam: the null-animator / empty-parameter
+        /// guards stay in the base class and run in every test that uses this subclass.
+        /// </summary>
+        private sealed class RecordingDialogueController : CinematicRadioDialogueController
+        {
+            public sealed class Write
+            {
+                public Animator Animator;
+                public string Parameter;
+                public bool Value;
+            }
+
+            public readonly List<Write> Writes = new List<Write>();
+
+            public override void WriteTalkingParameter(Animator animator, string parameter, bool value)
+            {
+                Writes.Add(new Write { Animator = animator, Parameter = parameter, Value = value });
+            }
+
+            /// <summary>
+            /// Value of the most recent write for (animator, parameter); false when the pair
+            /// was never written — exactly matching a Bool parameter's default Animator state.
+            /// </summary>
+            public bool LastValue(Animator animator, string parameter)
+            {
+                for (int i = Writes.Count - 1; i >= 0; i--)
+                {
+                    if (Writes[i].Animator == animator && Writes[i].Parameter == parameter)
+                        return Writes[i].Value;
+                }
+
+                return false;
+            }
+        }
+
         private static UnityEvent GetCompletionEvent(CinematicRadioDialogueController c)
         {
             var f = c.GetType().GetField("onSequenceCompleted", BindingFlags.NonPublic | BindingFlags.Instance);
@@ -69,9 +130,21 @@ namespace OperationOutbreak.Tests
         }
 
         /// <summary>
+        /// Bare animator for the recording tests: the recording override never touches
+        /// Animator state, so no controller asset is required.
+        /// </summary>
+        private Animator CreateBareAnimator(string animatorGoName)
+        {
+            var go = new GameObject(animatorGoName);
+            go.transform.SetParent(_go.transform, false);
+            return go.AddComponent<Animator>();
+        }
+
+        /// <summary>
         /// Builds a REAL temporary .controller asset with the given parameters. A real asset is
-        /// required: only then does the Animator's native side expose the parameters in EditMode
-        /// (a code-only AnimatorController does not — see class note).
+        /// required for the safety tests: only then does the Animator's native side expose the
+        /// parameters in EditMode (a code-only AnimatorController does not), so the base
+        /// HasBoolParameter gate can be exercised against real parameter data.
         /// </summary>
         private AnimatorController CreateControllerAsset(string assetName, params (string Name, AnimatorControllerParameterType Type)[] parameters)
         {
@@ -115,9 +188,9 @@ namespace OperationOutbreak.Tests
         }
 
         /// <summary>
-        /// EditMode-safe parameter read: flush any pending parameter state first (no-op in play
-        /// mode), then read. The production writes go through Animator.SetBool; this mirrors how
-        /// the editor's Animation window makes parameter state observable outside a play loop.
+        /// EditMode-safe parameter read (safety tests only): flush any pending parameter
+        /// state first (no-op in play mode), then read. These tests assert only default
+        /// values (false / 0f), which an inactive Animator reads back reliably.
         /// </summary>
         private static bool ReadBool(Animator animator, string parameter)
         {
@@ -136,17 +209,16 @@ namespace OperationOutbreak.Tests
         [Test]
         public void MatchingKaneLineSetsIsTalkingTrue()
         {
-            var kane = CreateAnimatorWithParams("KaneAnimator", "KaneTalking",
-                ("IsTalking", AnimatorControllerParameterType.Bool));
-            var c = _go.AddComponent<CinematicRadioDialogueController>();
+            var kane = CreateBareAnimator("KaneAnimator");
+            var c = _go.AddComponent<RecordingDialogueController>();
             c.SetSpeakerAnimationBindings(new[] { MakeBinding("Kane", kane) });
             c.SetDialogueLines(new[] { MakeLine("Kane", "Hello", 10f, 0f, 0f) }); // 0.5s reveal
 
-            Assert.IsFalse(ReadBool(kane, "IsTalking"), "Kane must idle by default (before the sequence).");
+            Assert.AreEqual(0, c.Writes.Count, "Kane must idle by default: no talking parameter may be written before the sequence.");
 
             c.PlaySequence();
             Step(c, 0.1f); // mid line 0 (inside the 0.5s presentation)
-            Assert.IsTrue(ReadBool(kane, "IsTalking"), "A matching Kane line must set IsTalking true at line start.");
+            Assert.IsTrue(c.LastValue(kane, "IsTalking"), "A matching Kane line must set IsTalking true at line start.");
         }
 
         // ---- 2. non-matching lines never activate the bound speaker ----
@@ -154,18 +226,16 @@ namespace OperationOutbreak.Tests
         [Test]
         public void NonKaneLinesDoNotActivateKane()
         {
-            var kane = CreateAnimatorWithParams("KaneAnimator", "KaneTalking",
-                ("IsTalking", AnimatorControllerParameterType.Bool));
-            var reyes = CreateAnimatorWithParams("ReyesAnimator", "ReyesTalking",
-                ("IsTalking", AnimatorControllerParameterType.Bool));
-            var c = _go.AddComponent<CinematicRadioDialogueController>();
+            var kane = CreateBareAnimator("KaneAnimator");
+            var reyes = CreateBareAnimator("ReyesAnimator");
+            var c = _go.AddComponent<RecordingDialogueController>();
             c.SetSpeakerAnimationBindings(new[] { MakeBinding("Kane", kane), MakeBinding("Reyes", reyes) });
             c.SetDialogueLines(new[] { MakeLine("Reyes", "Silent", 10f, 0f, 0.1f) }); // 0.6s reveal
 
             c.PlaySequence();
             Step(c, 0.2f); // mid Reyes line
-            Assert.IsTrue(ReadBool(reyes, "IsTalking"), "The matching Reyes line must activate the Reyes binding.");
-            Assert.IsFalse(ReadBool(kane, "IsTalking"), "A Reyes line must NOT activate Kane's talking gesture.");
+            Assert.IsTrue(c.LastValue(reyes, "IsTalking"), "The matching Reyes line must activate the Reyes binding.");
+            Assert.IsFalse(c.LastValue(kane, "IsTalking"), "A Reyes line must NOT activate Kane's talking gesture.");
         }
 
         // ---- 3. finishing the line resets the bool false ----
@@ -173,19 +243,18 @@ namespace OperationOutbreak.Tests
         [Test]
         public void FinishingKaneLineResetsIsTalkingFalse()
         {
-            var kane = CreateAnimatorWithParams("KaneAnimator", "KaneTalking",
-                ("IsTalking", AnimatorControllerParameterType.Bool));
-            var c = _go.AddComponent<CinematicRadioDialogueController>();
+            var kane = CreateBareAnimator("KaneAnimator");
+            var c = _go.AddComponent<RecordingDialogueController>();
             c.SetSpeakerAnimationBindings(new[] { MakeBinding("Kane", kane) });
             c.SetDialogueLines(new[] { MakeLine("Kane", "Hello", 10f, 0f, 0f) }); // 0.5s reveal, no after-delay
 
             c.PlaySequence();
             Step(c, 0.1f);
-            Assert.IsTrue(ReadBool(kane, "IsTalking"), "Sanity: mid-line the gesture must be active.");
+            Assert.IsTrue(c.LastValue(kane, "IsTalking"), "Sanity: mid-line the gesture must be active.");
 
             Step(c, 0.5f); // t = 0.6s >= 0.5s -> line finished
             Assert.IsTrue(c.IsComplete, "The single-line sequence must be complete.");
-            Assert.IsFalse(ReadBool(kane, "IsTalking"), "IsTalking must be false as soon as the Kane line finishes.");
+            Assert.IsFalse(c.LastValue(kane, "IsTalking"), "IsTalking must be false as soon as the Kane line finishes.");
         }
 
         // ---- 4. StopSequence resets false ----
@@ -193,18 +262,17 @@ namespace OperationOutbreak.Tests
         [Test]
         public void StopSequenceResetsIsTalkingFalse()
         {
-            var kane = CreateAnimatorWithParams("KaneAnimator", "KaneTalking",
-                ("IsTalking", AnimatorControllerParameterType.Bool));
-            var c = _go.AddComponent<CinematicRadioDialogueController>();
+            var kane = CreateBareAnimator("KaneAnimator");
+            var c = _go.AddComponent<RecordingDialogueController>();
             c.SetSpeakerAnimationBindings(new[] { MakeBinding("Kane", kane) });
             c.SetDialogueLines(new[] { MakeLine("Kane", "AAAAAAAAAA", 10f, 0f, 0f) }); // 1.0s presentation
 
             c.PlaySequence();
             Step(c, 0.5f); // mid presentation
-            Assert.IsTrue(ReadBool(kane, "IsTalking"), "Sanity: mid-presentation the gesture must be active.");
+            Assert.IsTrue(c.LastValue(kane, "IsTalking"), "Sanity: mid-presentation the gesture must be active.");
 
             c.StopSequence();
-            Assert.IsFalse(ReadBool(kane, "IsTalking"), "StopSequence must immediately reset IsTalking false.");
+            Assert.IsFalse(c.LastValue(kane, "IsTalking"), "StopSequence must immediately reset IsTalking false.");
         }
 
         // ---- 5. RestartSequence resets state correctly ----
@@ -212,25 +280,24 @@ namespace OperationOutbreak.Tests
         [Test]
         public void RestartSequenceResetsStateCorrectly()
         {
-            var kane = CreateAnimatorWithParams("KaneAnimator", "KaneTalking",
-                ("IsTalking", AnimatorControllerParameterType.Bool));
-            var c = _go.AddComponent<CinematicRadioDialogueController>();
+            var kane = CreateBareAnimator("KaneAnimator");
+            var c = _go.AddComponent<RecordingDialogueController>();
             c.SetSpeakerAnimationBindings(new[] { MakeBinding("Kane", kane) });
             c.SetDialogueLines(new[] { MakeLine("Kane", "AAAAAAAAAA", 10f, 0f, 0f) }); // 1.0s presentation
 
             c.PlaySequence();
             Step(c, 0.5f);
-            Assert.IsTrue(ReadBool(kane, "IsTalking"), "Sanity: mid-presentation the gesture must be active.");
+            Assert.IsTrue(c.LastValue(kane, "IsTalking"), "Sanity: mid-presentation the gesture must be active.");
 
             c.RestartSequence();
-            Assert.IsFalse(ReadBool(kane, "IsTalking"), "RestartSequence must reset IsTalking false immediately (before the next frame).");
+            Assert.IsFalse(c.LastValue(kane, "IsTalking"), "RestartSequence must reset IsTalking false immediately (before the next frame).");
 
             Step(c, 1f / 60f); // line 0 (Kane) re-presents
-            Assert.IsTrue(ReadBool(kane, "IsTalking"), "After the restart, the Kane line must drive the gesture again.");
+            Assert.IsTrue(c.LastValue(kane, "IsTalking"), "After the restart, the Kane line must drive the gesture again.");
 
             Step(c, 1f);
             Assert.IsTrue(c.IsComplete, "The restarted sequence must still complete naturally.");
-            Assert.IsFalse(ReadBool(kane, "IsTalking"), "After natural completion the gesture must be off.");
+            Assert.IsFalse(c.LastValue(kane, "IsTalking"), "After natural completion the gesture must be off.");
         }
 
         // ---- 6. sequence completion resets false ----
@@ -238,11 +305,9 @@ namespace OperationOutbreak.Tests
         [Test]
         public void SequenceCompletionResetsIsTalkingFalse()
         {
-            var kane = CreateAnimatorWithParams("KaneAnimator", "KaneTalking",
-                ("IsTalking", AnimatorControllerParameterType.Bool));
-            var raven = CreateAnimatorWithParams("RavenAnimator", "RavenTalking",
-                ("IsTalking", AnimatorControllerParameterType.Bool));
-            var c = _go.AddComponent<CinematicRadioDialogueController>();
+            var kane = CreateBareAnimator("KaneAnimator");
+            var raven = CreateBareAnimator("RavenAnimator");
+            var c = _go.AddComponent<RecordingDialogueController>();
             c.SetSpeakerAnimationBindings(new[] { MakeBinding("Kane", kane), MakeBinding("Raven", raven) });
             c.SetDialogueLines(new[]
             {
@@ -254,14 +319,14 @@ namespace OperationOutbreak.Tests
 
             c.PlaySequence();
             Step(c, 0.1f); // mid Kane line (inside the 0.2s reveal)
-            Assert.IsTrue(ReadBool(kane, "IsTalking"), "Sanity: Kane gesture active on his line.");
-            Assert.IsFalse(ReadBool(raven, "IsTalking"), "Sanity: Raven gesture off on Kane's line.");
+            Assert.IsTrue(c.LastValue(kane, "IsTalking"), "Sanity: Kane gesture active on his line.");
+            Assert.IsFalse(c.LastValue(raven, "IsTalking"), "Sanity: Raven gesture off on Kane's line.");
 
             Step(c, 2f); // full run completes (~0.8s)
             Assert.IsTrue(c.IsComplete, "The sequence must complete.");
             Assert.AreEqual(1, completed, "Exactly one completion event.");
-            Assert.IsFalse(ReadBool(kane, "IsTalking"), "Completion must reset the Kane gesture off.");
-            Assert.IsFalse(ReadBool(raven, "IsTalking"), "Completion must reset the Raven gesture off.");
+            Assert.IsFalse(c.LastValue(kane, "IsTalking"), "Completion must reset the Kane gesture off.");
+            Assert.IsFalse(c.LastValue(raven, "IsTalking"), "Completion must reset the Raven gesture off.");
         }
 
         // ---- 7. missing animator is safe ----
@@ -332,11 +397,9 @@ namespace OperationOutbreak.Tests
         [Test]
         public void LineStartClearsOtherBoundSpeakers()
         {
-            var kane = CreateAnimatorWithParams("KaneAnimator", "KaneTalking",
-                ("IsTalking", AnimatorControllerParameterType.Bool));
-            var reyes = CreateAnimatorWithParams("ReyesAnimator", "ReyesTalking",
-                ("IsTalking", AnimatorControllerParameterType.Bool));
-            var c = _go.AddComponent<CinematicRadioDialogueController>();
+            var kane = CreateBareAnimator("KaneAnimator");
+            var reyes = CreateBareAnimator("ReyesAnimator");
+            var c = _go.AddComponent<RecordingDialogueController>();
             c.SetSpeakerAnimationBindings(new[] { MakeBinding("Kane", kane), MakeBinding("Reyes", reyes) });
             c.SetDialogueLines(new[]
             {
@@ -346,12 +409,12 @@ namespace OperationOutbreak.Tests
 
             c.PlaySequence();
             Step(c, 0.1f); // mid Reyes line
-            Assert.IsTrue(ReadBool(reyes, "IsTalking"), "Reyes gesture must be active on his line.");
-            Assert.IsFalse(ReadBool(kane, "IsTalking"), "Kane gesture must be off on Reyes' line.");
+            Assert.IsTrue(c.LastValue(reyes, "IsTalking"), "Reyes gesture must be active on his line.");
+            Assert.IsFalse(c.LastValue(kane, "IsTalking"), "Kane gesture must be off on Reyes' line.");
 
             Step(c, 0.4f); // t = 0.5s: Reyes line ended at 0.4s, Kane line now presenting
-            Assert.IsTrue(ReadBool(kane, "IsTalking"), "Kane gesture must be active once his line begins.");
-            Assert.IsFalse(ReadBool(reyes, "IsTalking"),
+            Assert.IsTrue(c.LastValue(kane, "IsTalking"), "Kane gesture must be active once his line begins.");
+            Assert.IsFalse(c.LastValue(reyes, "IsTalking"),
                 "The previous speaker must be off once the new line begins (line-end + line-start clears).");
         }
 

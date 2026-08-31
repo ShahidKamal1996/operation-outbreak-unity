@@ -106,7 +106,9 @@ namespace OperationOutbreak.Cinematic
     /// everything resets to false on stop/restart/natural completion. Missing animators,
     /// missing parameter names, and parameters absent from the Animator are skipped safely.
     /// With an empty binding list (the default) the controller behaves exactly as before —
-    /// no animation is driven.
+    /// no animation is driven. The physical parameter write is isolated in the protected
+    /// virtual WriteTalkingParameter seam so editor tests can record the binding decisions
+    /// deterministically (the class is therefore not sealed).
     ///
     /// SCOPE: dialogue / voice / transmission SFX (+ optional speaker talking gestures).
     /// Helicopter ambience, scene transitions, skipping, branching, localization, and
@@ -114,7 +116,7 @@ namespace OperationOutbreak.Cinematic
     /// </summary>
     [DisallowMultipleComponent]
     [AddComponentMenu("Operation Outbreak/Cinematic/Cinematic Radio Dialogue Controller")]
-    public sealed class CinematicRadioDialogueController : MonoBehaviour
+    public class CinematicRadioDialogueController : MonoBehaviour
     {
         private enum Phase { WaitingBefore, Presenting, WaitingAfter }
 
@@ -460,16 +462,31 @@ namespace OperationOutbreak.Cinematic
 
         /// <summary>
         /// Null- and error-safe parameter write: missing animators, missing/empty parameter
-        /// names, and parameters that do not exist on the Animator (or are not Bool) are all
-        /// skipped silently.
+        /// names are skipped here; parameter existence/type validation and the physical write
+        /// are delegated to the <see cref="WriteTalkingParameter"/> seam.
         /// </summary>
-        private static void SetBindingBool(SpeakerAnimationBinding binding, bool talking)
+        private void SetBindingBool(SpeakerAnimationBinding binding, bool talking)
         {
             var animator = binding.animator;
             string parameter = binding.TalkingParameter;
             if (animator == null || string.IsNullOrEmpty(parameter)) return;
+            WriteTalkingParameter(animator, parameter, talking);
+        }
+
+        /// <summary>
+        /// The physical write of the talking parameter to a speaker Animator — the testable
+        /// seam for the binding's final act. The production implementation performs the final
+        /// parameter existence/type validation and calls Animator.SetBool (a standard,
+        /// verified Unity API). Editor tests override this to record the (animator,
+        /// parameter, value) decisions deterministically, because an inactive EditMode
+        /// Animator does not reliably expose or read back parameter state (two fixture
+        /// generations — code-only controllers, then real temporary .controller assets —
+        /// both left written values unobservable in the real Unity Test Runner).
+        /// </summary>
+        protected virtual void WriteTalkingParameter(Animator animator, string parameter, bool value)
+        {
             if (!HasBoolParameter(animator, parameter)) return;
-            animator.SetBool(parameter, talking);
+            animator.SetBool(parameter, value);
         }
 
         /// <summary>
