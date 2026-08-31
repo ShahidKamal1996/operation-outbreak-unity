@@ -37,6 +37,27 @@ namespace OperationOutbreak.Cinematic
     }
 
     /// <summary>
+    /// Binds a dialogue speaker to a character Animator talking gesture (e.g., a seated
+    /// soldier's `IsTalking` bool). When a dialogue line whose SpeakerName EXACTLY matches
+    /// SpeakerName begins, the Animator's talking bool is set true for the duration of that
+    /// line's presentation (text + voice window) and set false as soon as the line finishes;
+    /// non-matching bound animators are forced false at line start; everything resets to
+    /// false on stop/restart/natural completion.
+    /// </summary>
+    [Serializable]
+    public sealed class SpeakerAnimationBinding
+    {
+        [Tooltip("Must exactly match the dialogue line's SpeakerName (case-sensitive).")]
+        public string SpeakerName = "";
+
+        [Tooltip("The character Animator driving the talking gesture. May be null (skipped safely).")]
+        public Animator animator;
+
+        [Tooltip("Animator bool parameter for the talking state.")]
+        public string TalkingParameter = "IsTalking";
+    }
+
+    /// <summary>
     /// Reusable cinematic radio dialogue foundation: speaker name display, typewriter subtitle
     /// reveal, voice playback, optional radio-open SFX, and deterministic line sequencing.
     ///
@@ -76,9 +97,20 @@ namespace OperationOutbreak.Cinematic
     /// invokes OnSequenceCompleted. RestartSequence() = Stop + Play from line 0. Repeated
     /// PlaySequence() calls stop the active run first, so sequences can never overlap.
     ///
-    /// SCOPE: dialogue / voice / transmission SFX only. Helicopter ambience, scene transitions,
-    /// skipping, branching, localization, and lip sync are intentionally NOT part of this
-    /// foundation.
+    /// SPEAKER ANIMATION BINDINGS (optional)
+    /// --------------------------------------
+    /// SpeakerAnimationBinding entries map a speaker name to a character Animator bool
+    /// parameter (default name: IsTalking). While a matching line's presentation (text +
+    /// voice window) is active the bound talking bool is true; it is set false as soon as
+    /// the line finishes, non-matching bound animators are forced false at line start, and
+    /// everything resets to false on stop/restart/natural completion. Missing animators,
+    /// missing parameter names, and parameters absent from the Animator are skipped safely.
+    /// With an empty binding list (the default) the controller behaves exactly as before —
+    /// no animation is driven.
+    ///
+    /// SCOPE: dialogue / voice / transmission SFX (+ optional speaker talking gestures).
+    /// Helicopter ambience, scene transitions, skipping, branching, localization, and
+    /// lip sync are intentionally NOT part of this foundation.
     /// </summary>
     [DisallowMultipleComponent]
     [AddComponentMenu("Operation Outbreak/Cinematic/Cinematic Radio Dialogue Controller")]
@@ -108,6 +140,10 @@ namespace OperationOutbreak.Cinematic
 
         [Tooltip("Dialogue lines, played in order. Assign the imported voice/SFX clips here in the Inspector.")]
         [SerializeField] private RadioDialogueLine[] dialogueLines = new RadioDialogueLine[0];
+
+        [Tooltip("Optional speaker -> character Animator talking bindings. Empty (the default) preserves " +
+                 "the previous behavior exactly: no animation is driven at all.")]
+        [SerializeField] private SpeakerAnimationBinding[] speakerAnimationBindings = new SpeakerAnimationBinding[0];
 
         [Tooltip("Invoked exactly once when the sequence completes naturally (never from StopSequence).")]
         [SerializeField] private UnityEvent onSequenceCompleted = new UnityEvent();
@@ -148,6 +184,15 @@ namespace OperationOutbreak.Cinematic
         public void SetDialogueLines(RadioDialogueLine[] lines)
         {
             dialogueLines = lines ?? new RadioDialogueLine[0];
+        }
+
+        /// <summary>
+        /// Replaces the speaker -> Animator talking bindings (kept as given). Null clears them
+        /// (previous behavior: no animation driven). Call before PlaySequence to reconfigure.
+        /// </summary>
+        public void SetSpeakerAnimationBindings(SpeakerAnimationBinding[] bindings)
+        {
+            speakerAnimationBindings = bindings ?? new SpeakerAnimationBinding[0];
         }
 
         /// <summary>
@@ -221,6 +266,7 @@ namespace OperationOutbreak.Cinematic
                                 // the EXACT remaining time into the after-delay.
                                 CompletePresenting();
                                 _typing = false;
+                                EndSpeakerBindingForLine(LineAt(_lineIndex)); // this line finished -> its speaker goes idle
                                 t -= need;
                                 _phase = Phase.WaitingAfter;
                                 _phaseTimeRemaining = Mathf.Max(0f, LineAt(_lineIndex) != null ? LineAt(_lineIndex).DelayAfterLine : 0f);
@@ -292,6 +338,10 @@ namespace OperationOutbreak.Cinematic
             _revealProgress = 0f;
             _typing = canType;
             _phase = Phase.Presenting;
+
+            // Line presentation is starting: the matching speaker's talking gesture goes on,
+            // every other bound speaker's goes off.
+            StartSpeakerBindingForLine(line);
         }
 
         private void AdvancePresenting(float t)
@@ -349,6 +399,7 @@ namespace OperationOutbreak.Cinematic
 
             if (voiceAudioSource != null) voiceAudioSource.Stop();
             if (sfxAudioSource != null) sfxAudioSource.Stop();
+            ResetSpeakerBindings();
         }
 
         private void CompleteSequence()
@@ -357,7 +408,67 @@ namespace OperationOutbreak.Cinematic
             _typing = false;
             _complete = true;
             _lineIndex = -1;
+            ResetSpeakerBindings();
             if (onSequenceCompleted != null) onSequenceCompleted.Invoke();
+        }
+
+        // ===================================================================== speaker animation bindings
+
+        /// <summary>
+        /// Line presentation starting: the matching bound speaker's talking bool goes true and
+        /// every non-matching bound speaker's goes false (so the previous line's speaker is
+        /// always cleared, even mid-voice). No-op when no bindings are configured.
+        /// </summary>
+        private void StartSpeakerBindingForLine(RadioDialogueLine line)
+        {
+            if (speakerAnimationBindings == null || speakerAnimationBindings.Length == 0) return;
+            string speaker = line != null ? line.SpeakerName : "";
+            foreach (var binding in speakerAnimationBindings)
+            {
+                if (binding == null || binding.animator == null) continue;
+                bool isMatch = !string.IsNullOrEmpty(binding.SpeakerName)
+                               && string.Equals(speaker, binding.SpeakerName, StringComparison.Ordinal);
+                SetBindingBool(binding, isMatch);
+            }
+        }
+
+        /// <summary>
+        /// Line presentation finished: the line's own bound speaker (if any) goes idle.
+        /// </summary>
+        private void EndSpeakerBindingForLine(RadioDialogueLine line)
+        {
+            if (speakerAnimationBindings == null || line == null) return;
+            string speaker = line.SpeakerName;
+            foreach (var binding in speakerAnimationBindings)
+            {
+                if (binding == null || binding.animator == null) continue;
+                if (string.Equals(speaker, binding.SpeakerName, StringComparison.Ordinal))
+                    SetBindingBool(binding, false);
+            }
+        }
+
+        /// <summary>Sets every bound talking bool to false (stop/restart/natural completion).</summary>
+        private void ResetSpeakerBindings()
+        {
+            if (speakerAnimationBindings == null) return;
+            foreach (var binding in speakerAnimationBindings)
+            {
+                if (binding == null || binding.animator == null) continue;
+                SetBindingBool(binding, false);
+            }
+        }
+
+        /// <summary>
+        /// Null- and error-safe parameter write: missing animators, missing/empty parameter
+        /// names, and parameters that do not exist on the Animator are all skipped silently.
+        /// </summary>
+        private static void SetBindingBool(SpeakerAnimationBinding binding, bool talking)
+        {
+            var animator = binding.animator;
+            string parameter = binding.TalkingParameter;
+            if (animator == null || string.IsNullOrEmpty(parameter)) return;
+            if (!animator.HasBool(parameter)) return;
+            animator.SetBool(parameter, talking);
         }
 
         // ===================================================================== helpers
