@@ -506,6 +506,226 @@ namespace OperationOutbreak.Tests
             Assert.Greater(flight.DistanceTravelled, 10f, "Cruise must have accumulated forward distance.");
         }
 
+        // ---- Airborne start mode (optional, default OFF) ----
+        // startAirborne = true begins the run ALREADY in forward/cruise flight from the
+        // authored transform: no ground idle, no vertical lift, no takeoff pitch, no takeoff
+        // acceleration staging. The shared movement path (cruise speed, capped gentle rise,
+        // straight travel) is unchanged.
+
+        [Test]
+        public void DefaultModeRemainsExistingTakeoffBehavior()
+        {
+            const System.Reflection.BindingFlags F =
+                System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance;
+
+            _root.transform.position = Vector3.zero;
+            var flight = _root.AddComponent<CinematicHelicopterFlight>();
+
+            var field = typeof(CinematicHelicopterFlight).GetField("startAirborne", F);
+            Assert.IsNotNull(field, "The startAirborne field must be serialized (Inspector opt-in).");
+            Assert.IsFalse((bool)field.GetValue(flight),
+                "startAirborne must default to FALSE so existing scenes keep the takeoff behavior.");
+            Assert.IsFalse(flight.StartAirborne, "The public StartAirborne view must default to false.");
+
+            // The default component must still run the exact 4-phase takeoff, untouched timings.
+            Simulate(flight, 1.2f); // exact GroundIdle window
+            Assert.AreEqual(FlightPhase.GroundIdle, flight.CurrentPhase);
+            Assert.AreEqual(0f, flight.DistanceTravelled, 1e-4f, "No forward distance during GroundIdle.");
+            Assert.AreEqual(0f, flight.HeightGained, 1e-4f, "No rise during GroundIdle.");
+
+            Simulate(flight, 1.8f); // t = 3.0s: VerticalLift complete
+            Assert.AreEqual(FlightPhase.VerticalLift, flight.CurrentPhase);
+            Assert.AreEqual(1.75f, flight.HeightGained, 0.01f, "Lift must reach initialLiftHeight.");
+            Assert.AreEqual(0f, flight.DistanceTravelled, 1e-4f, "VerticalLift must stay purely vertical.");
+
+            Simulate(flight, 2.5f); // t = 5.5s: ForwardTransition complete
+            Assert.AreEqual(FlightPhase.Cruise, flight.CurrentPhase);
+            Assert.AreEqual(8f, flight.CurrentSpeed, 0.01f, "Full cruise speed must be reached.");
+        }
+
+        [Test]
+        public void AirborneStartSkipsGroundIdle()
+        {
+            _root.transform.position = Vector3.zero;
+            var flight = _root.AddComponent<CinematicHelicopterFlight>();
+            flight.StartAirborne = true;
+
+            flight.AdvanceFlight(1f / 60f); // first valid movement frame
+
+            Assert.IsFalse(flight.IsGroundIdle, "Airborne-start must not spend any time in GroundIdle.");
+            Assert.AreEqual(FlightPhase.Cruise, flight.CurrentPhase);
+            Assert.Greater(flight.DistanceTravelled, 0f,
+                "Forward movement must begin on the first frame — the ground idle wait must be skipped.");
+        }
+
+        [Test]
+        public void AirborneStartSkipsVerticalLiftPhase()
+        {
+            _root.transform.position = Vector3.zero;
+            var flight = _root.AddComponent<CinematicHelicopterFlight>();
+            flight.StartAirborne = true;
+
+            // t = 3.0s is where normal mode has just finished its 1.75m vertical lift. Sample
+            // every frame of that window: VerticalLift must never be entered, and no 1.75m
+            // initialLiftHeight step may appear in the height.
+            for (int i = 0; i < 180; i++)
+            {
+                flight.AdvanceFlight(1f / 60f);
+                Assert.AreNotEqual(FlightPhase.VerticalLift, flight.CurrentPhase,
+                    "VerticalLift must never occur in airborne-start mode (frame " + (i + 1) + ").");
+            }
+
+            Assert.AreEqual(FlightPhase.Cruise, flight.CurrentPhase);
+            Assert.Less(flight.HeightGained, 1.75f,
+                "No initialLiftHeight climb: height at t=3s must stay below the normal-mode lift height.");
+            Assert.Greater(flight.HeightGained, 0f,
+                "The shared gentle cruise rise must still apply (existing cruise behavior preserved).");
+        }
+
+        [Test]
+        public void AirborneStartBeginsCruiseMovementImmediately()
+        {
+            // Intended cinematic use: the root is pre-placed slightly outside the LEFT edge of
+            // the exterior frame, already at flight altitude.
+            _root.transform.position = new Vector3(-12f, 4f, 0f);
+            var flight = _root.AddComponent<CinematicHelicopterFlight>();
+            flight.StartAirborne = true;
+
+            flight.AdvanceFlight(1f / 60f);
+
+            Assert.AreEqual(FlightPhase.Cruise, flight.CurrentPhase, "Airborne-start must begin directly in Cruise.");
+            Assert.AreEqual(8f, flight.CurrentSpeed, 1e-4f,
+                "Full cruise speed from the first frame — no takeoff acceleration staging.");
+            Assert.AreEqual(1f, flight.SpeedFactor, 1e-4f, "The speed factor must be 1 immediately.");
+            Assert.Greater(_root.transform.position.x, -12f,
+                "The helicopter must already be moving forward (left to right) on the first frame.");
+        }
+
+        [Test]
+        public void AirborneStartPreservesAuthoredPositionBeforeFirstMovement()
+        {
+            var authoredPos = new Vector3(28f, 3.5f, -47f);
+            var authoredRot = Quaternion.Euler(0f, 35f, 0f);
+            _root.transform.SetPositionAndRotation(authoredPos, authoredRot);
+
+            var flight = _root.AddComponent<CinematicHelicopterFlight>();
+            flight.StartAirborne = true;
+
+            // Before the first VALID movement step (component add, zero-dt tick, negative-dt
+            // tick) the authored transform must remain exactly as authored — no teleport or
+            // reset to any other position.
+            Assert.AreEqual(authoredPos, _root.transform.position, "AddComponent must not move the root.");
+            flight.AdvanceFlight(0f);
+            Assert.AreEqual(authoredPos, _root.transform.position, "A zero-dt tick must not move the helicopter.");
+            flight.AdvanceFlight(-1f);
+            Assert.AreEqual(authoredPos, _root.transform.position, "A negative-dt tick must not move the helicopter.");
+            Assert.AreEqual(authoredRot, _root.transform.rotation, "The authored rotation must be preserved.");
+
+            // The first valid step must depart FROM the authored transform with normal frame motion.
+            flight.AdvanceFlight(1f / 60f);
+            float displacement = Vector3.Distance(authoredPos, _root.transform.position);
+            Assert.Less(displacement, 0.2f,
+                "The first valid step must depart from the authored position, not snap somewhere else.");
+        }
+
+        [Test]
+        public void AirborneStartHasNoOversizedFirstFrameJump()
+        {
+            var authoredPos = new Vector3(15f, 2f, -30f);
+            var authoredRot = Quaternion.Euler(0f, 20f, 0f);
+            _root.transform.SetPositionAndRotation(authoredPos, authoredRot);
+
+            var flight = _root.AddComponent<CinematicHelicopterFlight>();
+            flight.StartAirborne = true;
+            flight.ApplyTakeoffPitch = true;
+            flight.TakeoffPitch = 30f; // exaggerated — must STILL be ignored in airborne mode
+
+            flight.AdvanceFlight(1f / 60f);
+
+            // One frame of cruise + cruise-rise motion: (8 + 1.2*0.35) * (1/60) ~= 0.1404 m.
+            // The 0.2 m ceiling is generous yet ~15x below any teleport-scale jump.
+            float displacement = Vector3.Distance(authoredPos, _root.transform.position);
+            Assert.Less(displacement, 0.2f,
+                "No oversized first-frame jump: displacement must be one frame of cruise motion.");
+
+            Assert.Less(Quaternion.Angle(authoredRot, _root.transform.rotation), 0.01f,
+                "No rotation snap: the takeoff pitch must not be applied in airborne-start mode.");
+        }
+
+        [Test]
+        public void AirborneStartRespectsFlightEnabled()
+        {
+            var authoredPos = new Vector3(9f, 5f, -25f);
+            _root.transform.position = authoredPos;
+
+            var flight = _root.AddComponent<CinematicHelicopterFlight>();
+            flight.StartAirborne = true;
+            flight.FlightEnabled = false;
+
+            // Update() is what honours the flag; Edit Mode does not call it, so invoke it.
+            var update = typeof(CinematicHelicopterFlight).GetMethod("Update",
+                System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+            for (int i = 0; i < 30; i++) update.Invoke(flight, null);
+
+            Assert.AreEqual(authoredPos, _root.transform.position,
+                "Airborne-start must stay completely frozen while the flight is disabled.");
+            Assert.AreEqual(0f, flight.DistanceTravelled, 1e-4f);
+        }
+
+        [Test]
+        public void AirborneStartKeepsUnscaledTimeBehaviorUnchanged()
+        {
+            const System.Reflection.BindingFlags F =
+                System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance;
+
+            _root.transform.position = Vector3.zero;
+            var flight = _root.AddComponent<CinematicHelicopterFlight>();
+
+            // The QA fix #5D.1 safe default must be untouched by the airborne mode: scaled
+            // time remains the default, and the opt-in field still exists.
+            var field = typeof(CinematicHelicopterFlight).GetField("useUnscaledTime", F);
+            Assert.IsNotNull(field, "The useUnscaledTime field must remain serialized (Inspector opt-in).");
+            Assert.IsFalse((bool)field.GetValue(flight),
+                "Scaled time must remain the safe default even with airborne-start available.");
+
+            // The scaled per-frame movement path must run the airborne cruise: full speed
+            // immediately, then steady progress at exactly the cruise rate.
+            flight.StartAirborne = true;
+            Simulate(flight, 1f);
+            Assert.AreEqual(FlightPhase.Cruise, flight.CurrentPhase);
+            Assert.AreEqual(8f, flight.CurrentSpeed, 0.01f);
+
+            float distanceAfterOneSecond = flight.DistanceTravelled;
+            Simulate(flight, 1f);
+            Assert.AreEqual(8f, flight.DistanceTravelled - distanceAfterOneSecond, 0.02f,
+                "Cruise progress must be steady at the cruise speed under normal per-frame dt.");
+        }
+
+        [Test]
+        public void DisablingAirborneStartRestoresExistingTakeoffPath()
+        {
+            _root.transform.position = Vector3.zero;
+            var flight = _root.AddComponent<CinematicHelicopterFlight>();
+            flight.StartAirborne = true;
+
+            Simulate(flight, 0.5f); // 0.5s of airborne cruise (t = 0.5s)
+            Assert.AreEqual(FlightPhase.Cruise, flight.CurrentPhase);
+            float cruiseDistance = flight.DistanceTravelled;
+            Assert.Greater(cruiseDistance, 3f, "Sanity: the airborne cruise must have moved the helicopter.");
+
+            // Switching the mode off hands the flight back to the standard elapsed-driven
+            // takeoff curve. At t = 0.5s that curve is still inside its ground-idle window,
+            // so the old path must hold the helicopter exactly as it would from the ground.
+            flight.StartAirborne = false;
+            Assert.IsFalse(flight.StartAirborne);
+
+            Simulate(flight, 0.2f); // t = 0.7s — still inside the old path's 1.2s idle window
+            Assert.AreEqual(FlightPhase.GroundIdle, flight.CurrentPhase,
+                "With airborne-start off, the elapsed-driven phase must follow the old takeoff curve again.");
+            Assert.AreEqual(cruiseDistance, flight.DistanceTravelled, 1e-4f,
+                "The old path's idle window must hold the helicopter — no further forward motion.");
+        }
+
         // ---- flight: straight line + rise ----
 
         [Test]
@@ -777,7 +997,7 @@ namespace OperationOutbreak.Tests
                      {
                          "startDelay", "accelerationDuration", "cruiseSpeed",
                          "verticalRiseSpeed", "takeoffPitch", "localForwardAxis",
-                         "useUnscaledTime"
+                         "useUnscaledTime", "startAirborne"
                      })
                 Assert.IsNotNull(flight.GetField(name, F), name + " must be Inspector-exposed.");
 
@@ -803,6 +1023,8 @@ namespace OperationOutbreak.Tests
             Assert.AreEqual(8f, (float)ft.GetField("cruiseSpeed", F).GetValue(flight), 1e-4f);
             Assert.AreEqual(1.2f, (float)ft.GetField("verticalRiseSpeed", F).GetValue(flight), 1e-4f);
             Assert.AreEqual(4f, (float)ft.GetField("takeoffPitch", F).GetValue(flight), 1e-4f);
+            Assert.IsFalse((bool)ft.GetField("startAirborne", F).GetValue(flight),
+                "startAirborne must default to false (existing takeoff behavior preserved).");
 
             var camGo = new GameObject("CinematicCamera");
             try

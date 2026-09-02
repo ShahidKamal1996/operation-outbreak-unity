@@ -69,6 +69,19 @@ namespace OperationOutbreak.Cinematic
     /// Play-start stall in one giant tick. The field remains serialized, so unscaled
     /// behavior can still be opted into explicitly from the Inspector when progress while
     /// Time.timeScale = 0 is required.
+    ///
+    /// AIRBORNE START MODE (optional, default OFF)
+    /// -------------------------------------------
+    /// startAirborne = true begins the cinematic with the helicopter ALREADY in
+    /// forward/cruise flight from its authored scene transform (pre-placed outside the
+    /// camera frame at flight altitude): GroundIdle, VerticalLift, the takeoff pitch and
+    /// the takeoff acceleration staging are all skipped (lift factor 0, speed factor 1
+    /// from the first frame, rotation stays the authored start rotation), and the
+    /// existing shared movement path (cruise speed, gentle capped cruise rise,
+    /// straight travel along the authored forward axis) runs unchanged. The flight
+    /// origin is always the authored transform (the same session self-heal invariants
+    /// from QA #5A/#5C apply; no teleport/reset to any other position). With the flag
+    /// OFF (the default) the existing 4-phase takeoff behavior is fully preserved.
     /// </summary>
     [DisallowMultipleComponent]
     [AddComponentMenu("Operation Outbreak/Cinematic/Cinematic Helicopter Flight")]
@@ -128,6 +141,14 @@ namespace OperationOutbreak.Cinematic
                  "which skips the takeoff phases and teleports the helicopter into Cruise. Enable only if " +
                  "the flight must keep progressing while Time.timeScale is 0.")]
         [SerializeField] private bool useUnscaledTime = false;
+
+        [Header("Airborne Start (optional)")]
+        [Tooltip("When true, the helicopter starts ALREADY in full forward/cruise flight from its authored " +
+                 "scene transform: no ground idle, no vertical lift, no takeoff pitch, no takeoff " +
+                 "acceleration staging. Use this when the root is pre-placed outside the camera frame at " +
+                 "flight altitude (e.g. just left of the exterior shot) so it enters the frame in full " +
+                 "flight. Default false = the existing ground takeoff behavior.")]
+        [SerializeField] private bool startAirborne = false;
 
         // Retained for backward compatibility / tests:
         [SerializeField] private float startDelay = 0.75f;
@@ -212,6 +233,10 @@ namespace OperationOutbreak.Cinematic
         {
             get
             {
+                // Airborne-start mode is already in cruise from t = 0: the takeoff phase windows
+                // are skipped entirely, so the phase is Cruise for the whole run.
+                if (startAirborne) return FlightPhase.Cruise;
+
                 float idle = EffectiveIdle;
                 float lift = verticalLiftDuration;
                 float accel = EffectiveAccel;
@@ -228,19 +253,26 @@ namespace OperationOutbreak.Cinematic
         public bool IsForwardTransition => CurrentPhase == FlightPhase.ForwardTransition;
         public bool IsCruising => CurrentPhase == FlightPhase.Cruise;
 
-        /// <summary>0 during GroundIdle and VerticalLift, smoothly easing 0→1 during ForwardTransition, then 1.</summary>
-        public float SpeedFactor => ComputeSpeedFactor(_elapsed);
+        /// <summary>0 during GroundIdle and VerticalLift, smoothly easing 0→1 during ForwardTransition, then 1. Always 1 in airborne-start mode.</summary>
+        public float SpeedFactor => startAirborne ? 1f : ComputeSpeedFactor(_elapsed);
 
         /// <summary>Current forward speed in metres/second.</summary>
         public float CurrentSpeed => cruiseSpeed * SpeedFactor;
 
-        /// <summary>0 during GroundIdle, smoothly easing 0→1 during VerticalLift, then 1.</summary>
-        public float VerticalLiftFactor => ComputeVerticalLiftFactor(_elapsed);
+        /// <summary>0 during GroundIdle, smoothly easing 0→1 during VerticalLift, then 1. Always 0 in airborne-start mode (no vertical lift).</summary>
+        public float VerticalLiftFactor => startAirborne ? 0f : ComputeVerticalLiftFactor(_elapsed);
 
         public bool FlightEnabled
         {
             get => flightEnabled;
             set => flightEnabled = value;
+        }
+
+        /// <summary>Optional airborne-start mode (default false = existing takeoff behavior).</summary>
+        public bool StartAirborne
+        {
+            get => startAirborne;
+            set => startAirborne = value;
         }
 
         public bool ApplyTakeoffPitch
@@ -349,12 +381,16 @@ namespace OperationOutbreak.Cinematic
 
             _elapsed += deltaTime;
 
-            // Phase 1 & 2: Vertical Lift
-            float liftFactor = ComputeVerticalLiftFactor(_elapsed);
+            // Airborne-start mode skips the takeoff staging entirely (ground idle, vertical
+            // lift, takeoff pitch, acceleration ramp): the helicopter is already airborne in
+            // full cruise flight from its authored transform, so lift stays at 0 and the
+            // speed factor is 1 from the first frame. The shared movement path below
+            // (distance/rise integration, transform write) is otherwise unchanged.
+            float liftFactor = startAirborne ? 0f : ComputeVerticalLiftFactor(_elapsed);
             float baseLift = initialLiftHeight * liftFactor;
 
             // Phase 3 & 4: Forward Acceleration & Climb
-            float speedFactor = ComputeSpeedFactor(_elapsed);
+            float speedFactor = startAirborne ? 1f : ComputeSpeedFactor(_elapsed);
 
             // Forward translation only occurs once airborne in forward transition
             _distance += cruiseSpeed * speedFactor * deltaTime;
@@ -373,7 +409,9 @@ namespace OperationOutbreak.Cinematic
                                  + _travelDirection * _distance
                                  + _riseDirection * _rise;
 
-            transform.rotation = (applyTakeoffPitch && takeoffPitch != 0f)
+            // Takeoff pitch is takeoff staging — never applied in airborne-start mode, so
+            // the rotation stays exactly the authored start rotation there.
+            transform.rotation = (!startAirborne && applyTakeoffPitch && takeoffPitch != 0f)
                 ? _startRotation * Quaternion.AngleAxis(takeoffPitch * speedFactor, Vector3.right)
                 : _startRotation;
         }
