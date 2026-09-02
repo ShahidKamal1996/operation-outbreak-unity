@@ -726,6 +726,455 @@ namespace OperationOutbreak.Tests
                 "The old path's idle window must hold the helicopter — no further forward motion.");
         }
 
+        // ---- Cinematic turn (optional, default OFF) ----
+        // Sign convention under test: the forward axis is LOCAL (localForwardAxis, default
+        // +X — never assumed to be world Z). POSITIVE turnYawDegrees = visually correct RIGHT
+        // turn relative to that axis (rotation about the authored up axis from forward toward
+        // the aircraft's right side, up x forward; default axes: +X -> (cos yaw, 0, -sin yaw)).
+        // Bank is right-handed about the CURRENT heading: negative angle = right wing down, so
+        // a right turn banks right. The path must curve through space (arc integrated along
+        // the evolving heading) — not just the model rotating over a straight vector.
+
+        [Test]
+        public void TurnFeatureDefaultsAreDisabledAndExistingBehaviorIsUnchanged()
+        {
+            _root.transform.position = Vector3.zero;
+            var flight = _root.AddComponent<CinematicHelicopterFlight>();
+
+            Assert.IsFalse(flight.EnableTurn, "enableTurn must default to FALSE (no turn).");
+            Assert.AreEqual(4f, flight.TurnStartTime, 1e-4f, "turnStartTime must default to 4s.");
+            Assert.AreEqual(1.75f, flight.TurnDuration, 1e-4f, "turnDuration must default to 1.75s.");
+            Assert.AreEqual(40f, flight.TurnYawDegrees, 1e-4f, "turnYawDegrees must default to 40.");
+            Assert.AreEqual(10f, flight.TurnBankDegrees, 1e-4f, "turnBankDegrees must default to 10.");
+            Assert.AreEqual(0f, flight.CurrentTurnYawDegrees, 1e-4f, "No yaw with the feature disabled.");
+            Assert.AreEqual(0f, flight.CurrentTurnBankDegrees, 1e-4f, "No bank with the feature disabled.");
+
+            // A full default run must behave EXACTLY as before: 4-phase takeoff ending in a
+            // straight +X cruise with zero turn contribution.
+            Simulate(flight, 6f);
+            Assert.AreEqual(FlightPhase.Cruise, flight.CurrentPhase, "Default takeoff behavior must be intact.");
+            Assert.AreEqual(8f, flight.CurrentSpeed, 0.01f, "Cruise speed must be unchanged.");
+            Assert.AreEqual(0f, _root.transform.position.z, 1e-3f, "No lateral (turn) displacement with the feature off.");
+            Assert.Greater(_root.transform.position.x, 10f, "Straight forward travel must be intact.");
+            Assert.AreEqual(0f, flight.CurrentTurnYawDegrees, 1e-4f, "No turn yaw may appear after a full run.");
+            Assert.AreEqual(0f, flight.CurrentTurnBankDegrees, 1e-4f, "No turn bank may appear after a full run.");
+        }
+
+        [Test]
+        public void BeforeTurnStartTimeTheHeadingAndPathAreUnchanged()
+        {
+            _root.transform.position = Vector3.zero;
+            var flight = _root.AddComponent<CinematicHelicopterFlight>();
+            flight.StartAirborne = true;
+            flight.EnableTurn = true; // default turn start = 4.0s
+
+            Simulate(flight, 3.9f); // 234 frames -> t = 3.899997 < 4.0: strictly BEFORE the turn
+
+            Assert.AreEqual(0f, flight.CurrentTurnYawDegrees, 1e-4f, "Yaw must be exactly 0 before the start time.");
+            Assert.AreEqual(0f, flight.CurrentTurnBankDegrees, 1e-4f, "Bank must be exactly 0 before the start time.");
+            Assert.AreEqual(0f, Quaternion.Angle(Quaternion.identity, _root.transform.rotation), 1e-4f,
+                "The authored rotation must be untouched before the turn.");
+            Assert.AreEqual(0f, _root.transform.position.z, 1e-3f, "No lateral deviation before the turn.");
+            Assert.AreEqual(8f * 3.9f, _root.transform.position.x, 0.05f,
+                "The existing steady cruise path along the authored forward axis must be unchanged.");
+        }
+
+        [Test]
+        public void TurnBeginsOnlyAfterTheConfiguredStartTime()
+        {
+            _root.transform.position = Vector3.zero;
+            var flight = _root.AddComponent<CinematicHelicopterFlight>();
+            flight.StartAirborne = true;
+            flight.EnableTurn = true; // default turn start = 4.0s
+
+            Simulate(flight, 4f); // EXACTLY 240 frames -> t = 3.999997 < 4.0 (float tick count)
+            Assert.AreEqual(0f, flight.CurrentTurnYawDegrees, 1e-4f,
+                "The turn must not begin before the configured start time.");
+            Assert.AreEqual(0f, Quaternion.Angle(Quaternion.identity, _root.transform.rotation), 1e-4f,
+                "No rotation change before the configured start time.");
+
+            flight.AdvanceFlight(1f / 60f); // frame 241 -> first frame at/after 4.0s
+            Assert.Greater(flight.CurrentTurnYawDegrees, 0f,
+                "The turn must begin on the first frame after the configured start time.");
+            Assert.Greater(Quaternion.Angle(Quaternion.identity, _root.transform.rotation), 0f,
+                "The rotation must start moving on the first frame after the start time.");
+        }
+
+        [Test]
+        public void MidTurnYawEasesBetweenZeroAndTheFinalYaw()
+        {
+            _root.transform.position = Vector3.zero;
+            var flight = _root.AddComponent<CinematicHelicopterFlight>();
+            flight.StartAirborne = true;
+            flight.EnableTurn = true; // 4.0s + 1.75s window
+
+            Simulate(flight, 4.5f);
+            float yawEarly = flight.CurrentTurnYawDegrees;
+            Simulate(flight, 0.4f); // t = 4.9s, mid-window
+            float yawMid = flight.CurrentTurnYawDegrees;
+            Simulate(flight, 0.4f); // t = 5.3s, late window
+            float yawLate = flight.CurrentTurnYawDegrees;
+
+            Assert.Greater(yawEarly, 0f, "Yaw must be strictly positive inside the window.");
+            Assert.Less(yawEarly, 40f, "Yaw must be strictly below the final yaw inside the window.");
+            Assert.Greater(yawMid, yawEarly, "The yaw must ease forward, not snap.");
+            Assert.Less(yawMid, 40f, "Yaw must stay below the final yaw inside the window.");
+            Assert.Greater(yawLate, yawMid, "The yaw must keep easing toward the final value.");
+            Assert.Less(yawLate, 40f, "Yaw must not overshoot the final yaw inside the window.");
+        }
+
+        [Test]
+        public void MidTurnBankIsNonZeroAndBanksIntoTheRightTurn()
+        {
+            // Default axes (forward +X, up +Y): the aircraft's right side is -Z. A RIGHT turn
+            // (positive yaw) must bank RIGHT — negative roll about the heading, right wing down:
+            // the up vector tilts toward -Z.
+            _root.transform.position = Vector3.zero;
+            var flight = _root.AddComponent<CinematicHelicopterFlight>();
+            flight.StartAirborne = true;
+            flight.EnableTurn = true;
+
+            Simulate(flight, 4.9f); // mid-window
+
+            float bank = flight.CurrentTurnBankDegrees;
+            Assert.Less(bank, 0f,
+                "A right turn (positive yaw) must bank RIGHT: negative roll about the heading (right wing down).");
+            Assert.Less(bank, -1f, "The mid-turn bank must be a meaningful non-zero lean.");
+            Assert.Less(_root.transform.up.z, -0.1f,
+                "Geometric check: up must tilt toward the aircraft's right side (-Z) during a right turn.");
+            Assert.Greater(_root.transform.up.y, 0.9f, "The tilt must be a bank, not a flip.");
+        }
+
+        [Test]
+        public void AtEndOfTurnTheFinalYawIsExactlyTheConfiguredYaw()
+        {
+            _root.transform.position = Vector3.zero;
+            var flight = _root.AddComponent<CinematicHelicopterFlight>();
+            flight.StartAirborne = true;
+            flight.EnableTurn = true; // 4.0s + 1.75s = 5.75s end
+
+            Simulate(flight, 5.75f); // 345 frames -> t = 5.75002: window fully closed
+
+            Assert.AreEqual(40f, flight.CurrentTurnYawDegrees, 0.01f,
+                "At the end of the turn the yaw must equal the configured turnYawDegrees.");
+            Assert.AreEqual(40f, Quaternion.Angle(Quaternion.identity, _root.transform.rotation), 0.05f,
+                "The total rotation must be exactly the final yaw (no residual bank).");
+        }
+
+        [Test]
+        public void AtEndOfTurnTheBankReturnsToZero()
+        {
+            _root.transform.position = Vector3.zero;
+            var flight = _root.AddComponent<CinematicHelicopterFlight>();
+            flight.StartAirborne = true;
+            flight.EnableTurn = true;
+
+            Simulate(flight, 5.8f); // just past the window end (t = 5.80002 > 5.75)
+
+            Assert.AreEqual(0f, flight.CurrentTurnBankDegrees, 1e-4f,
+                "The bank must be exactly 0 once the turn is complete.");
+            Assert.AreEqual(40f, flight.CurrentTurnYawDegrees, 0.01f,
+                "The final yaw must be held after the turn completes.");
+            Assert.AreEqual(0f, _root.transform.up.z, 0.001f,
+                "No bank residue: up must be vertical again (yaw is about the up axis).");
+            Assert.AreEqual(40f, Quaternion.Angle(Quaternion.identity, _root.transform.rotation), 0.05f,
+                "End state must be exactly start rotation + final yaw + zero bank.");
+        }
+
+        [Test]
+        public void AfterTurnTheFlightContinuesAlongTheNewHeading()
+        {
+            // After the window the yaw is constant, so the helicopter must fly STRAIGHT along
+            // the NEW heading — and that heading must be the 40-degree-right one.
+            _root.transform.position = Vector3.zero;
+            var flight = _root.AddComponent<CinematicHelicopterFlight>();
+            flight.StartAirborne = true;
+            flight.EnableTurn = true;
+
+            Simulate(flight, 5.75f);
+            Vector3 p1 = _root.transform.position;
+            Simulate(flight, 2f); // 120 frames of post-turn flight
+            Vector3 d = _root.transform.position - p1;
+
+            float horizontal = Mathf.Sqrt(d.x * d.x + d.z * d.z);
+            Assert.AreEqual(16f, horizontal, 0.1f,
+                "The cruise speed must be preserved along the new heading (2s * 8 m/s).");
+            Assert.AreEqual(Mathf.Cos(40f * Mathf.Deg2Rad), d.x / horizontal, 0.01f,
+                "Post-turn travel direction must be the NEW heading (40 degrees right of +X).");
+            Assert.AreEqual(-Mathf.Sin(40f * Mathf.Deg2Rad), d.z / horizontal, 0.01f,
+                "Post-turn travel direction must be the NEW heading (40 degrees right of +X).");
+            Assert.Less(d.z, -5f, "The new heading must clearly deviate from the original straight line.");
+        }
+
+        [Test]
+        public void TheTurnCurvesThePathThroughSpace()
+        {
+            // A model-rotation-only implementation would keep the position on the straight
+            // base line (z = 0 for the default axes). The real path must accumulate lateral
+            // displacement as the heading evolves.
+            _root.transform.position = Vector3.zero;
+            var flight = _root.AddComponent<CinematicHelicopterFlight>();
+            flight.StartAirborne = true;
+            flight.EnableTurn = true;
+
+            Simulate(flight, 4.9f); // mid-window
+            float z1 = _root.transform.position.z;
+            Assert.Less(z1, -0.3f,
+                "The path must have curved through space (lateral displacement), not just the model rotating.");
+
+            Simulate(flight, 0.5f); // t = 5.4s, still inside the window
+            float z2 = _root.transform.position.z;
+            Assert.Less(z2, z1 - 0.5f, "The lateral curvature must keep growing through the turn.");
+        }
+
+        [Test]
+        public void NoPositionalTeleportAtTurnStart()
+        {
+            // Straddle the 4.0s boundary (frames 236..247 include the turn start at 241):
+            // every per-frame displacement must stay at one frame of cruise motion.
+            _root.transform.position = Vector3.zero;
+            var flight = _root.AddComponent<CinematicHelicopterFlight>();
+            flight.StartAirborne = true;
+            flight.EnableTurn = true;
+
+            Simulate(flight, 3.9166667f); // 235 frames -> just before the turn start
+            Vector3 prev = _root.transform.position;
+            for (int i = 0; i < 12; i++)
+            {
+                flight.AdvanceFlight(1f / 60f);
+                Assert.Less(Vector3.Distance(prev, _root.transform.position), 0.2f,
+                    "No positional teleport across the turn-start boundary (frame " + (i + 1) + ").");
+                prev = _root.transform.position;
+            }
+        }
+
+        [Test]
+        public void NoRotationSnapAtTurnStart()
+        {
+            // Same boundary window: the eased yaw starts from exactly 0, so the per-frame
+            // rotation change must stay tiny (no snap to any intermediate yaw).
+            _root.transform.position = Vector3.zero;
+            var flight = _root.AddComponent<CinematicHelicopterFlight>();
+            flight.StartAirborne = true;
+            flight.EnableTurn = true;
+
+            Simulate(flight, 3.9166667f); // 235 frames -> just before the turn start
+            Quaternion prev = _root.transform.rotation;
+            for (int i = 0; i < 12; i++)
+            {
+                flight.AdvanceFlight(1f / 60f);
+                float delta = Quaternion.Angle(prev, _root.transform.rotation);
+                Assert.Less(delta, 2f,
+                    "No rotation snap across the turn-start boundary (frame " + (i + 1) + ").");
+                prev = _root.transform.rotation;
+            }
+        }
+
+        [Test]
+        public void ResetFlightRestoresAuthoredStateAndClearsTheTurn()
+        {
+            var authoredPos = new Vector3(5f, 2f, -3f);
+            var authoredRot = Quaternion.Euler(0f, 20f, 0f);
+            _root.transform.SetPositionAndRotation(authoredPos, authoredRot);
+
+            var flight = _root.AddComponent<CinematicHelicopterFlight>();
+            flight.StartAirborne = true;
+            flight.EnableTurn = true;
+
+            Simulate(flight, 7f); // well past the turn: mid-cruise along the new heading
+            Assert.Greater(Quaternion.Angle(authoredRot, _root.transform.rotation), 10f,
+                "Sanity: the turn must have happened before the reset.");
+            Assert.Greater(Vector3.Distance(authoredPos, _root.transform.position), 1f,
+                "Sanity: the helicopter must have moved before the reset.");
+
+            flight.ResetFlight();
+
+            Assert.AreEqual(authoredPos.x, _root.transform.position.x, 1e-4f, "Reset must restore the authored X.");
+            Assert.AreEqual(authoredPos.y, _root.transform.position.y, 1e-4f, "Reset must restore the authored Y.");
+            Assert.AreEqual(authoredPos.z, _root.transform.position.z, 1e-4f, "Reset must restore the authored Z.");
+            Assert.AreEqual(0f, Quaternion.Angle(authoredRot, _root.transform.rotation), 0.001f,
+                "Reset must restore the authored rotation — no residual yaw.");
+            Assert.AreEqual(0f, flight.CurrentTurnYawDegrees, 1e-4f, "Turn progress must be zeroed by the reset.");
+            Assert.AreEqual(0f, flight.CurrentTurnBankDegrees, 1e-4f, "No residual bank may survive the reset.");
+            Assert.AreEqual(0f, flight.Elapsed, 1e-4f, "The shared flight clock must be zeroed.");
+
+            flight.AdvanceFlight(1f / 60f);
+            Assert.AreEqual(0f, Quaternion.Angle(authoredRot, _root.transform.rotation), 0.001f,
+                "After a reset the flight must NOT resume the old turn on the next frame.");
+        }
+
+        [Test]
+        public void DisabledFlightPreventsTheTurn()
+        {
+            var authoredPos = new Vector3(9f, 5f, -25f);
+            _root.transform.position = authoredPos;
+
+            var flight = _root.AddComponent<CinematicHelicopterFlight>();
+            flight.StartAirborne = true;
+            flight.EnableTurn = true;
+            flight.FlightEnabled = false;
+
+            // Update() is what honours the flag; Edit Mode does not call it, so invoke it.
+            var update = typeof(CinematicHelicopterFlight).GetMethod("Update",
+                System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+            for (int i = 0; i < 300; i++) update.Invoke(flight, null); // 5s — well past the turn window
+
+            Assert.AreEqual(authoredPos, _root.transform.position,
+                "A disabled flight must not move, turn, or rotate.");
+            Assert.AreEqual(0f, Quaternion.Angle(Quaternion.identity, _root.transform.rotation), 1e-4f,
+                "A disabled flight must not rotate the root.");
+            Assert.AreEqual(0f, flight.CurrentTurnYawDegrees, 1e-4f,
+                "The flight clock must not advance while disabled (turn must not progress).");
+            Assert.AreEqual(0f, flight.Elapsed, 1e-4f, "The shared flight clock must stay frozen.");
+        }
+
+        [Test]
+        public void TurnFeatureLeavesScaledTimeDefaultAndPerFrameCruiseUnchanged()
+        {
+            const System.Reflection.BindingFlags F =
+                System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance;
+
+            _root.transform.position = Vector3.zero;
+            var flight = _root.AddComponent<CinematicHelicopterFlight>();
+
+            var field = typeof(CinematicHelicopterFlight).GetField("useUnscaledTime", F);
+            Assert.IsNotNull(field, "The useUnscaledTime field must remain serialized (Inspector opt-in).");
+            Assert.IsFalse((bool)field.GetValue(flight),
+                "Scaled time must remain the safe default with the turn feature available.");
+
+            // With the turn enabled, the per-frame scaled-time path before the turn window
+            // must still be a steady 8 m/s cruise.
+            flight.StartAirborne = true;
+            flight.EnableTurn = true;
+            Simulate(flight, 1f);
+            float d1 = flight.DistanceTravelled;
+            Simulate(flight, 1f);
+            Assert.AreEqual(8f, d1, 0.02f, "First second must be steady cruise with the turn feature on.");
+            Assert.AreEqual(8f, flight.DistanceTravelled - d1, 0.02f,
+                "Second second must be steady cruise with the turn feature on.");
+        }
+
+        [Test]
+        public void AirborneStartAndTurnWorkTogether()
+        {
+            // Airborne start (no takeoff staging) + the turn on the same clock: cruise from
+            // frame one, no lift step, then the turn plays out on the shared elapsed clock.
+            _root.transform.position = Vector3.zero;
+            var flight = _root.AddComponent<CinematicHelicopterFlight>();
+            flight.StartAirborne = true;
+            flight.EnableTurn = true;
+
+            flight.AdvanceFlight(1f / 60f);
+            Assert.AreEqual(FlightPhase.Cruise, flight.CurrentPhase, "Airborne-start must remain Cruise with the turn on.");
+            Assert.AreEqual(8f, flight.CurrentSpeed, 1e-4f, "Full cruise speed from the first frame.");
+
+            Simulate(flight, 3f); // t = 3.0167s
+            Assert.Less(flight.HeightGained, 1.75f,
+                "No initialLiftHeight step may appear (airborne-start semantics preserved).");
+
+            Simulate(flight, 2.75f); // t = 5.7667s: turn window closed
+            Assert.AreEqual(40f, flight.CurrentTurnYawDegrees, 0.01f, "The turn must complete on the shared clock.");
+            Assert.AreEqual(0f, flight.CurrentTurnBankDegrees, 1e-4f, "The bank must be back at zero.");
+            Assert.Less(_root.transform.position.z, -4f, "The curved path must be present with airborne start.");
+        }
+
+        [Test]
+        public void NormalTakeoffAndTurnRemainBackwardCompatible()
+        {
+            // The turn window (4.0s..5.75s) overlaps the normal takeoff's ForwardTransition
+            // (3.0s..5.5s): the existing takeoff staging must run exactly as before, and the
+            // turn must layer on top of it without changing the pre-turn path.
+            _root.transform.position = Vector3.zero;
+            var flight = _root.AddComponent<CinematicHelicopterFlight>();
+            flight.EnableTurn = true; // normal takeoff (startAirborne = false)
+
+            Simulate(flight, 1f);
+            Assert.AreEqual(FlightPhase.GroundIdle, flight.CurrentPhase, "GroundIdle must be intact.");
+            Assert.AreEqual(0f, flight.DistanceTravelled, 1e-4f, "No forward travel during GroundIdle.");
+            Assert.AreEqual(0f, flight.HeightGained, 1e-4f, "No rise during GroundIdle.");
+
+            Simulate(flight, 2f); // t = 3.0s: VerticalLift complete
+            Assert.AreEqual(1.75f, flight.HeightGained, 0.01f, "The vertical lift must run exactly as before.");
+            Assert.AreEqual(0f, flight.DistanceTravelled, 1e-4f, "VerticalLift must stay purely vertical.");
+
+            Simulate(flight, 4f); // t = 7.0s: cruise along the new heading
+            Assert.AreEqual(FlightPhase.Cruise, flight.CurrentPhase, "The flight must reach Cruise.");
+            Assert.AreEqual(40f, flight.CurrentTurnYawDegrees, 0.01f, "The turn must complete after the takeoff.");
+            Assert.Greater(flight.DistanceTravelled, 0.5f,
+                "The pre-turn forward travel must have accumulated along the old path.");
+            Assert.Greater(_root.transform.position.x, 10f, "The flight must still progress forward overall.");
+            Assert.Less(_root.transform.position.z, -2f, "The turn must curve the normal-takeoff path too.");
+        }
+
+        [Test]
+        public void ZeroOrNegativeTurnValuesAreClampedSafely()
+        {
+            // turnDuration = 0 or negative must clamp to the safe minimum window (0.05s) —
+            // never a divide-by-zero, NaN, or inverted window.
+            _root.transform.position = Vector3.zero;
+            var flight = _root.AddComponent<CinematicHelicopterFlight>();
+            flight.StartAirborne = true;
+            flight.EnableTurn = true;
+            flight.TurnDuration = 0f;
+            Assert.DoesNotThrow(() => Simulate(flight, 5f), "A zero turnDuration must not throw.");
+            Assert.AreEqual(40f, flight.CurrentTurnYawDegrees, 0.01f,
+                "The turn must still complete (clamped to the minimum window) with a zero duration.");
+            Assert.AreEqual(0f, flight.CurrentTurnBankDegrees, 1e-4f, "The bank must be back at zero after the clamped turn.");
+
+            var go2 = new GameObject("TurnRoot2");
+            try
+            {
+                var flight2 = go2.AddComponent<CinematicHelicopterFlight>();
+                flight2.StartAirborne = true;
+                flight2.EnableTurn = true;
+                flight2.TurnDuration = -5f;
+                Assert.DoesNotThrow(() => Simulate(flight2, 5f), "A negative turnDuration must not throw.");
+                Assert.AreEqual(40f, flight2.CurrentTurnYawDegrees, 0.01f,
+                    "The turn must still complete (clamped) with a negative duration.");
+            }
+            finally { Object.DestroyImmediate(go2); }
+
+            var go3 = new GameObject("TurnRoot3");
+            try
+            {
+                var flight3 = go3.AddComponent<CinematicHelicopterFlight>();
+                flight3.StartAirborne = true;
+                flight3.EnableTurn = true;
+                flight3.TurnStartTime = -2f;
+                Simulate(flight3, 1f);
+                Assert.Greater(flight3.CurrentTurnYawDegrees, 0f,
+                    "A negative turnStartTime must clamp to 0 — the turn is already in progress.");
+                Assert.Less(flight3.CurrentTurnYawDegrees, 40f,
+                    "The clamped turn must still ease toward the final yaw, not snap to it.");
+            }
+            finally { Object.DestroyImmediate(go3); }
+        }
+
+        [Test]
+        public void PositiveTurnYawIsARightTurnRelativeToTheLocalForwardAxis()
+        {
+            // Sign-convention proof on a NON-default axis: forward = -Z (root at identity),
+            // so the aircraft's right side is -X. A positive turnYawDegrees must bank toward
+            // -X (right wing down) and curve the path toward -X — proving the convention is
+            // relative to the configured LOCAL forward axis, not hardcoded to world Z.
+            _root.transform.position = Vector3.zero;
+            var flight = _root.AddComponent<CinematicHelicopterFlight>();
+            flight.LocalForwardAxis = new Vector3(0f, 0f, -1f);
+            flight.StartAirborne = true;
+            flight.EnableTurn = true;
+
+            Simulate(flight, 4.9f); // mid-window
+            Assert.Less(_root.transform.up.x, -0.1f,
+                "Right bank relative to the -Z forward: up must tilt toward the aircraft's right side (-X).");
+            Assert.Greater(_root.transform.up.y, 0.9f, "The tilt must be a bank, not a flip.");
+
+            Simulate(flight, 2.1f); // t = 7.0s, after the turn
+            Assert.Less(_root.transform.position.x, -0.5f,
+                "The path must curve to the aircraft's right (-X) relative to the -Z forward axis.");
+            Assert.Less(_root.transform.position.z, -1f,
+                "The helicopter must keep flying along its forward axis (-Z).");
+        }
+
         // ---- flight: straight line + rise ----
 
         [Test]
@@ -997,7 +1446,9 @@ namespace OperationOutbreak.Tests
                      {
                          "startDelay", "accelerationDuration", "cruiseSpeed",
                          "verticalRiseSpeed", "takeoffPitch", "localForwardAxis",
-                         "useUnscaledTime", "startAirborne"
+                         "useUnscaledTime", "startAirborne",
+                         "enableTurn", "turnStartTime", "turnDuration",
+                         "turnYawDegrees", "turnBankDegrees"
                      })
                 Assert.IsNotNull(flight.GetField(name, F), name + " must be Inspector-exposed.");
 
@@ -1025,6 +1476,12 @@ namespace OperationOutbreak.Tests
             Assert.AreEqual(4f, (float)ft.GetField("takeoffPitch", F).GetValue(flight), 1e-4f);
             Assert.IsFalse((bool)ft.GetField("startAirborne", F).GetValue(flight),
                 "startAirborne must default to false (existing takeoff behavior preserved).");
+            Assert.IsFalse((bool)ft.GetField("enableTurn", F).GetValue(flight),
+                "enableTurn must default to false (no turn = existing straight flight).");
+            Assert.AreEqual(4f, (float)ft.GetField("turnStartTime", F).GetValue(flight), 1e-4f);
+            Assert.AreEqual(1.75f, (float)ft.GetField("turnDuration", F).GetValue(flight), 1e-4f);
+            Assert.AreEqual(40f, (float)ft.GetField("turnYawDegrees", F).GetValue(flight), 1e-4f);
+            Assert.AreEqual(10f, (float)ft.GetField("turnBankDegrees", F).GetValue(flight), 1e-4f);
 
             var camGo = new GameObject("CinematicCamera");
             try

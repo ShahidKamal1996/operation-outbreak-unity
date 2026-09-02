@@ -82,6 +82,33 @@ namespace OperationOutbreak.Cinematic
     /// origin is always the authored transform (the same session self-heal invariants
     /// from QA #5A/#5C apply; no teleport/reset to any other position). With the flag
     /// OFF (the default) the existing 4-phase takeoff behavior is fully preserved.
+    ///
+    /// CINEMATIC TURN (optional, default OFF)
+    /// --------------------------------------
+    /// enableTurn = true adds a one-off cinematic right turn on the SAME flight clock
+    /// (no second timer): before turnStartTime the existing path and authored rotation
+    /// run unchanged; during [turnStartTime, turnStartTime + turnDuration] the yaw is
+    /// smoothly eased (smoothstep, never a linear snap) from 0 to turnYawDegrees and a
+    /// temporary bank rises with a sine (0 -> peak at mid-turn -> 0 by the end), applied
+    /// in the correct direction for the turn; after the window the final yaw is kept and
+    /// the flight continues in a straight line along the NEW heading — nothing resets to
+    /// the old direction.
+    ///
+    /// Sign convention: the forward axis is LOCAL (localForwardAxis, default +X — never
+    /// assumed to be world Z). POSITIVE turnYawDegrees = visually correct RIGHT turn
+    /// relative to that forward axis: the positive yaw is a rotation about the authored
+    /// up axis from forward toward the aircraft's right side (up x forward), verified
+    /// for the default axes as +X -> (cos yaw, 0, -sin yaw). The bank uses the
+    /// right-handed convention about the current heading: negative angle = right wing
+    /// down, so a right turn banks right. Movement curves through space (the arc is
+    /// integrated along the evolving heading onto the fixed authored base/right axes —
+    /// a pure function of the input/time sequence, no cumulative transform drift), and
+    /// the existing cruise speed, cruise-rise scaling and maxRiseHeight cap all apply
+    /// unchanged. ResetFlight and the #5C session self-heal zero the turn arc
+    /// accumulators so a reset/new session starts exactly at the authored transform
+    /// with zero turn progress. turnStartTime is clamped to >= 0 and turnDuration to a
+    /// safe minimum (0.05s) so zero/negative values degrade safely (instant-but-smooth
+    /// clamp, never a divide-by-zero or inverted window).
     /// </summary>
     [DisallowMultipleComponent]
     [AddComponentMenu("Operation Outbreak/Cinematic/Cinematic Helicopter Flight")]
@@ -150,6 +177,32 @@ namespace OperationOutbreak.Cinematic
                  "flight. Default false = the existing ground takeoff behavior.")]
         [SerializeField] private bool startAirborne = false;
 
+        [Header("Cinematic Turn (optional)")]
+        [Tooltip("When true, after turnStartTime the helicopter smoothly yaws by turnYawDegrees over " +
+                 "turnDuration seconds, banks up to turnBankDegrees into the turn (peaking mid-turn, back " +
+                 "to zero by the end), then continues along the NEW heading — the path curves through " +
+                 "space, it is not just the model rotating. Default false = no turn (existing straight " +
+                 "flight unchanged).")]
+        [SerializeField] private bool enableTurn = false;
+
+        [Tooltip("Seconds from Play (same elapsed clock as the takeoff phases) before the turn begins. " +
+                 "Clamped to >= 0.")]
+        [SerializeField] private float turnStartTime = 4f;
+
+        [Tooltip("Seconds over which the yaw (and bank in/out) ease with a smooth curve. Clamped to a " +
+                 "safe minimum of 0.05s.")]
+        [SerializeField] private float turnDuration = 1.75f;
+
+        [Tooltip("Total yaw in degrees. POSITIVE = RIGHT turn relative to the Local Forward Axis " +
+                 "(default +X: positive yaw turns the nose toward the helicopter's right side); negative " +
+                 "= left turn.")]
+        [SerializeField] private float turnYawDegrees = 40f;
+
+        [Tooltip("Peak bank (roll) in degrees, applied into the turn: 0 at start, peak at mid-turn, 0 " +
+                 "at the end. Applied in the correct bank direction for the turn direction (right turn " +
+                 "-> right bank).")]
+        [SerializeField] private float turnBankDegrees = 10f;
+
         // Retained for backward compatibility / tests:
         [SerializeField] private float startDelay = 0.75f;
         [SerializeField] private float accelerationDuration = 2.5f;
@@ -160,8 +213,11 @@ namespace OperationOutbreak.Cinematic
         private Quaternion _startRotation;
         private Vector3 _travelDirection;   // world-space, fixed at start
         private Vector3 _riseDirection;     // world-space, fixed at start
+        private Vector3 _turnRightDirection; // world-space, fixed at start: rise x travel = aircraft RIGHT
         private float _elapsed;
-        private float _distance;
+        private float _distance;            // straight metres travelled along the base forward axis
+        private float _turnBaseDist;        // arc metres along the base forward axis during/after the turn
+        private float _turnRightDist;       // arc metres along the right axis during/after the turn
         private float _forwardClimb;
         private float _rise;
 
@@ -253,6 +309,66 @@ namespace OperationOutbreak.Cinematic
         public bool IsForwardTransition => CurrentPhase == FlightPhase.ForwardTransition;
         public bool IsCruising => CurrentPhase == FlightPhase.Cruise;
 
+        // ---- cinematic turn (optional; pure functions of the flight clock => deterministic) ----
+
+        /// <summary>Safe minimum turn window (seconds) — the clamped duration is never below this.</summary>
+        private const float MinTurnDuration = 0.05f;
+
+        /// <summary>turnStartTime clamped to >= 0 (negative values would otherwise start the turn before Play).</summary>
+        private float EffectiveTurnStart => Mathf.Max(0f, turnStartTime);
+
+        /// <summary>turnDuration clamped to a safe minimum so zero/negative values can never divide to zero or invert the window.</summary>
+        private float EffectiveTurnDuration => Mathf.Max(MinTurnDuration, turnDuration);
+
+        /// <summary>
+        /// Signed yaw in degrees currently applied by the cinematic turn: 0 before the window,
+        /// smoothly eased (smoothstep) to turnYawDegrees across the window, then constant.
+        /// Sign convention: POSITIVE = RIGHT turn relative to the Local Forward Axis
+        /// (a positive angle about the authored up axis turns the nose from forward toward the
+        /// aircraft's right side = up x forward).
+        /// </summary>
+        public float CurrentTurnYawDegrees
+        {
+            get
+            {
+                if (!enableTurn)
+                    return 0f;
+
+                float u = Mathf.Clamp01((_elapsed - EffectiveTurnStart) / EffectiveTurnDuration);
+                if (u <= 0f)
+                    return 0f;
+                if (u >= 1f)
+                    return turnYawDegrees;
+
+                return turnYawDegrees * Mathf.SmoothStep(0f, 1f, u);
+            }
+        }
+
+        /// <summary>
+        /// Signed bank (roll) in degrees currently applied by the cinematic turn: 0 outside the
+        /// window, rising with a sine (0 -> peak at mid-turn -> 0). Sign convention (right-handed
+        /// rotation about the CURRENT heading axis): NEGATIVE = RIGHT bank (right wing down), which
+        /// is the correct lean into a RIGHT turn, so for positive turnYawDegrees the value returned
+        /// here is negative during the turn. A negative turn banks left instead.
+        /// </summary>
+        public float CurrentTurnBankDegrees
+        {
+            get
+            {
+                if (!enableTurn)
+                    return 0f;
+
+                float u = Mathf.Clamp01((_elapsed - EffectiveTurnStart) / EffectiveTurnDuration);
+                if (u <= 0f || u >= 1f)
+                    return 0f;
+                if (Mathf.Approximately(turnYawDegrees, 0f))
+                    return 0f; // degenerate config: no yaw, no bank wobble
+
+                float lean = turnBankDegrees * Mathf.Sin(Mathf.PI * u);
+                return turnYawDegrees > 0f ? -lean : lean;
+            }
+        }
+
         /// <summary>0 during GroundIdle and VerticalLift, smoothly easing 0→1 during ForwardTransition, then 1. Always 1 in airborne-start mode.</summary>
         public float SpeedFactor => startAirborne ? 1f : ComputeSpeedFactor(_elapsed);
 
@@ -273,6 +389,38 @@ namespace OperationOutbreak.Cinematic
         {
             get => startAirborne;
             set => startAirborne = value;
+        }
+
+        // ---- cinematic turn views (default off = no turn) ----
+
+        public bool EnableTurn
+        {
+            get => enableTurn;
+            set => enableTurn = value;
+        }
+
+        public float TurnStartTime
+        {
+            get => turnStartTime;
+            set => turnStartTime = value;
+        }
+
+        public float TurnDuration
+        {
+            get => turnDuration;
+            set => turnDuration = value;
+        }
+
+        public float TurnYawDegrees
+        {
+            get => turnYawDegrees;
+            set => turnYawDegrees = value;
+        }
+
+        public float TurnBankDegrees
+        {
+            get => turnBankDegrees;
+            set => turnBankDegrees = value;
         }
 
         public bool ApplyTakeoffPitch
@@ -316,6 +464,8 @@ namespace OperationOutbreak.Cinematic
 
             _elapsed = 0f;
             _distance = 0f;
+            _turnBaseDist = 0f;
+            _turnRightDist = 0f;
             _forwardClimb = 0f;
             _rise = 0f;
             RecaptureStartState();
@@ -348,6 +498,13 @@ namespace OperationOutbreak.Cinematic
 
             _travelDirection = (_startRotation * fwd).normalized;
             _riseDirection = (_startRotation * up).normalized;
+
+            // Aircraft RIGHT in world space = rise x travel (verified: default axes +X forward /
+            // +Y up -> right = -Z, i.e. the helicopter's right side when facing +X). Fixed at
+            // start like the other axes: used to integrate the cinematic turn arc, so the
+            // right-turn sign convention holds for any authored root orientation.
+            Vector3 right = Vector3.Cross(_riseDirection, _travelDirection);
+            _turnRightDirection = right.sqrMagnitude < 1e-8f ? Vector3.up : right.normalized;
         }
 
         /// <summary>
@@ -392,8 +549,29 @@ namespace OperationOutbreak.Cinematic
             // Phase 3 & 4: Forward Acceleration & Climb
             float speedFactor = startAirborne ? 1f : ComputeSpeedFactor(_elapsed);
 
-            // Forward translation only occurs once airborne in forward transition
-            _distance += cruiseSpeed * speedFactor * deltaTime;
+            // Forward translation only occurs once airborne in forward transition.
+            //
+            // Cinematic turn: BEFORE the turn window opens, travel is exactly the existing
+            // straight accumulation along the base forward axis. Once the window opens (and
+            // stays open), each tick adds the arc length along the EVOLVING heading, projected
+            // onto the fixed authored base/right axes (cos/sin of the current eased yaw). The
+            // heading integrates as H(t) = base * cos(yaw) + right * sin(yaw), so with a full
+            // 90-degree yaw the path becomes a true circular arc through space — and after the
+            // window closes the yaw is constant, so the helicopter continues in a straight
+            // line along the NEW heading. Everything is a deterministic function of the same
+            // input/time sequence (no per-frame multiplication of the current transform
+            // rotation, therefore no cumulative drift).
+            float forwardSpeed = cruiseSpeed * speedFactor;
+            if (enableTurn && _elapsed >= EffectiveTurnStart)
+            {
+                float yawRad = CurrentTurnYawDegrees * Mathf.Deg2Rad;
+                _turnBaseDist += forwardSpeed * Mathf.Cos(yawRad) * deltaTime;
+                _turnRightDist += forwardSpeed * Mathf.Sin(yawRad) * deltaTime;
+            }
+            else
+            {
+                _distance += forwardSpeed * deltaTime;
+            }
 
             // Additional gentle climb during forward travel
             if (speedFactor > 0f)
@@ -405,15 +583,44 @@ namespace OperationOutbreak.Cinematic
             _rise = baseLift + _forwardClimb;
             if (maxRiseHeight > 0f) _rise = Mathf.Min(_rise, maxRiseHeight);
 
+            // Position = authored start + straight base travel + curved turn arc + rise. All
+            // terms use the axes fixed at start, so the result is authored-relative and
+            // deterministic (turn off => the turn terms are zero and this is the existing write).
             transform.position = _startPosition
-                                 + _travelDirection * _distance
+                                 + _travelDirection * (_distance + _turnBaseDist)
+                                 + _turnRightDirection * _turnRightDist
                                  + _riseDirection * _rise;
+
+            // Rotation = authored start rotation + smooth turn yaw (about the authored up axis)
+            // + temporary bank (about the CURRENT heading). Both are pure functions of the
+            // flight clock, so the write is deterministic and drift-free: at the end of the
+            // turn it is exactly start + final yaw + zero bank.
+            Quaternion rotation = _startRotation;
+            if (enableTurn)
+            {
+                float yawAngle = CurrentTurnYawDegrees;
+                if (yawAngle != 0f)
+                {
+                    Quaternion yawQuat = Quaternion.AngleAxis(yawAngle, _riseDirection);
+                    rotation = yawQuat * rotation;
+
+                    float bankAngle = CurrentTurnBankDegrees;
+                    if (bankAngle != 0f)
+                    {
+                        // Bank about the yawed heading (right turn => negative angle => right
+                        // wing down, verified against Unity's right-handed AngleAxis).
+                        Vector3 heading = yawQuat * _travelDirection;
+                        rotation = Quaternion.AngleAxis(bankAngle, heading) * rotation;
+                    }
+                }
+            }
 
             // Takeoff pitch is takeoff staging — never applied in airborne-start mode, so
             // the rotation stays exactly the authored start rotation there.
-            transform.rotation = (!startAirborne && applyTakeoffPitch && takeoffPitch != 0f)
-                ? _startRotation * Quaternion.AngleAxis(takeoffPitch * speedFactor, Vector3.right)
-                : _startRotation;
+            if (!startAirborne && applyTakeoffPitch && takeoffPitch != 0f)
+                rotation = rotation * Quaternion.AngleAxis(takeoffPitch * speedFactor, Vector3.right);
+
+            transform.rotation = rotation;
         }
 
         public float ComputeSpeedFactor(float elapsed)
@@ -442,6 +649,8 @@ namespace OperationOutbreak.Cinematic
             CaptureStartState();
             _elapsed = 0f;
             _distance = 0f;
+            _turnBaseDist = 0f;
+            _turnRightDist = 0f;
             _forwardClimb = 0f;
             _rise = 0f;
             transform.position = _startPosition;
