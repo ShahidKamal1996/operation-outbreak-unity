@@ -176,6 +176,18 @@ namespace OperationOutbreak.Cinematic
         /// <summary>Current time-mode setting (serialized default is false = scaled time).</summary>
         public bool UseUnscaledTime => useUnscaledTime;
 
+        /// <summary>
+        /// While true, the sequence is HELD: <see cref="AdvanceSequence"/> does nothing, so no
+        /// line starts, no subtitle text is revealed, no voice or SFX is played, and no speaker
+        /// talking binding changes. A sequence can still be (re)started while held
+        /// (PlaySequence/RestartSequence) — it simply stays frozen at line 0 until the hold is
+        /// released. This is how scene orchestration pauses ALL radio dialogue and subtitle
+        /// progression (e.g. during the exterior establishing helicopter flight, via
+        /// CinematicExteriorFlightPhase) and resumes it on the explicit handoff.
+        /// Default false = existing behavior unchanged.
+        /// </summary>
+        public bool DialogueHeld { get; set; }
+
         private void Update()
         {
             float dt = useUnscaledTime ? Time.unscaledDeltaTime : Time.deltaTime;
@@ -242,7 +254,7 @@ namespace OperationOutbreak.Cinematic
         /// </summary>
         public void AdvanceSequence(float deltaTime)
         {
-            if (!_playing) return;
+            if (!_playing || DialogueHeld) return;
             float t = deltaTime > 0f ? deltaTime : 0f;
 
             // Bounded: a single advance can complete at most 3 phases per line (before/present/after).

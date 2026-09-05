@@ -507,5 +507,103 @@ namespace OperationOutbreak.Tests
             Assert.IsTrue(c.IsComplete, "An empty sequence must complete immediately.");
             Assert.AreEqual(1, completed, "The completion event must fire exactly once on natural completion.");
         }
+
+        // ---- 17. dialogue hold (exterior flight pause) ----
+        // While DialogueHeld is true, AdvanceSequence does nothing: no line starts, no
+        // subtitle text is assigned/revealed, no voice/SFX (BeginPresenting — which plays the
+        // audio — is the same gated path), no speaker binding changes. The hold is how scene
+        // orchestration pauses ALL radio dialogue and subtitle progression during the exterior
+        // establishing helicopter flight.
+
+        [Test]
+        public void DialogueHeldDefaultsFalsePreservingExistingBehavior()
+        {
+            var c = _go.AddComponent<CinematicRadioDialogueController>();
+            Assert.IsFalse(c.DialogueHeld, "DialogueHeld must default to false (existing behavior unchanged).");
+
+            c.SetDialogueLines(new[] { MakeLine("S", "A", null, null, 100f, 0f, 0f) });
+            c.PlaySequence();
+            Step(c, 1f);
+            Assert.IsTrue(c.IsComplete, "An unheld sequence must run normally to completion.");
+        }
+
+        [Test]
+        public void DialogueHeldFreezesAllSubtitleAndDialogueProgression()
+        {
+            var dialogue = CreateTmpText("Dialogue");
+            var speaker = CreateTmpText("Speaker");
+            var c = _go.AddComponent<CinematicRadioDialogueController>();
+            SetPrivate(c, "speakerLabel", speaker);
+            SetPrivate(c, "dialogueText", dialogue);
+
+            // Line 0: 0.2s before + max(1.3s reveal, 1.0s voice) + 0.3s after => ~1.8s, so a
+            // multi-second hold has real progression available to freeze.
+            var voice = AudioClip.Create("HoldVoice", 48000, 1, 48000, false); // exactly 1.0s
+            c.SetDialogueLines(new[]
+            {
+                MakeLine("COMMAND", "Hold position", voice, null, 10f, 0.2f, 0.3f),
+                MakeLine("RAVEN", "Copy", null, null, 10f, 0f, 0.3f),
+            });
+
+            c.PlaySequence();
+            Assert.IsTrue(c.IsPlaying && c.CurrentLineIndex == 0,
+                "Sanity: the sequence must be started and waiting on line 0.");
+
+            c.DialogueHeld = true;
+            Step(c, 3f); // well past line 0's full ~1.8s duration
+
+            Assert.IsTrue(c.IsPlaying, "A held sequence stays started (frozen, not stopped).");
+            Assert.IsFalse(c.IsComplete, "A held sequence must not complete while held.");
+            Assert.AreEqual(0, c.CurrentLineIndex, "No line progression while held.");
+            Assert.AreEqual("", dialogue.text, "No subtitle text may be assigned while held.");
+            Assert.AreEqual(0, dialogue.maxVisibleCharacters, "No typewriter reveal while held.");
+            Assert.IsFalse(c.IsTyping, "No typewriter activity while held.");
+            Assert.AreEqual("", speaker.text, "No speaker label while held.");
+
+            // The explicit handoff: release the hold — progression resumes from where it froze.
+            c.DialogueHeld = false;
+            Step(c, 0.1f); // still inside line 0's 0.2s before-delay: nothing yet
+            Assert.AreEqual("", dialogue.text, "Still inside the before-delay after release: no text yet.");
+            Step(c, 0.2f); // t = 0.3s: line 0 presentation has begun
+            Assert.AreEqual("Hold position", dialogue.text,
+                "After the hold releases, line presentation must begin (text assigned once).");
+            Assert.IsTrue(c.IsTyping, "The typewriter must run after release.");
+
+            Step(c, 5f);
+            Assert.IsTrue(c.IsComplete, "A held-then-released sequence must still complete normally.");
+        }
+
+        [Test]
+        public void SequenceStartedWhileHeldWaitsAndResumesExactlyOnce()
+        {
+            // The starter scenario: the sequence start fires DURING the hold (e.g. the starter's
+            // playOnStart while the exterior flight is active). The sequence must wait frozen and
+            // run exactly once after the release — never skipped, never double-run.
+            var c = _go.AddComponent<CinematicRadioDialogueController>();
+            int completed = 0;
+            GetCompletionEvent(c).AddListener(() => completed++);
+            c.SetDialogueLines(new[]
+            {
+                MakeLine("COMMAND", "A", null, null, 100f, 0f, 0.05f),
+                MakeLine("KANE", "B", null, null, 100f, 0f, 0.05f),
+            });
+
+            c.DialogueHeld = true;      // exterior flight active
+            c.PlaySequence();           // the starter requests the start during the hold
+            Assert.IsTrue(c.IsPlaying, "The sequence may be started while held.");
+            Step(c, 2f);
+            Assert.AreEqual(0, c.CurrentLineIndex, "Frozen at line 0 while held.");
+            Assert.AreEqual(0, completed, "Nothing may complete while held.");
+
+            c.DialogueHeld = false;     // the explicit handoff
+            Step(c, 0.1f);
+            Assert.IsTrue(c.IsPlaying || c.IsComplete, "Progression must resume after release.");
+            Step(c, 2f);
+            Assert.IsTrue(c.IsComplete, "The sequence must complete after the hold releases.");
+            Assert.AreEqual(1, completed, "Exactly one completion: the hold must not re-run the sequence.");
+
+            Step(c, 1f);
+            Assert.AreEqual(1, completed, "The completion event must never fire again.");
+        }
     }
 }
