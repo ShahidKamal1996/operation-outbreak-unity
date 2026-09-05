@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using System.Reflection;
 using NUnit.Framework;
 using OperationOutbreak.Cinematic;
@@ -19,6 +20,7 @@ namespace OperationOutbreak.Tests
         private GameObject _flightGo;
         private GameObject _dialogueGo;
         private GameObject _canvasGo;
+        private List<GameObject> _uiRoots = new List<GameObject>();
 
         [SetUp]
         public void SetUp()
@@ -26,15 +28,39 @@ namespace OperationOutbreak.Tests
             _directorGo = new GameObject("CinematicDirector");
             _flightGo = new GameObject("HelicopterFlightRoot");
             _dialogueGo = new GameObject("RadioDialogue");
+            _uiRoots = new List<GameObject>();
         }
 
         [TearDown]
         public void TearDown()
         {
+            for (int i = 0; i < _uiRoots.Count; i++)
+                if (_uiRoots[i] != null) Object.DestroyImmediate(_uiRoots[i]);
             if (_canvasGo != null) Object.DestroyImmediate(_canvasGo);
             if (_directorGo != null) Object.DestroyImmediate(_directorGo);
             if (_flightGo != null) Object.DestroyImmediate(_flightGo);
             if (_dialogueGo != null) Object.DestroyImmediate(_dialogueGo);
+        }
+
+        /// <summary>
+        /// Standard dialogue presentation UI: the CinematicDialogueCanvas root (active) with
+        /// the dialogue panel, its background, the speaker label and the dialogue text — the
+        /// full presentation the exterior phase must hide as a whole.
+        /// </summary>
+        private (GameObject, GameObject, GameObject, GameObject, GameObject) MakeDialogueUiRoot()
+        {
+            var canvas = new GameObject("CinematicDialogueCanvas");
+            canvas.AddComponent<Canvas>();
+            var panel = new GameObject("DialoguePanel");
+            panel.transform.SetParent(canvas.transform, false);
+            var background = new GameObject("PanelBackground");
+            background.transform.SetParent(panel.transform, false);
+            var speaker = new GameObject("SpeakerLabel");
+            speaker.transform.SetParent(panel.transform, false);
+            var text = new GameObject("DialogueText");
+            text.transform.SetParent(panel.transform, false);
+            _uiRoots.Add(canvas);
+            return (canvas, panel, background, speaker, text);
         }
 
         private static void SetPrivate(object target, string field, object value)
@@ -345,6 +371,194 @@ namespace OperationOutbreak.Tests
                     "Airborne-start must still have full cruise speed from frame one (no regression).");
             }
             finally { Object.DestroyImmediate(refGo); }
+        }
+
+        // ---- dialogue presentation UI hide/restore ----
+        // The CinematicDialogueCanvas (speaker label, dialogue text, panel/background) must not
+        // be visible during the exterior shot: the phase hides the presentation root when the
+        // exterior begins and restores it exactly once on the handoff — without ever touching
+        // the CinematicRadioDialogueController itself.
+
+        [Test]
+        public void DialogueUiIsHiddenDuringExteriorFlight()
+        {
+            var (ui, panel, background, speaker, text) = MakeDialogueUiRoot();
+            var runner = _dialogueGo.AddComponent<CinematicRadioDialogueController>();
+            runner.SetDialogueLines(new[] { MakeLine("COMMAND", "A", 100f, 0f, 0.05f) });
+
+            var phase = _directorGo.AddComponent<CinematicExteriorFlightPhase>();
+            SetPrivate(phase, "dialoguePresentationRoot", ui); // Inspector-style assignment
+            phase.EnterExteriorPhase(); // the exterior phase begins (OnEnable does this at Play start)
+
+            Assert.IsFalse(ui.activeSelf, "The dialogue presentation root must be hidden when the exterior phase begins.");
+            Assert.IsFalse(panel.activeInHierarchy, "The dialogue panel must be hidden (child of the hidden root).");
+            Assert.IsFalse(background.activeInHierarchy, "The panel background must be hidden.");
+            Assert.IsFalse(speaker.activeInHierarchy, "The speaker label must be hidden.");
+            Assert.IsFalse(text.activeInHierarchy, "The dialogue text must be hidden.");
+            Assert.IsTrue(phase.DialogueUiHiddenByPhase, "The phase must report that it owns the hidden state.");
+
+            // The controller itself must NOT be destroyed or disabled:
+            Assert.IsTrue(_dialogueGo.activeSelf, "The dialogue controller's GameObject must stay active.");
+            Assert.IsTrue(runner.enabled, "The dialogue controller component must stay enabled.");
+
+            // Through the exterior flight the UI stays hidden and the controller stays alive:
+            var flight = _flightGo.AddComponent<CinematicHelicopterFlight>();
+            flight.StartAirborne = true;
+            for (int i = 0; i < 60; i++)
+            {
+                flight.AdvanceFlight(1f / 60f);
+                runner.AdvanceSequence(1f / 60f);
+                Assert.IsFalse(ui.activeSelf, "The dialogue UI must stay hidden during the exterior flight (frame " + (i + 1) + ").");
+                Assert.IsTrue(runner.enabled, "The dialogue controller must stay enabled during the exterior flight (frame " + (i + 1) + ").");
+            }
+
+            // A root assigned late while the exterior phase is active is hidden immediately too:
+            var ui2 = new GameObject("SecondDialogueUi");
+            try
+            {
+                phase.DialoguePresentationRoot = ui2;
+                Assert.IsFalse(ui2.activeSelf,
+                    "A late-assigned presentation root must be hidden immediately while the exterior phase is active.");
+            }
+            finally { Object.DestroyImmediate(ui2); }
+        }
+
+        [Test]
+        public void DialogueTextDoesNotProgressWhileUiHidden()
+        {
+            var (ui, _, _, _, _) = MakeDialogueUiRoot();
+            var dialogue = CreateTmpText("Dialogue");
+            var runner = _dialogueGo.AddComponent<CinematicRadioDialogueController>();
+            SetPrivate(runner, "dialogueText", dialogue);
+            runner.SetDialogueLines(new[]
+            {
+                MakeLine("COMMAND", "Say again.", 100f, 0f, 0.05f), // would finish almost instantly if not held
+                MakeLine("RAVEN", "Loud and clear.", 100f, 0f, 0.05f),
+            });
+
+            var phase = MakePhase(runner, out var starter);
+            SetPrivate(phase, "dialoguePresentationRoot", ui);
+            phase.EnterExteriorPhase(); // fresh exterior entry with the UI root
+            Assert.IsFalse(ui.activeSelf, "Sanity: the UI is hidden for the exterior.");
+
+            var flight = _flightGo.GetComponent<CinematicHelicopterFlight>();
+            for (int i = 0; i < 180; i++) // 3 seconds of exterior flight
+            {
+                StepAll(flight, starter, runner);
+                Assert.AreEqual("", dialogue.text, "No dialogue text may progress while held (frame " + (i + 1) + ").");
+                Assert.AreEqual(0, dialogue.maxVisibleCharacters, "No subtitle reveal may progress while held (frame " + (i + 1) + ").");
+                Assert.AreEqual(0, runner.CurrentLineIndex, "No line progression while held (frame " + (i + 1) + ").");
+                Assert.IsFalse(ui.activeSelf, "The dialogue UI must remain hidden while held (frame " + (i + 1) + ").");
+            }
+
+            Assert.IsTrue(runner.IsPlaying,
+                "Sanity: the sequence was started by the starter and is frozen (held), not skipped.");
+        }
+
+        [Test]
+        public void DialogueUiIsRestoredOnHandoff()
+        {
+            var (ui, panel, _, _, _) = MakeDialogueUiRoot();
+            var dialogue = CreateTmpText("Dialogue");
+            var runner = _dialogueGo.AddComponent<CinematicRadioDialogueController>();
+            SetPrivate(runner, "dialogueText", dialogue);
+            runner.SetDialogueLines(new[]
+            {
+                MakeLine("COMMAND", "Copy that.", 10f, 0f, 0.1f),
+                MakeLine("KANE", "Moving.", 10f, 0f, 0.1f),
+            });
+
+            var phase = MakePhase(runner, out var starter);
+            SetPrivate(phase, "dialoguePresentationRoot", ui);
+            phase.EnterExteriorPhase();
+            Assert.IsFalse(ui.activeSelf, "Sanity: the UI is hidden during the exterior.");
+
+            var flight = _flightGo.GetComponent<CinematicHelicopterFlight>();
+            for (int i = 0; i < 60; i++) StepAll(flight, starter, runner);
+            Assert.AreEqual("", dialogue.text, "Sanity: nothing progressed before the handoff.");
+
+            phase.HandOffToStoryPhase();
+
+            Assert.IsTrue(ui.activeSelf, "The dialogue presentation root must be restored on the handoff.");
+            Assert.IsTrue(panel.activeInHierarchy, "The dialogue panel must be visible again on the handoff.");
+            Assert.IsFalse(phase.DialogueUiHiddenByPhase, "The phase must no longer own the hidden state after the restore.");
+            Assert.IsFalse(runner.DialogueHeld, "The dialogue hold must be released on the handoff.");
+
+            StepAll(flight, starter, runner);
+            Assert.AreEqual("Copy that.", dialogue.text,
+                "Dialogue must progress (with the UI visible) right after the handoff.");
+        }
+
+        [Test]
+        public void DialogueUiRestoreHappensExactlyOnce()
+        {
+            // The canvas is authored INACTIVE (a realistic pre-story state): the phase must
+            // remember that, and the single restore must return it to INACTIVE. The scene then
+            // enables it for the story — and no later repeated handoff may ever re-apply the
+            // recorded state (which would be the only observable effect of a second restore).
+            var (ui, _, _, _, _) = MakeDialogueUiRoot();
+            ui.SetActive(false);
+            var runner = _dialogueGo.AddComponent<CinematicRadioDialogueController>();
+            runner.SetDialogueLines(new[] { MakeLine("COMMAND", "A", 100f, 0f, 0.05f) });
+
+            var phase = MakePhase(runner, out _);
+            SetPrivate(phase, "dialoguePresentationRoot", ui);
+            phase.EnterExteriorPhase();
+            Assert.IsFalse(ui.activeSelf, "Sanity: hidden (already inactive) during the exterior.");
+            Assert.IsTrue(phase.DialogueUiHiddenByPhase, "The phase must own the hidden state.");
+
+            phase.HandOffToStoryPhase();
+            Assert.IsFalse(ui.activeSelf,
+                "The single restore must return the canvas to its pre-exterior state (inactive).");
+            Assert.IsFalse(phase.DialogueUiHiddenByPhase,
+                "After the restore the phase must no longer own the hidden state.");
+
+            // The scene (story phase) enables the canvas for the story:
+            ui.SetActive(true);
+            Assert.IsTrue(ui.activeSelf, "Sanity: the scene enabled the canvas.");
+
+            phase.HandOffToStoryPhase();
+            phase.HandOffToStoryPhase();
+            phase.HandOffToStoryPhase();
+            Assert.IsTrue(ui.activeSelf,
+                "The restore must have happened EXACTLY ONCE: repeated handoffs must not re-apply the recorded inactive state.");
+        }
+
+        [Test]
+        public void ReEnteringExteriorFlightHidesDialogueUiAgain()
+        {
+            var (ui, _, _, _, _) = MakeDialogueUiRoot();
+            var runner = _dialogueGo.AddComponent<CinematicRadioDialogueController>();
+            runner.SetDialogueLines(new[] { MakeLine("COMMAND", "A", 100f, 0f, 0.05f) });
+            int handedOffEvents = 0;
+
+            var phase = _directorGo.AddComponent<CinematicExteriorFlightPhase>();
+            phase.DialogueRunner = runner;
+            SetPrivate(phase, "dialoguePresentationRoot", ui);
+            var handoffEvent = (UnityEvent)typeof(CinematicExteriorFlightPhase)
+                .GetField("onHandedOffToStory", BindingFlags.NonPublic | BindingFlags.Instance).GetValue(phase);
+            handoffEvent.AddListener(() => handedOffEvents++);
+
+            // Exterior phase #1 (OnEnable already entered with no root; this entry applies it):
+            phase.EnterExteriorPhase();
+            Assert.IsFalse(ui.activeSelf, "Entering the exterior phase must hide the dialogue UI.");
+            Assert.IsTrue(runner.DialogueHeld, "Entering the exterior phase must hold the runner.");
+
+            // Handoff #1: restore the UI, release the hold.
+            phase.HandOffToStoryPhase();
+            Assert.IsTrue(ui.activeSelf, "Handoff #1 must restore the dialogue UI.");
+            Assert.IsFalse(runner.DialogueHeld, "Handoff #1 must release the hold.");
+
+            // Exterior phase #2 (re-entry): hide the UI again and hold again.
+            phase.EnterExteriorPhase();
+            Assert.IsFalse(ui.activeSelf, "Re-entering the exterior phase must hide the dialogue UI again.");
+            Assert.IsTrue(runner.DialogueHeld, "Re-entering the exterior phase must re-arm the hold.");
+
+            // Handoff #2: restore again — exactly once per phase.
+            phase.HandOffToStoryPhase();
+            Assert.IsTrue(ui.activeSelf, "Handoff #2 must restore the dialogue UI again.");
+            Assert.IsFalse(runner.DialogueHeld, "Handoff #2 must release the hold again.");
+            Assert.AreEqual(2, handedOffEvents, "Each exterior phase must hand off exactly once.");
         }
     }
 }
